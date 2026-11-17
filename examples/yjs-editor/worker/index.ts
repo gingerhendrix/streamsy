@@ -1,35 +1,25 @@
-/* oxlint-disable effecttsgo/async-function -- Native Workers fetch boundary. */
-import { Effect } from "effect";
-import { documentId, parseDocumentRoute, protocolError } from "./objects.ts";
+import { Context, Effect } from "effect";
+import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { documentId, parseDocumentRoute } from "./objects.ts";
 import type { Env } from "./env.ts";
+import { protocolErrorResponse, YjsProtocolError } from "./protocol-error.ts";
 
 export { DocumentObject } from "./objects.ts";
 
-const cors = (response: Response) => {
-  const headers = new Headers(response.headers);
-  headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-allow-methods", "GET, HEAD, PUT, POST, DELETE, OPTIONS");
-  headers.set(
-    "access-control-allow-headers",
-    "authorization, content-type, stream-ttl, producer-id, producer-epoch, producer-seq, stream-producer-id, stream-producer-epoch, stream-producer-seq",
-  );
-  headers.set(
-    "access-control-expose-headers",
-    "stream-next-offset, stream-up-to-date, stream-cursor, stream-sse-data-encoding, stream-ttl, location",
-  );
+class WorkerEnv extends Context.Service<WorkerEnv, Env>()("yjs-editor/WorkerEnv") {}
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-};
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+const routes = HttpRouter.add(
+  "*",
+  "/*",
+  Effect.gen(function* (): Effect.fn.Return<
+    HttpServerResponse.HttpServerResponse,
+    HttpServerError.RequestError | YjsProtocolError,
+    HttpServerRequest.HttpServerRequest | WorkerEnv
+  > {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const env = yield* WorkerEnv;
+    const webRequest = yield* HttpServerRequest.toWeb(request);
+    const url = new URL(request.url, "https://internal");
 
     // The example exposes the underlying streams just as the upstream proxy does.
     const raw =
@@ -38,27 +28,48 @@ export default {
       );
 
     const route = parseDocumentRoute(url.pathname);
-    let owner: string | undefined;
+    const owner = raw?.[1] ?? (route === null ? undefined : documentId(route));
 
-    if (raw?.[1]) owner = raw[1];
-    else if (route) owner = documentId(route);
-
-    if (owner) {
-      try {
-        return cors(await env.DOCUMENTS.get(env.DOCUMENTS.idFromName(owner)).fetch(request));
-      } catch (error) {
-        await Effect.runPromise(Effect.logError("Yjs request failed", error));
-
-        return cors(protocolError("INTERNAL_ERROR", "Document unavailable; retry", 503));
-      }
+    if (owner !== undefined) {
+      return yield* Effect.tryPromise({
+        try: () => env.DOCUMENTS.get(env.DOCUMENTS.idFromName(owner)).fetch(webRequest),
+        catch: (cause) =>
+          new YjsProtocolError({
+            code: "INTERNAL_ERROR",
+            message: "Document unavailable; retry",
+            status: 503,
+            cause,
+          }),
+      }).pipe(
+        Effect.map(HttpServerResponse.fromWeb),
+        Effect.catchTag("YjsProtocolError", (error) =>
+          Effect.logError("Yjs request failed", error).pipe(
+            Effect.as(protocolErrorResponse(error)),
+          ),
+        ),
+      );
     }
 
     if (url.pathname.startsWith("/v1/yjs/") && !url.pathname.includes("/__ds/"))
-      return cors(protocolError("INVALID_REQUEST", "Invalid document path", 400));
+      return yield* new YjsProtocolError({
+        code: "INVALID_REQUEST",
+        message: "Invalid document path",
+        status: 400,
+      });
 
     if (url.pathname.startsWith("/v1/") || url.pathname.startsWith("/__"))
-      return cors(new Response(null, { status: 404 }));
+      return HttpServerResponse.empty({ status: 404 });
 
-    return env.ASSETS.fetch(request);
-  },
+    return HttpServerResponse.fromWeb(yield* Effect.promise(() => env.ASSETS.fetch(webRequest)));
+  }).pipe(
+    Effect.catchTag("YjsProtocolError", (error) => Effect.succeed(protocolErrorResponse(error))),
+  ),
+);
+
+// The page and Yjs routes share an origin, so no CORS middleware is needed.
+const app = HttpRouter.toWebHandler(routes);
+
+export default {
+  fetch: (request: Request, env: Env): Promise<Response> =>
+    app.handler(request, Context.make(WorkerEnv, env)),
 };

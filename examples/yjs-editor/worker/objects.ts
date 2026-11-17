@@ -1,35 +1,63 @@
-/* oxlint-disable effecttsgo/async-function -- Native Workers adapter boundary delegates stream operations to Streamsy. */
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { Http, Streamsy } from "@streamsy/core";
+import { CreateResult, Http, StorageFault, StreamId, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Digest, SecureRandom } from "effect/crypto";
-import { Array, Clock, Effect, Layer } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { compact, documentFold } from "./compaction.ts";
+import {
+  Array,
+  Clock,
+  Config,
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Schema,
+  Semaphore,
+} from "effect";
+import {
+  Headers as HttpHeaders,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
+import { compact, documentFold, readIndex } from "./compaction.ts";
 import type { Env } from "./env.ts";
+import { protocolErrorResponse, unavailable, YjsProtocolError } from "./protocol-error.ts";
 
 const streams = Streamsy.group(Streamsy.Wildcard);
 
-const internal = HttpRouter.add(
-  "POST",
-  "/__fold",
+const binary = "application/octet-stream";
+
+const maxMessageSize = 4 * 1024 * 1024;
+
+class DocumentRuntime extends Context.Service<
+  DocumentRuntime,
+  {
+    readonly mutations: Semaphore.Semaphore;
+    readonly threshold: number;
+  }
+>()("yjs-editor/DocumentRuntime") {}
+
+const documentRuntime = Layer.effect(
+  DocumentRuntime,
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = new URL(request.url, "https://internal");
-    const document = url.searchParams.get("document")!;
+    const mutations = yield* Semaphore.make(1);
 
-    if (url.searchParams.has("forget")) yield* Projection.forget(documentFold(document));
-    else yield* compact(document, Number(url.searchParams.get("threshold")));
+    const threshold = yield* Config.Number("COMPACTION_THRESHOLD").pipe(
+      Config.withDefault(1048576),
+    );
 
-    return HttpServerResponse.empty({ status: 204 });
+    return DocumentRuntime.of({ mutations, threshold });
   }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logError("Yjs fold failed", cause).pipe(
-        Effect.as(HttpServerResponse.empty({ status: 500 })),
-      ),
+    Effect.mapError(
+      (cause) =>
+        new StorageFault({
+          operation: "yjs-editor.config",
+          message: cause.message,
+          retryable: false,
+        }),
     ),
   ),
 );
@@ -51,14 +79,413 @@ const storage = (state: DurableObjectState) =>
     Layer.provideMerge(Layer.merge(Digest.layerWebCrypto, SecureRandom.layerWebCrypto)),
   );
 
-export const protocolError = (code: string, message: string, status: number) =>
-  Response.json({ error: { code, message } }, { status });
+// One permit covers Yjs and raw backing-stream mutations. Live reads never take it.
+const serializeMutations = <A, E, R>(handler: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = new URL(request.url, "https://internal");
 
-const missingDocument = () => protocolError("DOCUMENT_NOT_FOUND", "Document does not exist", 404);
+    if (["GET", "HEAD"].includes(request.method) && url.searchParams.get("offset") !== "snapshot")
+      return yield* handler;
+    const runtime = yield* DocumentRuntime;
 
-const binary = "application/octet-stream";
+    return yield* runtime.mutations.withPermit(handler);
+  });
 
-const rawPrefix = "/v1/stream/";
+const missingDocument = () =>
+  new YjsProtocolError({
+    code: "DOCUMENT_NOT_FOUND",
+    message: "Document does not exist",
+    status: 404,
+  });
+
+const snapshotNotFound = () =>
+  new YjsProtocolError({
+    code: "SNAPSHOT_NOT_FOUND",
+    message: "Snapshot not found",
+    status: 404,
+  });
+
+const requireDocument = Effect.fn("Yjs.requireDocument")(function* (id: string) {
+  const reader = yield* StreamsReader;
+
+  // The original existence probe distinguished only a 404, not other base failures.
+  const exists = yield* reader.head(StreamId.make(`${id}/.updates`)).pipe(
+    Effect.as(true),
+    Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
+    Effect.orElseSucceed(() => true),
+  );
+
+  return yield* exists ? Effect.void : missingDocument();
+});
+
+const AwarenessEntry = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  createdAt: Schema.optionalKey(Schema.Finite),
+});
+
+const AwarenessEntryJson = Schema.fromJsonString(AwarenessEntry);
+
+const readAwarenessRegistry = Effect.fn("Yjs.readAwarenessRegistry")(function* (id: string) {
+  const reader = yield* StreamsReader;
+
+  const result = yield* reader
+    .read(StreamId.make(id), { offset: "-1" })
+    .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+
+  if (result === undefined) return [];
+
+  return yield* Effect.forEach(result.messages, (message) =>
+    Schema.decodeEffect(AwarenessEntryJson)(new TextDecoder().decode(message.data)),
+  );
+});
+
+const createAwareness = Effect.fn("Yjs.createAwareness")(function* (id: string, name: string) {
+  const writer = yield* StreamsWriter;
+
+  const result = yield* writer.create(StreamId.make(`${id}/.awareness/${name}`), {
+    contentType: binary,
+    ttlSeconds: 3600,
+  });
+
+  const created = CreateResult.$is("Created")(result);
+
+  if (created && name !== "default") {
+    const registry = StreamId.make(`${id}/.awareness-index`);
+    yield* writer.create(registry, { contentType: "application/json" });
+    const createdAt = yield* Clock.currentTimeMillis;
+
+    const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(AwarenessEntry)))([
+      { name, createdAt },
+    ]);
+
+    yield* writer.append(registry, {
+      contentType: "application/json",
+      data: new TextEncoder().encode(json),
+    });
+  }
+
+  return HttpServerResponse.empty({ status: created ? 201 : 200 });
+});
+
+const backingStreamProgram = Http.app({ pathPrefix: "/v1/stream", maxMessageSize });
+
+/** Reuse the base HTTP write program, including producer acknowledgements. No self-HTTP. */
+const writeStream = Effect.fn("Yjs.writeStream")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+  id: string,
+  body: Uint8Array,
+) {
+  // The stock provider closes its producer on disconnect. Stream-Closed must not
+  // close the shared document; match the reference server's POST header policy.
+  const headers = request.method === "POST" ? new Headers() : new Headers(request.headers);
+
+  if (request.method === "POST") {
+    for (const name of [
+      "producer-id",
+      "producer-epoch",
+      "producer-seq",
+      "stream-producer-id",
+      "stream-producer-epoch",
+      "stream-producer-seq",
+    ]) {
+      const value = request.headers[name];
+
+      if (value !== undefined) headers.set(name, value);
+    }
+  }
+
+  headers.delete("host");
+
+  if (request.method === "POST" || !headers.has("content-type"))
+    headers.set("content-type", binary);
+  const original = yield* HttpServerRequest.toWeb(request);
+
+  const forwarded = HttpServerRequest.fromWeb(
+    new Request(`https://internal/v1/stream/${id}`, {
+      method: request.method,
+      headers,
+      body,
+      signal: original.signal,
+    }),
+  );
+
+  return yield* backingStreamProgram.pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
+  );
+});
+
+/** Native Response text errors use this charset on the existing stream wire. */
+const streamFailure = (message: string, options: HttpServerResponse.Options.WithContentType) =>
+  HttpServerResponse.text(message, { ...options, contentType: "text/plain;charset=UTF-8" });
+
+/** Http.read supplies framing/live modes; keep the base protocol's read failures. */
+const readStream = Effect.fn("Yjs.readStream")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+  id: string,
+  query: URLSearchParams,
+) {
+  const headers = request.method === "HEAD" ? { "cache-control": "no-store" } : {};
+
+  return yield* Http.read(StreamId.make(id)).pipe(
+    Effect.provideService(
+      HttpServerRequest.HttpServerRequest,
+      request.modify({
+        url: `/v1/stream/${id}?${query.toString()}`,
+        headers: HttpHeaders.remove(request.headers, "host"),
+      }),
+    ),
+    Effect.catchTags({
+      StreamNotFound: () =>
+        Effect.succeed(streamFailure("Stream not found", { status: 404, headers })),
+      StreamGone: () =>
+        Effect.succeed(streamFailure("Stream is soft-deleted", { status: 410, headers })),
+      InvalidReadRequest: ({ message }) => Effect.succeed(streamFailure(message, { status: 400 })),
+      NotSupported: ({ feature }) =>
+        Effect.succeed(
+          streamFailure(`Feature not supported: ${feature}`, {
+            status: 400,
+            headers: { "stream-not-supported": feature },
+          }),
+        ),
+      StorageFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
+      TransportFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
+    }),
+    Effect.map(HttpServerResponse.setHeaders(Http.securityHeaders)),
+  );
+});
+
+/** Return the same base-protocol status/body as DELETE on a backing stream. */
+const removeStream = Effect.fn("Yjs.removeStream")(function* (id: string) {
+  const writer = yield* StreamsWriter;
+
+  return yield* writer.remove(StreamId.make(id)).pipe(
+    Effect.as(HttpServerResponse.empty({ status: 204 })),
+    Effect.catchTags({
+      StreamNotFound: () => Effect.succeed(streamFailure("Stream not found", { status: 404 })),
+      StreamGone: () => Effect.succeed(streamFailure("Stream is soft-deleted", { status: 410 })),
+      StreamBusy: () => Effect.succeed(streamFailure("Stream busy, retry later", { status: 503 })),
+      StorageFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
+      TransportFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
+    }),
+    Effect.map(HttpServerResponse.setHeaders(Http.securityHeaders)),
+  );
+});
+
+const deleteDocument = Effect.fn("Yjs.deleteDocument")(function* (id: string) {
+  const writer = yield* StreamsWriter;
+  const deleted = yield* removeStream(`${id}/.updates`);
+
+  if (deleted.status === 404) return yield* missingDocument();
+
+  if (deleted.status < 200 || deleted.status >= 300) return deleted;
+
+  const paths = new Set([
+    `${id}/.index`,
+    `${id}/.awareness/default`,
+    `${id}/.awareness-index`,
+    `${id}/.awareness/.index`,
+  ]);
+
+  for (const entry of yield* readIndex(id))
+    paths.add(`${id}/.snapshots/${entry.snapshotOffset}_snapshot`);
+
+  for (const registry of [".awareness-index", ".awareness/.index"])
+    for (const entry of yield* readAwarenessRegistry(`${id}/${registry}`))
+      if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
+
+  for (const path of paths)
+    yield* writer
+      .remove(StreamId.make(path))
+      .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+  yield* Projection.forget(documentFold(id));
+
+  return HttpServerResponse.empty({ status: 204 });
+});
+
+const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
+  request: HttpServerRequest.HttpServerRequest,
+  url: URL,
+  route: DocumentRoute,
+) {
+  const id = documentId(route);
+  const updates = `${id}/.updates`;
+  const method = request.method;
+
+  if (!["GET", "HEAD", "PUT", "POST", "DELETE"].includes(method))
+    return yield* new YjsProtocolError({
+      code: "INVALID_REQUEST",
+      message: "Method not allowed",
+      status: 405,
+    });
+
+  // Buffer once so an expired awareness stream can be recreated and retried.
+  const body = ["PUT", "POST"].includes(method)
+    ? new Uint8Array(yield* request.arrayBuffer)
+    : new Uint8Array();
+
+  const awareness = url.searchParams.get("awareness");
+
+  if (awareness !== null) {
+    if (!/^[a-zA-Z0-9_.-]{1,256}$/.test(awareness) || [".", "..", ".index"].includes(awareness))
+      return yield* new YjsProtocolError({
+        code: "INVALID_REQUEST",
+        message: "Invalid awareness name",
+        status: 400,
+      });
+    const target = `${id}/.awareness/${awareness}`;
+
+    if (method === "PUT" || method === "POST") {
+      yield* requireDocument(id);
+
+      if (method === "PUT") return yield* createAwareness(id, awareness);
+      let result = yield* writeStream(request, target, body);
+
+      if (result.status === 404) {
+        yield* createAwareness(id, awareness);
+        result = yield* writeStream(request, target, body);
+      }
+
+      return result;
+    }
+
+    if (method === "DELETE") {
+      const removed = yield* removeStream(target);
+
+      if (removed.status === 404)
+        return yield* new YjsProtocolError({
+          code: "STREAM_NOT_FOUND",
+          message: "Awareness stream not found",
+          status: 404,
+        });
+
+      return removed;
+    }
+
+    const query = new URLSearchParams(url.searchParams);
+    query.delete("awareness");
+
+    if (query.get("live") === "true") query.set("live", "sse");
+
+    return yield* readStream(request, target, query);
+  }
+
+  const offset = url.searchParams.get("offset");
+
+  if (method === "GET" && offset === "snapshot") {
+    yield* requireDocument(id);
+    const { threshold } = yield* DocumentRuntime;
+    yield* compact(id, threshold);
+    const latest = (yield* readIndex(id)).at(-1)?.snapshotOffset;
+    url.searchParams.set("offset", latest ? `${latest}_snapshot` : "-1");
+
+    return HttpServerResponse.empty({
+      status: 307,
+      headers: {
+        location: `${url.pathname}${url.search}`,
+        "cache-control": "private, max-age=5",
+      },
+    });
+  }
+
+  if (method === "GET" && offset?.endsWith("_snapshot")) {
+    if (!/^\d{16}_\d{16}_snapshot$/.test(offset)) return yield* snapshotNotFound();
+
+    // Snapshot reads ignore client conditionals and live/query options, as before.
+    const result = yield* readStream(
+      HttpServerRequest.fromWeb(new Request("https://internal")),
+      `${id}/.snapshots/${offset}`,
+      new URLSearchParams({ offset: "-1" }),
+    );
+
+    if (result.status === 404) return yield* snapshotNotFound();
+
+    if (result.status < 200 || result.status >= 300) return result;
+
+    const base = offset.slice(0, -"_snapshot".length);
+    // Upstream uses the next sequence position; this still precedes the next Streamsy update.
+    const next = `${base.slice(0, 17)}${String(BigInt(base.slice(17)) + 1n).padStart(16, "0")}`;
+
+    return HttpServerResponse.raw(HttpServerResponse.toWeb(result).body, {
+      status: 200,
+      headers: { "content-type": binary, "stream-next-offset": next },
+    });
+  }
+
+  if (method === "DELETE") return yield* deleteDocument(id);
+
+  if (method === "GET" || method === "HEAD") {
+    // HEAD ignored the query in the original adapter.
+    const query = method === "GET" ? new URLSearchParams(url.searchParams) : new URLSearchParams();
+
+    if (query.get("live") === "true") query.set("live", "long-poll");
+
+    return yield* readStream(request, updates, query);
+  }
+
+  const result = yield* writeStream(request, updates, body);
+
+  if (result.status >= 200 && result.status < 300) {
+    if (method === "PUT") yield* createAwareness(id, "default");
+
+    if (method === "POST" || (method === "PUT" && body.length > 0)) {
+      const { threshold } = yield* DocumentRuntime;
+      yield* compact(id, threshold);
+    }
+  }
+
+  return result;
+});
+
+const yjsRoutes = HttpRouter.add(
+  "*",
+  "/v1/yjs/*",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = new URL(request.url, "https://internal");
+    const route = parseDocumentRoute(url.pathname);
+
+    if (route === null)
+      return yield* new YjsProtocolError({
+        code: "INVALID_REQUEST",
+        message: "Invalid document path",
+        status: 400,
+      });
+
+    return yield* documentRequest(request, url, route);
+  }).pipe(
+    serializeMutations,
+    Effect.catchTag("YjsProtocolError", (error) => Effect.succeed(protocolErrorResponse(error))),
+    Effect.catch((error) =>
+      Effect.logError("Yjs request failed", error).pipe(
+        Effect.as(protocolErrorResponse(unavailable())),
+      ),
+    ),
+    Effect.catchDefect((defect) =>
+      Effect.logError("Yjs request failed", defect).pipe(
+        Effect.as(protocolErrorResponse(unavailable())),
+      ),
+    ),
+  ),
+);
+
+/** One object owns every stream and checkpoint belonging to a document. */
+export class DocumentObject extends StreamsyObject.make({
+  app: Layer.merge(
+    HttpRouter.add("*", "/v1/stream/*", backingStreamProgram.pipe(serializeMutations)),
+    yjsRoutes,
+  ),
+  layer: (state: DurableObjectState, env: Env) =>
+    Layer.merge(storage(state), documentRuntime).pipe(
+      Layer.provideMerge(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            COMPACTION_THRESHOLD: env.COMPACTION_THRESHOLD || undefined,
+          }),
+        ),
+      ),
+    ),
+}) {}
 
 export interface DocumentRoute {
   readonly service: string;
@@ -66,270 +493,6 @@ export interface DocumentRoute {
 }
 
 export const documentId = (route: DocumentRoute) => `yjs/${route.service}/docs/${route.docPath}`;
-
-/** One object owns every stream and checkpoint belonging to a document. */
-export class DocumentObject extends StreamsyObject.make({
-  app: Layer.merge(
-    Http.routes(streams, { prefix: "/v1/stream", access: "full", maxMessageSize: 4 * 1024 * 1024 }),
-    internal,
-  ),
-  layer: (state: DurableObjectState, _env: Env) => storage(state),
-}) {
-  // Only scheduling lives in memory. All fold values, counters, indexes and streams are durable.
-  #mutations: Promise<void> = Promise.resolve();
-
-  override fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const route = parseDocumentRoute(url.pathname);
-
-    const work = () =>
-      route === null ? super.fetch(request) : this.#document(request, url, route);
-
-    // Never hold a mutation permit for an SSE or long-poll read.
-    if (["GET", "HEAD"].includes(request.method) && url.searchParams.get("offset") !== "snapshot")
-      return work();
-    const pending = this.#mutations.then(work);
-    this.#mutations = pending.then(
-      () => undefined,
-      () => undefined,
-    );
-
-    return pending;
-  }
-
-  #raw(id: string, init: RequestInit = {}, query = "") {
-    return super.fetch(new Request(`https://internal${rawPrefix}${id}${query}`, init));
-  }
-
-  async #forward(request: Request, id: string, query = "", body?: Uint8Array) {
-    // The Yjs endpoint accepts updates, not base-protocol stream closure. The
-    // stock provider calls producer.close() on disconnect; forwarding Stream-Closed
-    // would stop every other peer. Match the reference server's write header policy.
-    const headers = request.method === "POST" ? new Headers() : new Headers(request.headers);
-
-    if (request.method === "POST") {
-      for (const name of [
-        "producer-id",
-        "producer-epoch",
-        "producer-seq",
-        "stream-producer-id",
-        "stream-producer-epoch",
-        "stream-producer-seq",
-      ]) {
-        const value = request.headers.get(name);
-
-        if (value !== null) headers.set(name, value);
-      }
-    }
-
-    headers.delete("host");
-
-    if (request.method === "POST" || !headers.has("content-type"))
-      headers.set("content-type", binary);
-
-    return this.#raw(id, { method: request.method, headers, body, signal: request.signal }, query);
-  }
-
-  async #fold(id: string, forget = false) {
-    const params = new URLSearchParams({
-      document: id,
-      threshold: this.env.COMPACTION_THRESHOLD || "1048576",
-    });
-
-    if (forget) params.set("forget", "true");
-
-    const result = await super.fetch(
-      new Request(`https://internal/__fold?${params.toString()}`, { method: "POST" }),
-    );
-
-    if (!result.ok) throw new Error("Compaction failed");
-  }
-
-  async #createAwareness(id: string, name: string) {
-    const result = await this.#raw(`${id}/.awareness/${name}`, {
-      method: "PUT",
-      headers: { "content-type": binary, "stream-ttl": "3600" },
-    });
-
-    if (!result.ok) throw new Error(`Awareness create failed: ${result.status}`);
-
-    if (result.status === 201 && name !== "default")
-      await this.#appendJson(`${id}/.awareness-index`, {
-        name,
-        createdAt: await Effect.runPromise(Clock.currentTimeMillis),
-      });
-
-    return result;
-  }
-
-  async #appendJson(id: string, entry: { name: string; createdAt: number }) {
-    const headers = { "content-type": "application/json" };
-    const created = await this.#raw(id, { method: "PUT", headers });
-
-    if (!created.ok) throw new Error("Registry create failed");
-
-    const appended = await this.#raw(id, {
-      method: "POST",
-      headers,
-      body: JSON.stringify([entry]),
-    });
-
-    if (!appended.ok) throw new Error("Registry append failed");
-  }
-
-  async #entries(id: string): Promise<Array<{ name?: string; snapshotOffset?: string }>> {
-    const response = await this.#raw(id, {}, "?offset=-1");
-
-    if (response.status === 404) return [];
-
-    if (!response.ok) throw new Error(`Index read failed: ${response.status}`);
-
-    return response.json();
-  }
-
-  async #document(request: Request, url: URL, route: DocumentRoute): Promise<Response> {
-    const id = documentId(route);
-    const updates = `${id}/.updates`;
-    const method = request.method;
-
-    // Buffer writes once: retries for an expired awareness stream reuse these bytes.
-    const body = ["PUT", "POST"].includes(method)
-      ? new Uint8Array(await request.arrayBuffer())
-      : undefined;
-
-    if (!["GET", "HEAD", "PUT", "POST", "DELETE"].includes(method))
-      return protocolError("INVALID_REQUEST", "Method not allowed", 405);
-    const awareness = url.searchParams.get("awareness");
-
-    if (awareness !== null) {
-      if (!/^[a-zA-Z0-9_.-]{1,256}$/.test(awareness) || [".", "..", ".index"].includes(awareness))
-        return protocolError("INVALID_REQUEST", "Invalid awareness name", 400);
-      const target = `${id}/.awareness/${awareness}`;
-
-      if (method === "PUT" || method === "POST") {
-        if ((await this.#raw(updates, { method: "HEAD" })).status === 404) return missingDocument();
-
-        if (method === "PUT") {
-          const created = await this.#createAwareness(id, awareness);
-
-          return new Response(null, { status: created.status });
-        }
-
-        let result = await this.#forward(request, target, "", body);
-
-        if (result.status === 404) {
-          await result.arrayBuffer();
-          await this.#createAwareness(id, awareness);
-          result = await this.#forward(request, target, "", body);
-        }
-
-        return result;
-      }
-
-      if (method === "DELETE") {
-        const result = await this.#raw(target, { method });
-
-        return result.status === 404
-          ? protocolError("STREAM_NOT_FOUND", "Awareness stream not found", 404)
-          : result;
-      }
-
-      const query = new URLSearchParams(url.searchParams);
-      query.delete("awareness");
-
-      if (query.get("live") === "true") query.set("live", "sse");
-
-      return this.#forward(request, target, `?${query.toString()}`);
-    }
-
-    const offset = url.searchParams.get("offset");
-
-    if (method === "GET" && offset === "snapshot") {
-      if ((await this.#raw(updates, { method: "HEAD" })).status === 404) return missingDocument();
-      await this.#fold(id);
-      const latest = (await this.#entries(`${id}/.index`)).at(-1)?.snapshotOffset;
-      url.searchParams.set("offset", latest ? `${latest}_snapshot` : "-1");
-
-      return new Response(null, {
-        status: 307,
-        headers: {
-          location: `${url.pathname}${url.search}`,
-          "cache-control": "private, max-age=5",
-        },
-      });
-    }
-
-    if (method === "GET" && offset?.endsWith("_snapshot")) {
-      if (!/^\d{16}_\d{16}_snapshot$/.test(offset))
-        return protocolError("SNAPSHOT_NOT_FOUND", "Snapshot not found", 404);
-      const result = await this.#raw(`${id}/.snapshots/${offset}`, {}, "?offset=-1");
-
-      if (result.status === 404)
-        return protocolError("SNAPSHOT_NOT_FOUND", "Snapshot not found", 404);
-
-      if (!result.ok) return result;
-      const base = offset.slice(0, -"_snapshot".length);
-      // Upstream Yjs protocol uses the following sequence position. Streamsy advances
-      // its first component for each message, so this remains before the next update.
-      const next = `${base.slice(0, 17)}${String(BigInt(base.slice(17)) + 1n).padStart(16, "0")}`;
-
-      return new Response(result.body, {
-        headers: { "content-type": binary, "stream-next-offset": next },
-      });
-    }
-
-    if (method === "DELETE") {
-      const deleted = await this.#raw(updates, { method });
-
-      if (deleted.status === 404) return missingDocument();
-
-      if (!deleted.ok) return deleted;
-
-      const paths = new Set([
-        `${id}/.index`,
-        `${id}/.awareness/default`,
-        `${id}/.awareness-index`,
-        `${id}/.awareness/.index`,
-      ]);
-
-      for (const entry of await this.#entries(`${id}/.index`))
-        if (entry.snapshotOffset) paths.add(`${id}/.snapshots/${entry.snapshotOffset}_snapshot`);
-
-      for (const registry of [".awareness-index", ".awareness/.index"])
-        for (const entry of await this.#entries(`${id}/${registry}`))
-          if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
-
-      for (const path of paths) {
-        const removed = await this.#raw(path, { method: "DELETE" });
-
-        if (!removed.ok && removed.status !== 404)
-          throw new Error(`Cascade delete failed: ${removed.status}`);
-      }
-
-      await this.#fold(id, true);
-
-      return new Response(null, { status: 204 });
-    }
-
-    const query = new URLSearchParams(url.searchParams);
-
-    if (query.get("live") === "true") query.set("live", "long-poll");
-
-    const result = await this.#forward(
-      request,
-      updates,
-      method === "GET" ? `?${query.toString()}` : "",
-      body,
-    );
-
-    if (result.ok && method === "PUT") await this.#createAwareness(id, "default");
-
-    if (result.ok && (method === "POST" || (method === "PUT" && body?.length)))
-      await this.#fold(id);
-
-    return result;
-  }
-}
 
 /** Match the pinned upstream path grammar, including encoded traversal rejection. */
 export const parseDocumentRoute = (pathname: string): DocumentRoute | null => {
