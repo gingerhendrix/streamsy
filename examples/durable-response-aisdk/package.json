@@ -1,0 +1,39 @@
+{
+  "name": "durable-response-aisdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "bun run src/index.ts",
+    "start": "bun run server-dist/index.js",
+    "build": "vite build && bun build src/index.ts --target bun --packages external --outdir server-dist",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun --bun vitest run --dir test"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "3.0.335",
+    "@durable-streams/aisdk-transport": "0.0.8",
+    "@durable-streams/client": "0.2.7",
+    "@effect/platform-bun": "4.1.2",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "ai": "6.0.332",
+    "effect": "4.1.2",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "6.2.1",
+    "happy-dom": "21.0.4",
+    "typescript": "catalog:",
+    "vite": "8.3.5",
+    "vitest": "catalog:"
+  }
+}
