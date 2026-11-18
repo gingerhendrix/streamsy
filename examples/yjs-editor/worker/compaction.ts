@@ -1,21 +1,9 @@
-import { compare, StreamAddress, StreamId, Streamsy } from "@streamsy/core";
-import { StreamsWriter } from "@streamsy/core/protocol";
+import { compare } from "@streamsy/core";
 import { Commit, Projection } from "@streamsy/projection";
-import { Config, Context, Effect, Layer, Option, Schema } from "effect";
+import { Config, Context, Effect, Layer, Schema } from "effect";
 import * as decoding from "lib0/decoding";
 import * as Y from "yjs";
-import { binary, concat, readToTail } from "./streams.ts";
-
-/** Each document's update log. The id grammar puts every document under `yjs/`. */
-export class Updates extends Streamsy.custom<Updates>()("YjsEditor/Updates", {
-  parse: (id: string) => {
-    const match = /^(yjs\/[^/]+\/docs\/.+)\/\.updates$/.exec(id);
-
-    return match?.[1] === undefined ? Option.none() : Option.some({ document: match[1] });
-  },
-  address: ({ document }: { readonly document: string }) =>
-    StreamAddress.bytes(`${document}/.updates`),
-}) {}
+import { concat, Snapshots, Updates } from "./streams.ts";
 
 /** Bytes of new updates that publish the next snapshot. */
 export class CompactionThreshold extends Context.Service<CompactionThreshold, number>()(
@@ -31,9 +19,6 @@ export class CompactionThreshold extends Context.Service<CompactionThreshold, nu
 /** Durable Object SQLite rejects a value over 2 MB, so a snapshot is stored as 1 MiB messages. */
 const SNAPSHOT_CHUNK = 1024 * 1024;
 
-export const snapshotStream = (document: string, offset: string) =>
-  StreamId.make(`${document}/.snapshots/${offset}_snapshot`);
-
 /**
  * Merge the previous snapshot with every update after it, up to the log's tail,
  * and publish the result. Runs inside the fold's transaction, so no append
@@ -44,48 +29,44 @@ const publishSnapshot = Effect.fn("Yjs.publishSnapshot")(function* (
   document: string,
   previous: string | undefined,
 ) {
-  const writer = yield* StreamsWriter;
+  const snapshots = yield* Snapshots;
+  const updates = yield* Updates;
 
   const merged = yield* Effect.acquireUseRelease(
     Effect.sync(() => new Y.Doc()),
     (doc) =>
       Effect.gen(function* () {
-        if (previous !== undefined) {
-          const parts: Array<Uint8Array> = [];
-          yield* readToTail(snapshotStream(document, previous), "-1", (data) => parts.push(data));
-          Y.applyUpdate(doc, concat(parts));
-        }
+        if (previous !== undefined)
+          Y.applyUpdate(
+            doc,
+            concat((yield* snapshots.collect({ document, offset: previous })).items),
+          );
+
+        const log = yield* updates.collect({ document }, { offset: previous ?? "-1" });
 
         // Each update message is a lib0 frame of one or more Yjs updates.
-        const tail = yield* readToTail(
-          StreamId.make(`${document}/.updates`),
-          previous ?? "-1",
-          (data) => {
-            const decoder = decoding.createDecoder(data);
+        for (const item of log.items) {
+          const decoder = decoding.createDecoder(item);
 
-            while (decoding.hasContent(decoder))
-              Y.applyUpdate(doc, decoding.readVarUint8Array(decoder));
-          },
-        );
+          while (decoding.hasContent(decoder))
+            Y.applyUpdate(doc, decoding.readVarUint8Array(decoder));
+        }
 
-        return { tail, update: Y.encodeStateAsUpdate(doc) };
+        return { tail: log.offset, update: Y.encodeStateAsUpdate(doc) };
       }),
     (doc) => Effect.sync(() => doc.destroy()),
   );
 
-  const snapshot = snapshotStream(document, merged.tail);
-  yield* writer.create(snapshot, { contentType: binary });
+  const snapshot = { document, offset: merged.tail };
+  yield* snapshots.create(snapshot);
 
   for (let at = 0; at < merged.update.length; at += SNAPSHOT_CHUNK)
-    yield* writer.append(snapshot, {
-      contentType: binary,
-      data: merged.update.subarray(at, at + SNAPSHOT_CHUNK),
-    });
+    yield* snapshots.append(snapshot, [merged.update.subarray(at, at + SNAPSHOT_CHUNK)]);
 
   // Keep only the latest snapshot. Original updates remain available to stale readers.
   if (previous !== undefined)
-    yield* writer
-      .remove(snapshotStream(document, previous))
+    yield* snapshots
+      .remove({ document, offset: previous })
       .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
 
   return merged.tail;

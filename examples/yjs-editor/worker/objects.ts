@@ -1,33 +1,20 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { Http, Streamsy } from "@streamsy/core";
-import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { Http } from "@streamsy/core";
 import { CheckpointStore, ProjectionWakeup, Transaction } from "@streamsy/projection";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Digest, SecureRandom } from "effect/crypto";
 import { ConfigProvider, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
-import { compaction, CompactionThreshold, Updates } from "./compaction.ts";
+import { compaction, CompactionThreshold } from "./compaction.ts";
 import { documentRequest } from "./document.ts";
 import type { Env } from "./env.ts";
 import { protocolErrorResponse, unexpected, YjsProtocolError } from "./protocol-error.ts";
 import { parseDocumentRoute } from "./route.ts";
-
-const streams = Streamsy.group(Updates, Streamsy.Wildcard);
+import { streams } from "./streams.ts";
 
 const storage = (state: DurableObjectState) =>
-  Layer.mergeAll(
-    CheckpointStore.layer,
-    Transaction.layer,
-    Layer.effect(
-      StreamsReader,
-      Effect.map(Streamsy.Wildcard, (service) => service.wire),
-    ),
-    Layer.effect(
-      StreamsWriter,
-      Effect.map(Streamsy.Wildcard, (service) => service.wire),
-    ),
-  ).pipe(
+  Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(DurableObjectStorage.layer(streams, { client: { storage: state.storage } })),
     Layer.provideMerge(Layer.merge(Digest.layerWebCrypto, SecureRandom.layerWebCrypto)),
   );

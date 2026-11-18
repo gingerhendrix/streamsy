@@ -1,19 +1,20 @@
-import { CreateResult, StreamId } from "@streamsy/core";
-import { StreamsWriter } from "@streamsy/core/protocol";
+import { CreateResult } from "@streamsy/core";
 import { Projection, Transaction } from "@streamsy/projection";
-import { Effect } from "effect";
+import { Array, Effect, Option } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
-import { awarenessRequest, createAwareness, readAwarenessRegistry } from "./awareness.ts";
-import { compaction, snapshotStream } from "./compaction.ts";
+import { awarenessRequest, createAwareness } from "./awareness.ts";
+import { compaction } from "./compaction.ts";
 import { YjsProtocolError } from "./protocol-error.ts";
 import { documentId, type DocumentRoute } from "./route.ts";
 import {
-  binary,
+  Awareness,
+  AwarenessIndex,
   concat,
   forward,
   missingDocument,
-  readToTail,
   requireDocument,
+  Snapshots,
+  Updates,
 } from "./streams.ts";
 
 /**
@@ -55,20 +56,22 @@ const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL
 });
 
 /** `GET ?offset=<offset>_snapshot` returns the snapshot as one Yjs update. */
-const snapshotRead = Effect.fn("Yjs.snapshotRead")(function* (id: string, offset: string) {
-  if (!/^\d{16}_\d{16}_snapshot$/.test(offset)) return yield* snapshotNotFound();
-  const parts: Array<Uint8Array> = [];
+const snapshotRead = Effect.fn("Yjs.snapshotRead")(function* (document: string, offset: string) {
+  const params = Snapshots.parse(`${document}/.snapshots/${offset}`);
 
-  yield* readToTail(StreamId.make(`${id}/.snapshots/${offset}`), "-1", (data) =>
-    parts.push(data),
-  ).pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(snapshotNotFound())));
+  if (Option.isNone(params)) return yield* snapshotNotFound();
+  const snapshots = yield* Snapshots;
 
-  const base = offset.slice(0, -"_snapshot".length);
+  const { items } = yield* snapshots
+    .collect(params.value)
+    .pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(snapshotNotFound())));
+
   // Upstream uses the next sequence position; this still precedes the next Streamsy update.
+  const base = params.value.offset;
   const next = `${base.slice(0, 17)}${String(BigInt(base.slice(17)) + 1n).padStart(16, "0")}`;
 
-  return HttpServerResponse.uint8Array(concat(parts), {
-    contentType: binary,
+  return HttpServerResponse.uint8Array(concat(items), {
+    contentType: "application/octet-stream",
     headers: { "stream-next-offset": next },
   });
 });
@@ -84,13 +87,13 @@ const readUpdates = Effect.fn("Yjs.readUpdates")(function* (
 
   if (query.get("live") === "true") query.set("live", "long-poll");
 
-  return yield* forward(request, `${id}/.updates`, query);
+  return yield* forward(request, Updates.at({ document: id }), query);
 });
 
-const createDocument = Effect.fn("Yjs.createDocument")(function* (id: string) {
-  const writer = yield* StreamsWriter;
-  const result = yield* writer.create(StreamId.make(`${id}/.updates`), { contentType: binary });
-  yield* createAwareness(id, "default");
+const createDocument = Effect.fn("Yjs.createDocument")(function* (document: string) {
+  const updates = yield* Updates;
+  const result = yield* updates.create({ document });
+  yield* createAwareness(document, "default");
 
   return HttpServerResponse.empty({ status: CreateResult.$is("Created")(result) ? 201 : 200 });
 });
@@ -105,29 +108,35 @@ const appendUpdate = Effect.fn("Yjs.appendUpdate")(function* (
   if (state.bytes > maxDocumentBytes) return yield* documentFull();
 
   // The append's commit marks the compaction fold; the object alarm runs it.
-  return yield* forward(request, `${id}/.updates`, new URLSearchParams());
+  return yield* forward(request, Updates.at({ document: id }), new URLSearchParams());
 });
 
-const removeDocument = Effect.fn("Yjs.removeDocument")(function* (id: string) {
-  const writer = yield* StreamsWriter;
+const removeDocument = Effect.fn("Yjs.removeDocument")(function* (document: string) {
+  const updates = yield* Updates;
+  const snapshots = yield* Snapshots;
+  const awareness = yield* Awareness;
+  const index = yield* AwarenessIndex;
 
-  yield* writer
-    .remove(StreamId.make(`${id}/.updates`))
+  yield* updates
+    .remove({ document })
     .pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(missingDocument())));
+  const { state } = yield* Projection.read(compaction.at({ document }));
 
-  const { state } = yield* Projection.read(compaction.at({ document: id }));
-  const paths = new Set([`${id}/.awareness/default`, `${id}/.awareness-index`]);
-
-  if (state.snapshot !== undefined) paths.add(snapshotStream(id, state.snapshot));
-
-  for (const entry of yield* readAwarenessRegistry(`${id}/.awareness-index`))
-    if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
-
-  for (const path of paths)
-    yield* writer
-      .remove(StreamId.make(path))
+  if (state.snapshot !== undefined)
+    yield* snapshots
+      .remove({ document, offset: state.snapshot })
       .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
-  yield* Projection.forget(compaction.at({ document: id }));
+
+  const named = yield* index
+    .collect({ document })
+    .pipe(Effect.catchTag("StreamNotFound", () => Effect.succeed({ items: [] })));
+
+  for (const name of ["default", ...Array.map(named.items, (entry) => entry.name)])
+    yield* awareness
+      .remove({ document, name })
+      .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+  yield* index.remove({ document }).pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+  yield* Projection.forget(compaction.at({ document }));
 
   return HttpServerResponse.empty({ status: 204 });
 });

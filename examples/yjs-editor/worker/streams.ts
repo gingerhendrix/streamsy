@@ -1,10 +1,65 @@
-import { Http, StreamId } from "@streamsy/core";
-import { StreamsReader } from "@streamsy/core/protocol";
-import { Effect } from "effect";
+import { Http, StreamAddress, Streamsy } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { Effect, Option, Schema } from "effect";
 import { HttpServerRequest } from "effect/http";
 import { YjsProtocolError } from "./protocol-error.ts";
 
-export const binary = "application/octet-stream";
+/*
+ * Every stream of a document is `yjs/<service>/docs/<path>/<suffix>`. A document
+ * path holds no `.`, so the suffix after it is unambiguous.
+ */
+
+/** Each document's update log: lib0 frames of Yjs updates. */
+export class Updates extends Streamsy.custom<Updates>()("YjsEditor/Updates", {
+  parse: (id: string) => {
+    const match = /^(yjs\/[^/]+\/docs\/[\w/-]+)\/\.updates$/.exec(id);
+
+    return match?.[1] === undefined ? Option.none() : Option.some({ document: match[1] });
+  },
+  address: ({ document }: { readonly document: string }) =>
+    StreamAddress.bytes(`${document}/.updates`),
+}) {}
+
+/** The merged document at an `.updates` offset, as 1 MiB parts of one Yjs update. */
+export class Snapshots extends Streamsy.custom<Snapshots>()("YjsEditor/Snapshots", {
+  parse: (id: string) => {
+    const match = /^(yjs\/[^/]+\/docs\/[\w/-]+)\/\.snapshots\/(\d{16}_\d{16})_snapshot$/.exec(id);
+
+    return match?.[1] === undefined || match[2] === undefined
+      ? Option.none()
+      : Option.some({ document: match[1], offset: match[2] });
+  },
+  address: ({ document, offset }: { readonly document: string; readonly offset: string }) =>
+    StreamAddress.bytes(`${document}/.snapshots/${offset}_snapshot`),
+}) {}
+
+/** One TTL stream of lib0-framed awareness updates per name. */
+export class Awareness extends Streamsy.custom<Awareness>()("YjsEditor/Awareness", {
+  parse: (id: string) => {
+    const match = /^(yjs\/[^/]+\/docs\/[\w/-]+)\/\.awareness\/((?!\.\.?$)[\w.-]{1,256})$/.exec(id);
+
+    return match?.[1] === undefined || match[2] === undefined
+      ? Option.none()
+      : Option.some({ document: match[1], name: match[2] });
+  },
+  address: ({ document, name }: { readonly document: string; readonly name: string }) =>
+    StreamAddress.bytes(`${document}/.awareness/${name}`),
+}) {}
+
+const AwarenessEntry = Schema.Struct({ name: Schema.String, createdAt: Schema.Finite });
+
+/** Named awareness streams, so deleting a document can find them. */
+export class AwarenessIndex extends Streamsy.custom<AwarenessIndex>()("YjsEditor/AwarenessIndex", {
+  parse: (id: string) => {
+    const match = /^(yjs\/[^/]+\/docs\/[\w/-]+)\/\.awareness-index$/.exec(id);
+
+    return match?.[1] === undefined ? Option.none() : Option.some({ document: match[1] });
+  },
+  address: ({ document }: { readonly document: string }) =>
+    StreamAddress.json(`${document}/.awareness-index`, { schema: AwarenessEntry }),
+}) {}
+
+export const streams = Streamsy.group(Updates, Snapshots, Awareness, AwarenessIndex);
 
 /** One update message must fit in a Durable Object SQLite value, which is limited to 2 MB. */
 export const maxMessageSize = 1.5 * 1024 * 1024;
@@ -22,15 +77,16 @@ const producerHeaders = [
 const backingStream = Http.app({ pathPrefix: "/v1/stream", maxMessageSize });
 
 /**
- * Run the base protocol program on one backing stream, passing the request's
- * unread body through. `Http.app` reads the stream id from the Web request's
- * URL, so the request is rebuilt rather than modified.
+ * Run the base protocol program on one stream, passing the request's unread
+ * body through. `Http.app` reads the stream id from the Web request's URL, so
+ * the request is rebuilt rather than modified.
  */
-export const forward = Effect.fn("Yjs.forward")(function* (
+export const forward = Effect.fn("Yjs.forward")(function* <A, R>(
   request: HttpServerRequest.HttpServerRequest,
-  id: string,
+  address: Streamsy.Address<A, R>,
   query: URLSearchParams,
 ) {
+  const { wire } = yield* address.stream;
   const original = yield* HttpServerRequest.toWeb(request);
   const headers = new Headers(request.method === "POST" ? {} : original.headers);
 
@@ -43,10 +99,10 @@ export const forward = Effect.fn("Yjs.forward")(function* (
       if (value !== null) headers.set(name, value);
     }
 
-    headers.set("content-type", binary);
+    headers.set("content-type", address.contentType);
   }
 
-  const forwarded = new Request(`https://internal/v1/stream/${id}?${query.toString()}`, {
+  const forwarded = new Request(`https://internal/v1/stream/${address.id}?${query.toString()}`, {
     method: request.method,
     headers,
     body: original.body,
@@ -54,31 +110,13 @@ export const forward = Effect.fn("Yjs.forward")(function* (
   });
 
   return yield* backingStream.pipe(
+    Effect.provideService(StreamsReader, wire),
+    Effect.provideService(StreamsWriter, wire),
     Effect.provideService(
       HttpServerRequest.HttpServerRequest,
       HttpServerRequest.fromWeb(forwarded),
     ),
   );
-});
-
-/** Read every message of a stream from `offset` to its tail. Returns the tail cursor. */
-export const readToTail = Effect.fn("Yjs.readToTail")(function* (
-  id: StreamId,
-  offset: string,
-  each: (data: Uint8Array) => void,
-) {
-  const reader = yield* StreamsReader;
-  let cursor = offset;
-
-  while (true) {
-    const page = yield* reader.read(id, { offset: cursor });
-
-    for (const message of page.messages) each(message.data);
-    const done = page.upToDate || page.nextOffset === cursor;
-    cursor = page.nextOffset;
-
-    if (done) return cursor;
-  }
 });
 
 export const concat = (parts: ReadonlyArray<Uint8Array>) => {
@@ -103,10 +141,10 @@ export const missingDocument = () =>
     status: 404,
   });
 
-export const requireDocument = Effect.fn("Yjs.requireDocument")(function* (id: string) {
-  const reader = yield* StreamsReader;
+export const requireDocument = Effect.fn("Yjs.requireDocument")(function* (document: string) {
+  const updates = yield* Updates;
 
-  yield* reader.head(StreamId.make(`${id}/.updates`)).pipe(
+  yield* updates.head({ document }).pipe(
     Effect.catchTags({
       StreamNotFound: () => Effect.fail(missingDocument()),
       StreamGone: () => Effect.fail(missingDocument()),

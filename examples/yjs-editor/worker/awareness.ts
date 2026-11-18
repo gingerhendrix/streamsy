@@ -1,69 +1,36 @@
-import { CreateResult, StreamId } from "@streamsy/core";
-import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { Clock, Effect, Schema } from "effect";
+import { CreateResult } from "@streamsy/core";
+import { Clock, Effect, Option } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { YjsProtocolError } from "./protocol-error.ts";
-import { binary, forward, requireDocument } from "./streams.ts";
+import { Awareness, AwarenessIndex, forward, requireDocument } from "./streams.ts";
 
 /** Presence is ephemeral: an awareness stream nobody writes to expires after an hour. */
 const awarenessTtlSeconds = 3600;
 
-const AwarenessEntry = Schema.Struct({
-  name: Schema.optionalKey(Schema.String),
-  createdAt: Schema.optionalKey(Schema.Finite),
-});
-
-const AwarenessEntryJson = Schema.fromJsonString(AwarenessEntry);
-
-export const readAwarenessRegistry = Effect.fn("Yjs.readAwarenessRegistry")(function* (id: string) {
-  const reader = yield* StreamsReader;
-
-  const result = yield* reader
-    .read(StreamId.make(id), { offset: "-1" })
-    .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
-
-  if (result === undefined) return [];
-
-  return yield* Effect.forEach(result.messages, (message) =>
-    Schema.decodeEffect(AwarenessEntryJson)(new TextDecoder().decode(message.data)),
-  );
-});
-
 export const createAwareness = Effect.fn("Yjs.createAwareness")(function* (
-  id: string,
+  document: string,
   name: string,
 ) {
-  const writer = yield* StreamsWriter;
-
-  const result = yield* writer.create(StreamId.make(`${id}/.awareness/${name}`), {
-    contentType: binary,
-    ttlSeconds: awarenessTtlSeconds,
-  });
-
+  const awareness = yield* Awareness;
+  const result = yield* awareness.create({ document, name }, { ttlSeconds: awarenessTtlSeconds });
   const created = CreateResult.$is("Created")(result);
 
   if (created && name !== "default") {
-    const registry = StreamId.make(`${id}/.awareness-index`);
-    yield* writer.create(registry, { contentType: "application/json" });
-    const createdAt = yield* Clock.currentTimeMillis;
-
-    const json = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(AwarenessEntry)))([
-      { name, createdAt },
-    ]);
-
-    yield* writer.append(registry, {
-      contentType: "application/json",
-      data: new TextEncoder().encode(json),
-    });
+    const index = yield* AwarenessIndex;
+    yield* index.create({ document });
+    yield* index.append({ document }, [{ name, createdAt: yield* Clock.currentTimeMillis }]);
   }
 
   return HttpServerResponse.empty({ status: created ? 201 : 200 });
 });
 
-const removeAwareness = Effect.fn("Yjs.removeAwareness")(function* (target: string) {
-  const writer = yield* StreamsWriter;
+const removeAwareness = Effect.fn("Yjs.removeAwareness")(function* (
+  document: string,
+  name: string,
+) {
+  const awareness = yield* Awareness;
 
-  yield* writer.remove(StreamId.make(target)).pipe(
+  yield* awareness.remove({ document, name }).pipe(
     Effect.catchTag("StreamNotFound", () =>
       Effect.fail(
         new YjsProtocolError({
@@ -82,37 +49,36 @@ const removeAwareness = Effect.fn("Yjs.removeAwareness")(function* (target: stri
 export const awarenessRequest = Effect.fn("Yjs.awarenessRequest")(function* (
   request: HttpServerRequest.HttpServerRequest,
   url: URL,
-  id: string,
+  document: string,
   name: string,
 ) {
-  if (!/^[a-zA-Z0-9_.-]{1,256}$/.test(name) || [".", ".."].includes(name))
+  if (Option.isNone(Awareness.parse(`${document}/.awareness/${name}`)))
     return yield* new YjsProtocolError({
       code: "INVALID_REQUEST",
       message: "Invalid awareness name",
       status: 400,
     });
-  const target = `${id}/.awareness/${name}`;
 
   switch (request.method) {
     case "PUT":
-      yield* requireDocument(id);
+      yield* requireDocument(document);
 
-      return yield* createAwareness(id, name);
+      return yield* createAwareness(document, name);
     case "POST":
-      yield* requireDocument(id);
+      yield* requireDocument(document);
       // Create is idempotent, and it recreates a stream whose TTL expired.
-      yield* createAwareness(id, name);
+      yield* createAwareness(document, name);
 
-      return yield* forward(request, target, new URLSearchParams());
+      return yield* forward(request, Awareness.at({ document, name }), new URLSearchParams());
     case "DELETE":
-      return yield* removeAwareness(target);
+      return yield* removeAwareness(document, name);
     default: {
       const query = new URLSearchParams(url.searchParams);
       query.delete("awareness");
 
       if (query.get("live") === "true") query.set("live", "sse");
 
-      return yield* forward(request, target, query);
+      return yield* forward(request, Awareness.at({ document, name }), query);
     }
   }
 });

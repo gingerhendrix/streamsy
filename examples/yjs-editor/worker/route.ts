@@ -29,9 +29,3 @@ export const parseDocumentRoute = (pathname: string): DocumentRoute | null => {
 
   return { service: match[1], docPath: path };
 };
-
-/** The document that owns a backing stream under `/v1/stream`. */
-export const backingStreamOwner = (pathname: string) =>
-  /^\/v1\/stream\/(yjs\/[^/]+\/docs\/.+?)\/(\.updates|\.awareness-index|\.awareness\/[^/]+|\.snapshots\/[^/]+)$/.exec(
-    pathname,
-  )?.[1];
