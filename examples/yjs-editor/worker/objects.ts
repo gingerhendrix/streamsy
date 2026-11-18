@@ -6,16 +6,13 @@ import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Digest, SecureRandom } from "effect/crypto";
 import { Array, Clock, ConfigProvider, Context, Effect, Layer, Schema, Semaphore } from "effect";
-import {
-  Headers as HttpHeaders,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   compaction,
   CompactionThreshold,
+  concat,
   readIndex,
+  readToTail,
   snapshotStream,
   Updates,
 } from "./compaction.ts";
@@ -150,107 +147,55 @@ const createAwareness = Effect.fn("Yjs.createAwareness")(function* (id: string, 
   return HttpServerResponse.empty({ status: created ? 201 : 200 });
 });
 
-const backingStreamProgram = Http.app({ pathPrefix: "/v1/stream", maxMessageSize });
+const backingStream = Http.app({ pathPrefix: "/v1/stream", maxMessageSize });
 
-/** Reuse the base HTTP write program, including producer acknowledgements. No self-HTTP. */
-const writeStream = Effect.fn("Yjs.writeStream")(function* (
-  request: HttpServerRequest.HttpServerRequest,
-  id: string,
-  body: Uint8Array,
-) {
-  // The stock provider closes its producer on disconnect. Stream-Closed must not
-  // close the shared document; match the reference server's POST header policy.
-  const headers = request.method === "POST" ? new Headers() : new Headers(request.headers);
+/** Producer headers the stock provider sends with each append. */
+const producerHeaders = [
+  "producer-id",
+  "producer-epoch",
+  "producer-seq",
+  "stream-producer-id",
+  "stream-producer-epoch",
+  "stream-producer-seq",
+];
 
-  if (request.method === "POST") {
-    for (const name of [
-      "producer-id",
-      "producer-epoch",
-      "producer-seq",
-      "stream-producer-id",
-      "stream-producer-epoch",
-      "stream-producer-seq",
-    ]) {
-      const value = request.headers[name];
-
-      if (value !== undefined) headers.set(name, value);
-    }
-  }
-
-  headers.delete("host");
-
-  if (request.method === "POST" || !headers.has("content-type"))
-    headers.set("content-type", binary);
-  const original = yield* HttpServerRequest.toWeb(request);
-
-  const forwarded = HttpServerRequest.fromWeb(
-    new Request(`https://internal/v1/stream/${id}`, {
-      method: request.method,
-      headers,
-      body,
-      signal: original.signal,
-    }),
-  );
-
-  return yield* backingStreamProgram.pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
-  );
-});
-
-/** Native Response text errors use this charset on the existing stream wire. */
-const streamFailure = (message: string, options: HttpServerResponse.Options.WithContentType) =>
-  HttpServerResponse.text(message, { ...options, contentType: "text/plain;charset=UTF-8" });
-
-/** Http.read supplies framing/live modes; keep the base protocol's read failures. */
-const readStream = Effect.fn("Yjs.readStream")(function* (
+/**
+ * Run the base protocol program on one backing stream, passing the request's
+ * unread body through. `Http.app` reads the stream id from the Web request's
+ * URL, so the request is rebuilt rather than modified.
+ */
+const forward = Effect.fn("Yjs.forward")(function* (
   request: HttpServerRequest.HttpServerRequest,
   id: string,
   query: URLSearchParams,
 ) {
-  const headers = request.method === "HEAD" ? { "cache-control": "no-store" } : {};
+  const original = yield* HttpServerRequest.toWeb(request);
+  const headers = new Headers(request.method === "POST" ? {} : original.headers);
 
-  return yield* Http.read(StreamId.make(id)).pipe(
+  // The stock provider closes its producer on disconnect. An append keeps only
+  // producer headers, so `Stream-Closed` never closes the shared document.
+  if (request.method === "POST") {
+    for (const name of producerHeaders) {
+      const value = original.headers.get(name);
+
+      if (value !== null) headers.set(name, value);
+    }
+
+    headers.set("content-type", binary);
+  }
+
+  const forwarded = new Request(`https://internal/v1/stream/${id}?${query.toString()}`, {
+    method: request.method,
+    headers,
+    body: original.body,
+    signal: original.signal,
+  });
+
+  return yield* backingStream.pipe(
     Effect.provideService(
       HttpServerRequest.HttpServerRequest,
-      request.modify({
-        url: `/v1/stream/${id}?${query.toString()}`,
-        headers: HttpHeaders.remove(request.headers, "host"),
-      }),
+      HttpServerRequest.fromWeb(forwarded),
     ),
-    Effect.catchTags({
-      StreamNotFound: () =>
-        Effect.succeed(streamFailure("Stream not found", { status: 404, headers })),
-      StreamGone: () =>
-        Effect.succeed(streamFailure("Stream is soft-deleted", { status: 410, headers })),
-      InvalidReadRequest: ({ message }) => Effect.succeed(streamFailure(message, { status: 400 })),
-      NotSupported: ({ feature }) =>
-        Effect.succeed(
-          streamFailure(`Feature not supported: ${feature}`, {
-            status: 400,
-            headers: { "stream-not-supported": feature },
-          }),
-        ),
-      StorageFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
-      TransportFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
-    }),
-    Effect.map(HttpServerResponse.setHeaders(Http.securityHeaders)),
-  );
-});
-
-/** Return the same base-protocol status/body as DELETE on a backing stream. */
-const removeStream = Effect.fn("Yjs.removeStream")(function* (id: string) {
-  const writer = yield* StreamsWriter;
-
-  return yield* writer.remove(StreamId.make(id)).pipe(
-    Effect.as(HttpServerResponse.empty({ status: 204 })),
-    Effect.catchTags({
-      StreamNotFound: () => Effect.succeed(streamFailure("Stream not found", { status: 404 })),
-      StreamGone: () => Effect.succeed(streamFailure("Stream is soft-deleted", { status: 410 })),
-      StreamBusy: () => Effect.succeed(streamFailure("Stream busy, retry later", { status: 503 })),
-      StorageFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
-      TransportFault: () => Effect.succeed(streamFailure("Internal server error", { status: 500 })),
-    }),
-    Effect.map(HttpServerResponse.setHeaders(Http.securityHeaders)),
   );
 });
 
@@ -263,11 +208,10 @@ const deleteDocument = Effect.fn("Yjs.deleteDocument")(function* (id: string) {
 
 const removeDocument = Effect.fn("Yjs.removeDocument")(function* (id: string) {
   const writer = yield* StreamsWriter;
-  const deleted = yield* removeStream(`${id}/.updates`);
 
-  if (deleted.status === 404) return yield* missingDocument();
-
-  if (deleted.status < 200 || deleted.status >= 300) return deleted;
+  yield* writer
+    .remove(StreamId.make(`${id}/.updates`))
+    .pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(missingDocument())));
 
   const paths = new Set([
     `${id}/.index`,
@@ -307,11 +251,6 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
       status: 405,
     });
 
-  // Buffer once so an expired awareness stream can be recreated and retried.
-  const body = ["PUT", "POST"].includes(method)
-    ? new Uint8Array(yield* request.arrayBuffer)
-    : new Uint8Array();
-
   const awareness = url.searchParams.get("awareness");
 
   if (awareness !== null) {
@@ -326,28 +265,27 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
     if (method === "PUT" || method === "POST") {
       yield* requireDocument(id);
 
-      if (method === "PUT") return yield* createAwareness(id, awareness);
-      let result = yield* writeStream(request, target, body);
+      // Create is idempotent, and it recreates a stream whose TTL expired.
+      const created = yield* createAwareness(id, awareness);
 
-      if (result.status === 404) {
-        yield* createAwareness(id, awareness);
-        result = yield* writeStream(request, target, body);
-      }
-
-      return result;
+      return method === "PUT" ? created : yield* forward(request, target, new URLSearchParams());
     }
 
     if (method === "DELETE") {
-      const removed = yield* removeStream(target);
+      const writer = yield* StreamsWriter;
 
-      if (removed.status === 404)
-        return yield* new YjsProtocolError({
-          code: "STREAM_NOT_FOUND",
-          message: "Awareness stream not found",
-          status: 404,
-        });
-
-      return removed;
+      return yield* writer.remove(StreamId.make(target)).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 204 })),
+        Effect.catchTag("StreamNotFound", () =>
+          Effect.fail(
+            new YjsProtocolError({
+              code: "STREAM_NOT_FOUND",
+              message: "Awareness stream not found",
+              status: 404,
+            }),
+          ),
+        ),
+      );
     }
 
     const query = new URLSearchParams(url.searchParams);
@@ -355,7 +293,7 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
 
     if (query.get("live") === "true") query.set("live", "sse");
 
-    return yield* readStream(request, target, query);
+    return yield* forward(request, target, query);
   }
 
   const offset = url.searchParams.get("offset");
@@ -385,24 +323,19 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
   if (method === "GET" && offset?.endsWith("_snapshot")) {
     if (!/^\d{16}_\d{16}_snapshot$/.test(offset)) return yield* snapshotNotFound();
 
-    // Snapshot reads ignore client conditionals and live/query options, as before.
-    const result = yield* readStream(
-      HttpServerRequest.fromWeb(new Request("https://internal")),
-      `${id}/.snapshots/${offset}`,
-      new URLSearchParams({ offset: "-1" }),
-    );
+    const parts: Array<Uint8Array> = [];
 
-    if (result.status === 404) return yield* snapshotNotFound();
-
-    if (result.status < 200 || result.status >= 300) return result;
+    yield* readToTail(StreamId.make(`${id}/.snapshots/${offset}`), "-1", (data) =>
+      parts.push(data),
+    ).pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(snapshotNotFound())));
 
     const base = offset.slice(0, -"_snapshot".length);
     // Upstream uses the next sequence position; this still precedes the next Streamsy update.
     const next = `${base.slice(0, 17)}${String(BigInt(base.slice(17)) + 1n).padStart(16, "0")}`;
 
-    return HttpServerResponse.raw(HttpServerResponse.toWeb(result).body, {
-      status: 200,
-      headers: { "content-type": binary, "stream-next-offset": next },
+    return HttpServerResponse.uint8Array(concat(parts), {
+      contentType: binary,
+      headers: { "stream-next-offset": next },
     });
   }
 
@@ -414,23 +347,24 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
 
     if (query.get("live") === "true") query.set("live", "long-poll");
 
-    return yield* readStream(request, updates, query);
+    return yield* forward(request, updates, query);
+  }
+
+  if (method === "PUT") {
+    const writer = yield* StreamsWriter;
+    const result = yield* writer.create(StreamId.make(updates), { contentType: binary });
+    yield* createAwareness(id, "default");
+
+    return HttpServerResponse.empty({ status: CreateResult.$is("Created")(result) ? 201 : 200 });
   }
 
   // The fold's byte count lags the log by the updates the alarm has not folded yet.
-  if (method === "POST") {
-    const { state } = yield* Projection.read(compaction.at({ document: id }));
+  const { state } = yield* Projection.read(compaction.at({ document: id }));
 
-    if (state.bytes > maxDocumentBytes) return yield* documentFull();
-  }
+  if (state.bytes > maxDocumentBytes) return yield* documentFull();
 
   // The append's commit marks the compaction fold; the object alarm runs it.
-  const result = yield* writeStream(request, updates, body);
-
-  if (method === "PUT" && result.status >= 200 && result.status < 300)
-    yield* createAwareness(id, "default");
-
-  return result;
+  return yield* forward(request, updates, new URLSearchParams());
 });
 
 const yjsRoutes = HttpRouter.add(

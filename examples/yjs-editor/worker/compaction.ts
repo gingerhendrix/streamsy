@@ -69,7 +69,7 @@ export const readIndex = Effect.fn("Yjs.readIndex")(function* (document: string)
 });
 
 /** Read every message of a stream from `offset` to its tail. Returns the tail cursor. */
-const readToTail = Effect.fn("Yjs.readToTail")(function* (
+export const readToTail = Effect.fn("Yjs.readToTail")(function* (
   id: StreamId,
   offset: string,
   each: (data: Uint8Array) => void,
@@ -88,7 +88,7 @@ const readToTail = Effect.fn("Yjs.readToTail")(function* (
   }
 });
 
-const concat = (parts: ReadonlyArray<Uint8Array>) => {
+export const concat = (parts: ReadonlyArray<Uint8Array>) => {
   let length = 0;
 
   for (const part of parts) length += part.length;
