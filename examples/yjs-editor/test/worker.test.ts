@@ -209,6 +209,51 @@ describe("native Cloudflare Yjs host", () => {
     expect((await log.arrayBuffer()).byteLength).toBe(0);
   });
 
+  it("refuses writes past the document budget and keeps serving reads", async () => {
+    const docUrl = `${host.url}/v1/yjs/test/docs/full`;
+    expect((await fetch(docUrl, { method: "PUT" })).ok).toBe(true);
+    const doc = new Y.Doc();
+    let pending = new Uint8Array();
+    doc.on("update", (update: Uint8Array) => {
+      pending = frame(update);
+    });
+
+    // 1.4 MB inserts until the fold's count passes the 8 MiB budget. The count
+    // lags the log by unfolded updates, so the refusal may come a write late.
+    let accepted = "";
+    let refused: Response | undefined;
+
+    for (const letter of "ABCDEFGH") {
+      doc.getText("text").insert(doc.getText("text").length, letter.repeat(1_400_000));
+      const response = await fetch(docUrl, { method: "POST", body: pending });
+
+      if (response.status === 413) {
+        refused = response;
+        break;
+      }
+
+      expect(response.status).toBe(204);
+      accepted = doc.getText("text").toJSON();
+    }
+
+    expect(refused?.status).toBe(413);
+    expect(await refused!.json()).toMatchObject({ error: { code: "DOCUMENT_TOO_LARGE" } });
+
+    const tail = async () =>
+      (await fetch(docUrl, { method: "HEAD" })).headers.get("stream-next-offset");
+
+    const end = await tail();
+    expect((await fetch(docUrl, { method: "POST", body: pending })).status).toBe(413);
+    expect(await tail()).toBe(end);
+    expect((await fetch(`${docUrl}?offset=-1`)).status).toBe(200);
+
+    const fresh = peer("full");
+    await wait(() => fresh.provider.synced);
+    expect(fresh.doc.getText("text").toJSON()).toBe(accepted);
+    fresh.provider.destroy();
+    doc.destroy();
+  });
+
   it("serializes concurrent compactions without losing either writer's updates", async () => {
     const a = peer("concurrent-compaction");
     const b = peer("concurrent-compaction");

@@ -29,6 +29,12 @@ const binary = "application/octet-stream";
 /** One update message must fit in a Durable Object SQLite value, which is limited to 2 MB. */
 const maxMessageSize = 1.5 * 1024 * 1024;
 
+/**
+ * Total update bytes one document accepts. Compaction holds the whole document
+ * in the object's memory; the perf run measured safe snapshots up to 11 MB.
+ */
+const maxDocumentBytes = 8 * 1024 * 1024;
+
 class Mutations extends Context.Service<Mutations, Semaphore.Semaphore>()("yjs-editor/Mutations") {
   static readonly layer = Layer.effect(Mutations, Semaphore.make(1));
 }
@@ -66,6 +72,13 @@ const missingDocument = () =>
     code: "DOCUMENT_NOT_FOUND",
     message: "Document does not exist",
     status: 404,
+  });
+
+const documentFull = () =>
+  new YjsProtocolError({
+    code: "DOCUMENT_TOO_LARGE",
+    message: "Document reached its size limit",
+    status: 413,
   });
 
 const snapshotNotFound = () =>
@@ -402,6 +415,13 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
     if (query.get("live") === "true") query.set("live", "long-poll");
 
     return yield* readStream(request, updates, query);
+  }
+
+  // The fold's byte count lags the log by the updates the alarm has not folded yet.
+  if (method === "POST") {
+    const { state } = yield* Projection.read(compaction.at({ document: id }));
+
+    if (state.bytes > maxDocumentBytes) return yield* documentFull();
   }
 
   // The append's commit marks the compaction fold; the object alarm runs it.
