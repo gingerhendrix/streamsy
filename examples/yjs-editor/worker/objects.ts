@@ -5,7 +5,7 @@ import { CheckpointStore, ProjectionWakeup, Transaction } from "@streamsy/projec
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Digest, SecureRandom } from "effect/crypto";
-import { ConfigProvider, Context, Effect, Layer, Semaphore } from "effect";
+import { ConfigProvider, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import { compaction, CompactionThreshold, Updates } from "./compaction.ts";
 import { documentRequest } from "./document.ts";
@@ -14,10 +14,6 @@ import { protocolErrorResponse, unavailable, YjsProtocolError } from "./protocol
 import { parseDocumentRoute } from "./route.ts";
 
 const streams = Streamsy.group(Updates, Streamsy.Wildcard);
-
-class Mutations extends Context.Service<Mutations, Semaphore.Semaphore>()("yjs-editor/Mutations") {
-  static readonly layer = Layer.effect(Mutations, Semaphore.make(1));
-}
 
 const storage = (state: DurableObjectState) =>
   Layer.mergeAll(
@@ -36,17 +32,6 @@ const storage = (state: DurableObjectState) =>
     Layer.provideMerge(Layer.merge(Digest.layerWebCrypto, SecureRandom.layerWebCrypto)),
   );
 
-// One permit covers Yjs mutations. Reads never take it.
-const serializeMutations = <A, E, R>(handler: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-
-    if (["GET", "HEAD"].includes(request.method)) return yield* handler;
-    const mutations = yield* Mutations;
-
-    return yield* mutations.withPermit(handler);
-  });
-
 const yjsRoutes = HttpRouter.add(
   "*",
   "/v1/yjs/*",
@@ -64,7 +49,6 @@ const yjsRoutes = HttpRouter.add(
 
     return yield* documentRequest(request, url, route);
   }).pipe(
-    serializeMutations,
     Effect.catchTag("YjsProtocolError", (error) => Effect.succeed(protocolErrorResponse(error))),
     Effect.catch((error) =>
       Effect.logError("Yjs request failed", error).pipe(
@@ -88,7 +72,7 @@ export class DocumentObject extends StreamsyObject.make({
   app: Layer.merge(Http.routes(streams, { prefix: "/v1/stream", access: "read" }), yjsRoutes),
   wakeups: [ProjectionWakeup.attach(compaction)],
   layer: (state: DurableObjectState, env: Env) =>
-    Layer.mergeAll(storage(state), Mutations.layer, CompactionThreshold.layer).pipe(
+    Layer.merge(storage(state), CompactionThreshold.layer).pipe(
       Layer.provideMerge(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
