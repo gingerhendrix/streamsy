@@ -4,6 +4,7 @@ import { Commit, Projection } from "@streamsy/projection";
 import { Clock, Config, Context, Effect, Layer, Option, Schema } from "effect";
 import * as decoding from "lib0/decoding";
 import * as Y from "yjs";
+import { binary, concat, readToTail } from "./streams.ts";
 
 /** Each document's update log. The id grammar puts every document under `yjs/`. */
 export class Updates extends Streamsy.custom<Updates>()("YjsEditor/Updates", {
@@ -39,8 +40,6 @@ export class CompactionThreshold extends Context.Service<CompactionThreshold, nu
 /** Durable Object SQLite rejects a value over 2 MB, so a snapshot is stored as 1 MiB messages. */
 const SNAPSHOT_CHUNK = 1024 * 1024;
 
-const binary = "application/octet-stream";
-
 const IndexEntry = Schema.Struct({
   snapshotOffset: Schema.String,
   createdAt: Schema.Finite,
@@ -67,41 +66,6 @@ export const readIndex = Effect.fn("Yjs.readIndex")(function* (document: string)
     Schema.decodeEffect(IndexEntryJson)(new TextDecoder().decode(message.data)),
   );
 });
-
-/** Read every message of a stream from `offset` to its tail. Returns the tail cursor. */
-export const readToTail = Effect.fn("Yjs.readToTail")(function* (
-  id: StreamId,
-  offset: string,
-  each: (data: Uint8Array) => void,
-) {
-  const reader = yield* StreamsReader;
-  let cursor = offset;
-
-  while (true) {
-    const page = yield* reader.read(id, { offset: cursor });
-
-    for (const message of page.messages) each(message.data);
-    const done = page.upToDate || page.nextOffset === cursor;
-    cursor = page.nextOffset;
-
-    if (done) return cursor;
-  }
-});
-
-export const concat = (parts: ReadonlyArray<Uint8Array>) => {
-  let length = 0;
-
-  for (const part of parts) length += part.length;
-  const out = new Uint8Array(length);
-  let at = 0;
-
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-
-  return out;
-};
 
 /**
  * Merge the previous snapshot with every update after it, up to the log's tail,

@@ -1,6 +1,6 @@
 import { Context, Effect } from "effect";
 import { HttpRouter, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { documentId, parseDocumentRoute } from "./objects.ts";
+import { documentId, parseDocumentRoute } from "./route.ts";
 import type { Env } from "./env.ts";
 import { protocolErrorResponse, YjsProtocolError } from "./protocol-error.ts";
 
