@@ -187,6 +187,7 @@ export const compaction = Projection.fold({
   inputs: { updates: Updates },
   state: { schema: FoldState, initial: { bytes: 0, published: 0 } },
   commit: Commit.transaction,
+  retry: { maxAttempts: 5 },
   fold: (state, { item }, unit) =>
     Effect.gen(function* () {
       const bytes = state.bytes + item.length;
