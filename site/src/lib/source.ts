@@ -21,7 +21,12 @@ export const docsLlms = llms(source, {
 ${await page.data.getText("processed")}`,
 });
 
-/** Shared, pre-rendered social image served by Cloudflare static assets. */
-export function getPageImage(_page: { slugs: string[] }) {
-  return { segments: ["og.webp"], url: withBasePath("/og.webp") };
+/**
+ * Social image served by Cloudflare static assets. A page sets `image` in its
+ * frontmatter to use its own file under `public/`. Other pages share `/og.webp`.
+ */
+export function getPageImage(page: { data: { image?: string | undefined } }) {
+  const path = (page.data.image ?? "/og.webp") as `/${string}`;
+
+  return { url: withBasePath(path) };
 }

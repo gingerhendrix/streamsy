@@ -16,6 +16,11 @@ export const articles = defineCollections({
 export const docs = defineDocs({
   dir: "content/docs",
   docs: {
+    // `image` overrides the shared social image. It is a path under `public/`,
+    // such as `/og/doom.webp`, so crawlers get a stable URL without a build hash.
+    schema: pageSchema.extend({
+      image: z.string().startsWith("/").optional(),
+    }),
     postprocess: {
       includeProcessedMarkdown: true,
     },
