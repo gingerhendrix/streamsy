@@ -4,7 +4,7 @@ import { Projection, Transaction } from "@streamsy/projection";
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { awarenessRequest, createAwareness, readAwarenessRegistry } from "./awareness.ts";
-import { compaction, readIndex, snapshotStream } from "./compaction.ts";
+import { compaction, snapshotStream } from "./compaction.ts";
 import { YjsProtocolError } from "./protocol-error.ts";
 import { documentId, type DocumentRoute } from "./route.ts";
 import {
@@ -40,15 +40,10 @@ const snapshotNotFound = () =>
 const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL, id: string) {
   yield* requireDocument(id);
 
-  // Discovery only reads the index. A missing or unreadable index means "replay from -1".
-  const latest = yield* readIndex(id).pipe(
-    Effect.map((entries) => entries.at(-1)?.snapshotOffset),
-    Effect.catch((error) =>
-      Effect.logWarning("Yjs snapshot index unreadable", error).pipe(Effect.as(undefined)),
-    ),
-  );
+  // A pending snapshot is not in the fold state yet, so discovery returns the previous one.
+  const { state } = yield* Projection.read(compaction.at({ document: id }));
 
-  url.searchParams.set("offset", latest ? `${latest}_snapshot` : "-1");
+  url.searchParams.set("offset", state.snapshot ? `${state.snapshot}_snapshot` : "-1");
 
   return HttpServerResponse.empty({
     status: 307,
@@ -120,9 +115,10 @@ const removeDocument = Effect.fn("Yjs.removeDocument")(function* (id: string) {
     .remove(StreamId.make(`${id}/.updates`))
     .pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(missingDocument())));
 
-  const paths = new Set([`${id}/.index`, `${id}/.awareness/default`, `${id}/.awareness-index`]);
+  const { state } = yield* Projection.read(compaction.at({ document: id }));
+  const paths = new Set([`${id}/.awareness/default`, `${id}/.awareness-index`]);
 
-  for (const entry of yield* readIndex(id)) paths.add(snapshotStream(id, entry.snapshotOffset));
+  if (state.snapshot !== undefined) paths.add(snapshotStream(id, state.snapshot));
 
   for (const entry of yield* readAwarenessRegistry(`${id}/.awareness-index`))
     if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
