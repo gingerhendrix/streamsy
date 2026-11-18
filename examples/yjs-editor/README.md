@@ -36,7 +36,8 @@ bun run format:check
 `YJS_TEST_SCRATCH` puts test state in another directory. Each test host is disposed
 and its temporary state is removed. Tests cover convergence, snapshot plus tail
 loading, partial compaction state and snapshot discovery after process restart,
-concurrent compactions, continued editing after a peer disconnects, and awareness.
+a document past 2 MB, rejection of an oversized update, concurrent compactions,
+continued editing after a peer disconnects, and awareness.
 
 ## Architecture
 
@@ -48,7 +49,7 @@ stock YjsProvider (HTTP writes, binary SSE live reads)
 Cloudflare Worker → one DocumentObject per service/document
         │ Effect HttpRouter: Yjs routes + backing-stream routes
 Streamsy services + DurableObjectStorage (SQLite)
-        └─ Projection.fold → durable checkpoint → snapshot + index
+        └─ alarm: ProjectionWakeup → Projection.fold → snapshot + index
 ```
 
 `worker/index.ts` builds an Effect `HttpRouter` web handler once per isolate and
@@ -75,7 +76,7 @@ The underlying routes are also exposed, as in the upstream proxy:
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `.updates`                                            | Append-only lib0 length-prefixed Yjs updates; a producer batch can contain several frames |
 | `.index`                                              | JSON snapshot entries `{ snapshotOffset, createdAt, foldedBytes }`                        |
-| `.snapshots/<offset>_snapshot`                        | Raw `Y.encodeStateAsUpdate` bytes, without lib0 framing                                   |
+| `.snapshots/<offset>_snapshot`                        | Raw `Y.encodeStateAsUpdate` bytes in 1 MiB messages, without lib0 framing                 |
 | `.awareness/<name>`                                   | Lib0-framed awareness updates, with `Stream-TTL: 3600`                                    |
 | `.awareness-index`                                    | Durable registry of non-default awareness names, used for cascade deletion                |
 
@@ -96,36 +97,41 @@ the next update. Regular reads preserve the client's Streamsy cursor unchanged.
 
 ## The compaction fold
 
-`worker/compaction.ts` uses **`@streamsy/projection`**, rather than implementing a
-second checkpoint mechanism. Each fold step decodes every lib0 frame in one
-stored update message into a temporary `Y.Doc`, starting with the previously
-merged state. It saves the full `Y.encodeStateAsUpdate` as base64 plus a cumulative
-byte count. Mutable Yjs objects are destroyed after each step. The checkpoint
-stores both the fold value and its exact `.updates` cursor in the document's
-SQLite storage.
+`worker/compaction.ts` declares one **`@streamsy/projection`** fold for all
+documents. `Updates` is a custom stream declaration whose `document` param comes
+from the `.updates` stream id. The fold's state is two numbers: `bytes`, the
+total of every folded update message, and `published`, its value at the last
+snapshot. The checkpoint therefore stays a few bytes for any document size.
 
-After a successful write, a local storage transaction:
+Compaction runs **off the request path**. `DocumentObject` passes
+`ProjectionWakeup.attach(compaction)` to `StreamsyObject` as a wakeup:
 
-1. Runs the fold through committed update messages, including any missed after a
-   previous object eviction. Duplicate producer acknowledgements add no bytes.
-2. Compares the cumulative bytes with the last `.index` entry's `foldedBytes`.
-3. At the threshold, creates an immutable snapshot at the folded cursor, appends
-   the index entry and removes the previous snapshot.
-4. Commits the checkpoint, snapshot and index on the **same storage owner**.
+1. A write commits to `.updates`. In the same transaction, a commit hook writes a
+   pending mark for that document's fold binding.
+2. The request returns its status. The host arms the object's alarm.
+3. The alarm runs the fold under `Commit.transaction`. When `bytes - published`
+   reaches `COMPACTION_THRESHOLD`, the step loads the previous snapshot into a
+   `Y.Doc`, applies every update after it up to the log's tail, and writes
+   `Y.encodeStateAsUpdate` as a new snapshot at the tail cursor.
+4. The snapshot, its index entry, the removal of the previous snapshot and the
+   fold checkpoint commit in one SQLite transaction on the document's object.
 
-The constructor's default `Commit.checkpoint` joins this surrounding
-`Transaction.withTransaction`; publication and the checkpoint therefore commit
-together. An object-layer semaphore serializes mutations and snapshot discovery;
-no compaction counters or document state depend on it. SSE and long-poll reads
-never hold its permit. The object layer supplies `COMPACTION_THRESHOLD` through
-Effect `Config`.
+The pending mark is durable. If the object stops between a write and its alarm,
+the restarted object reads the mark and arms the alarm again. A failed
+compaction retries with the projection runner's backoff and never fails a
+write. Snapshot discovery only reads `.index`; while a snapshot is pending it
+returns the previous one, or `-1`.
 
-Snapshot discovery also runs the fold. If an object stops after an append but
-before folding it, the next write or discovery catches up. No background
-compaction service or separate alarm is required. Update history is retained so
-stale readers can resume; compaction reduces fresh-client transfer, not log disk
-usage. This simple teaching example reconstructs the merged state for each step
-and reads the index when publishing; large documents need a CPU/storage strategy.
+Durable Object SQLite rejects a string, BLOB or row over 2 MB. The fold never
+stores the document, the snapshot is written as 1 MiB messages, and a binary
+read concatenates them. The adapter rejects update bodies over 1.5 MiB with
+`413`, so one update message always fits.
+
+An object-layer semaphore serializes Yjs and backing-stream mutations; reads
+never hold its permit. The alarm does not take it: the fold commits in its own
+transaction, and document deletion runs in one transaction, so the alarm never
+sees a half-deleted document. Update history is retained so stale readers can
+resume; compaction reduces fresh-client transfer, not log disk usage.
 
 ## Upstream conformance
 
@@ -177,6 +183,7 @@ invokes Alchemy for the selected stage. **Deployment was not run.**
   updates, without the snapshot transfer optimization. This was measured in the
   browser smoke check. Node/Bun stock providers load snapshots in the focused
   tests. Keeping the requested client unmodified preserves this upstream limit.
-- The adapter accepts update bodies up to 4 MiB through Streamsy; compaction
-  remains subject to Durable Object CPU, memory and SQLite limits.
+- The adapter accepts update bodies up to 1.5 MiB. Compaction holds the previous
+  snapshot and the new updates in the object's memory, so document size is
+  bounded by the 128 MB isolate and the alarm's CPU limit. Neither was measured.
 - Fonts are loaded from Google Fonts, with local serif/sans-serif fallbacks.
