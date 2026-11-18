@@ -7,7 +7,7 @@ This example is Doom, playable in a browser. The game state is recorded as a dur
 
 The full source is in the [streamsy-doom](https://github.com/gingerhendrix/streamsy-doom/tree/724539fd8b879f99c580e3ea5faf182a252f2480) repository, under GPL-2.0-or-later. Play it at [streamsy-doom-test.gingerhendrix.workers.dev](https://streamsy-doom-test.gingerhendrix.workers.dev/).
 
-## I'm too Young to Die (Doom on streams)
+## I'm too young to die: Doom on streams
 
 The idea comes from Electric's [Doom on Durable Streams](https://electric.ax/blog/2026/04/20/doom-on-durable-streams), read their article for the gory details.
 
@@ -41,7 +41,7 @@ A game shorter than ten minutes has no snapshot. Rewinding it replays from the s
 
 Because the game is a log, any moment in it can become the start of a different game. Forks are a first-class feature in Durable Streams and Streamsy. A fork creates a new stream that shares the original's history up to a chosen tic. The server shares the stored bytes and copies nothing. A new player loads the game at that tic and appends different inputs. The original game carries on unchanged, and the fork can be forked again.
 
-## Hey Not Too Rough (Streamsy Projections)
+## Hey, not too rough: Streamsy projections
 
 In the original demo the backend only stores bytes. It has no idea a game is being played.
 
@@ -53,21 +53,23 @@ The example runs a third copy of Doom on the server. A projection follows each g
 
 The same replay makes the rewind snapshots. Each time its engine reaches a multiple of 21,000 tics (ten minutes), it compresses the engine's memory and stores it.
 
-The stats and snaphots are pure functions over the inputs, we don't need to trust the browser, so observers can trust they match the recorded game.
+The stats and snapshots are pure functions over the inputs, we don't need to trust the browser, so observers can trust they match the recorded game.
 
 ### A live scoreboard
 
 Each game has its own stats stream. Another projection collects the stats and publishes them to a Durable State stream. The state stream holds keyed rows. Each update replaces the row for one game, and a reader folds the updates into a table. The lobby page follows that stream over a WebSocket and shows every game's stats as they change, with no polling and no database query.
 
-## Hurt Me Plenty (Cloudflare)
+In the lobby, Verified means the server's random-number bytes matched the player's on every tic, and Live turns off 30 seconds after the last input.
 
-The example runs on Cloudflare Workers and Durable Objects. A Durable Object is a small single-threaded server with its own SQLite storage and 128MB of memory.&#x20;
+## Hurt me plenty: Cloudflare
 
-Running all the games and the projections on one Durable Object will quickly hit scaling limits, so we scale horizontally with three kinds odf Durable Object&#x20;
+The example runs on Cloudflare Workers and Durable Objects. A Durable Object is a small single-threaded server with its own SQLite storage and 128MB of memory.
+
+Running all the games and the projections on one Durable Object will quickly hit scaling limits, so we scale horizontally with three kinds of Durable Object:
 
 | Object       | One for each                             | Holds                                                          | Why it is split this way                                                               |
 | ------------ | ---------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| ` DoomGames` | Family, meaning a game and all its forks | Input streams and their batch manifests                        | A fork shares stored bytes with its parent, so both streams must be in the same object |
+| `DoomGames`  | Family, meaning a game and all its forks | Input streams and their batch manifests                        | A fork shares stored bytes with its parent, so both streams must be in the same object |
 | `DoomReplay` | Game or fork                             | The server's Doom engine, its saved progress and its snapshots | An engine needs most of an object's memory, so each replay gets its own                |
 | `DoomLobby`  | Whole site                               | Session list and scoreboard                                    | One subscription shows every game                                                      |
 
@@ -75,7 +77,7 @@ The objects cannot call each other's code directly. When a game object stores ne
 
 ![Architecture diagram. The browser's Play page appends binary input batches through the Cloudflare Worker to the DoomGames object for the game's family. That object holds the Sessions stream with its forks, plus the Batches manifest. A Sessions append runs frameWake, which appends to ReplayWake in the session's DoomReplay object over an internal link. The replay alarm runs replayStats, which reads frames from DoomGames, steps a headless engine and appends to Scores in the DoomLobby object. Every 21,000 tics replayStats also writes a gzip snapshot to the server_snapshots SQLite table in the same DoomReplay object. The browser writes session metadata to LobbyStream. The Lobby page follows LobbyStream and Scores over a WebSocket. The Watch page reads frames and forks through DoomGames, reads snapshots from DoomReplay, and reads scores from DoomLobby.](/docs/examples/doom-architecture.svg)
 
-The numbers in the diagram match the numbered sections under [Implementation](#implementation).
+The numbers in the diagram match the numbered sections under [Ultra-Violence: implementation details](#ultra-violence-implementation-details).
 
 ### Performance
 
@@ -94,17 +96,9 @@ These figures were measured against a test deployment from one client on a home 
 - **The shared lobby slows the scoreboard as players join.** At 50 simultaneous players the lobby object takes about 110 stats rows a second, and the delay grows from 0.3 s to 1.0 s. We could trade scale for latency here by writing stats less frequently.
 - **Many live forks of one game are slow.** All forks of a game share one game object. With 20 forks playing at once, stats ran 9 to 20 seconds behind.
 
-## Hurt Me Plenty (Implementation Details)
+## Ultra-Violence: implementation details
 
-Words used below:
-
-| Word     | Meaning                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------- |
-| Frame    | The nine bytes recorded for a tic: an eight-byte command and the random-number byte         |
-| Session  | A game or a fork. Its ID is `<family>_<session>`, two 32-character hex parts                |
-| Family   | A game and all its forks. Forks keep their parent's family part                             |
-| Owner    | The Durable Object that stores a stream                                                     |
-| Snapshot | A gzip of the engine's settings and tic, then its memory XOR the memory just after start-up |
+Snippet paths are relative to the `streamsy-doom` repository. `// ...` marks omitted lines, and a snippet labelled "simplified" is rewritten to show the Streamsy calls without the surrounding bookkeeping.
 
 ### 1. Binary streams hold the input history
 
@@ -327,7 +321,7 @@ const snapshots = {
 };
 ```
 
-The snapshot is a side effect of the projection, not one of its outputs.&#x20;
+The snapshot is a side effect of the projection, not one of its outputs.
 
 `engine.snapshot()` uses the format the browser already restores: a gzip of a JSON line with the engine settings and tic, then the engine's 16 MiB of memory XOR the memory just after start-up. The XOR leaves mostly zeros, so a snapshot compresses to about 600 KB. `compressSnapshot` in `engine/src/snapshot.ts` streams the XOR in 64 KiB chunks into the runtime's native gzip, so it never holds a second full copy of memory.
 
@@ -454,6 +448,6 @@ followJson(client, "doom/v2/scores", {
 
 `StateRows` folds upserts and deletes into a map keyed by session ID. `render` joins the two maps by ID to draw the lobby table.
 
-### Stream Expiry
+### Stream expiry
 
 The example gives `Sessions`, `Batches` and `ReplayWake` a fixed expiry 24 hours after creation, which no read extends. A fork gets its own 24 hours from when it is created. Snapshot rows copy the `ReplayWake` deadline, so they expire with the game.
