@@ -38,14 +38,15 @@ let dispose = () => {};
 let currentRoom = "";
 
 const openRoom = (roomId: string) => {
-  let room = rooms[0]!;
-
-  for (const candidate of rooms) if (candidate.id === roomId) room = candidate;
+  // oxlint-disable-next-line effecttsgo/prefer-effect-array -- The browser bundle does not use Effect.
+  const room = rooms.find((candidate) => candidate.id === roomId) ?? rooms[0]!;
 
   if (room.id === currentRoom) return;
   dispose();
   currentRoom = room.id;
   element("#room-title").textContent = room.title;
+  element<HTMLAnchorElement>("#raw-stream").href =
+    `/v1/stream/yjs/editor/docs/${room.id}/.updates?offset=-1`;
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("#rooms button"))
     button.setAttribute("aria-current", String(button.dataset.room === room.id));
