@@ -85,7 +85,7 @@ export const awarenessRequest = Effect.fn("Yjs.awarenessRequest")(function* (
   id: string,
   name: string,
 ) {
-  if (!/^[a-zA-Z0-9_.-]{1,256}$/.test(name) || [".", "..", ".index"].includes(name))
+  if (!/^[a-zA-Z0-9_.-]{1,256}$/.test(name) || [".", ".."].includes(name))
     return yield* new YjsProtocolError({
       code: "INVALID_REQUEST",
       message: "Invalid awareness name",

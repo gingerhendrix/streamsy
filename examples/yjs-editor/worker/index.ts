@@ -22,7 +22,7 @@ export default {
       }
     }
 
-    if (url.pathname.startsWith("/v1/yjs/") && !url.pathname.includes("/__ds/"))
+    if (url.pathname.startsWith("/v1/yjs/"))
       return error("INVALID_REQUEST", "Invalid document path", 400);
 
     // The page and the Yjs routes share an origin, so no CORS headers are needed.

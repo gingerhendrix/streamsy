@@ -83,7 +83,7 @@ const readUpdates = Effect.fn("Yjs.readUpdates")(function* (
   url: URL,
   id: string,
 ) {
-  // HEAD ignored the query in the original adapter.
+  // HEAD reports the tail, so it takes no read query.
   const query =
     request.method === "GET" ? new URLSearchParams(url.searchParams) : new URLSearchParams();
 
@@ -120,18 +120,12 @@ const removeDocument = Effect.fn("Yjs.removeDocument")(function* (id: string) {
     .remove(StreamId.make(`${id}/.updates`))
     .pipe(Effect.catchTag("StreamNotFound", () => Effect.fail(missingDocument())));
 
-  const paths = new Set([
-    `${id}/.index`,
-    `${id}/.awareness/default`,
-    `${id}/.awareness-index`,
-    `${id}/.awareness/.index`,
-  ]);
+  const paths = new Set([`${id}/.index`, `${id}/.awareness/default`, `${id}/.awareness-index`]);
 
   for (const entry of yield* readIndex(id)) paths.add(snapshotStream(id, entry.snapshotOffset));
 
-  for (const registry of [".awareness-index", ".awareness/.index"])
-    for (const entry of yield* readAwarenessRegistry(`${id}/${registry}`))
-      if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
+  for (const entry of yield* readAwarenessRegistry(`${id}/.awareness-index`))
+    if (entry.name) paths.add(`${id}/.awareness/${entry.name}`);
 
   for (const path of paths)
     yield* writer
