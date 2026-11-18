@@ -20,6 +20,20 @@ const wait = async (condition: () => boolean | Promise<boolean>) => {
   throw new Error("Timed out waiting for provider/Worker");
 };
 
+/** The alarm publishes snapshots after the write returns, so discovery is polled. */
+const snapshotLocation = async (docUrl: string) => {
+  let location: string | null = null;
+  await wait(async () => {
+    location = (await fetch(`${docUrl}?offset=snapshot`, { redirect: "manual" })).headers.get(
+      "location",
+    );
+
+    return location?.includes("_snapshot") ?? false;
+  });
+
+  return location!;
+};
+
 const frame = (update: Uint8Array) => {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint8Array(encoder, update);
@@ -89,9 +103,7 @@ describe("native Cloudflare Yjs host", () => {
     a.doc.getText("text").insert(0, "S".repeat(1800));
     await a.provider.flush();
     const docUrl = `${host.url}/v1/yjs/test/docs/snapshot`;
-    const redirect = await fetch(`${docUrl}?offset=snapshot`, { redirect: "manual" });
-    expect(redirect.status).toBe(307);
-    expect(redirect.headers.get("location")).toContain("_snapshot");
+    expect(await snapshotLocation(docUrl)).toContain("_snapshot");
     a.doc.getText("text").insert(1800, " tail");
     await a.provider.flush();
     const b = peer("snapshot");
@@ -119,8 +131,8 @@ describe("native Cloudflare Yjs host", () => {
     await host.stop();
     host = await startWorker(directory, 0, 1500);
     doc.getText("text").insert(900, "B".repeat(900));
-    // Seed the append/fold gap through the backing route, then stop workerd.
-    // Discovery after restart must fold this unprocessed tail with the saved state.
+    // Append through the backing route, then stop workerd. The append's pending
+    // mark makes the restarted object's alarm fold this tail with the saved count.
     expect(
       (
         await fetch(`${host.url}/v1/stream/yjs/test/docs/${docId}/.updates`, {
@@ -133,11 +145,7 @@ describe("native Cloudflare Yjs host", () => {
     await host.stop();
     host = await startWorker(directory, 0, 1500);
 
-    const snapshot = (
-      await fetch(`${docUrl()}?offset=snapshot`, { redirect: "manual" })
-    ).headers.get("location");
-
-    expect(snapshot).toContain("_snapshot");
+    const snapshot = await snapshotLocation(docUrl());
     await host.stop();
     host = await startWorker(directory, 0, 1500);
     expect(
@@ -148,6 +156,57 @@ describe("native Cloudflare Yjs host", () => {
     expect(b.doc.getText("text").toJSON()).toBe(`${"A".repeat(900)}${"B".repeat(900)}`);
     b.provider.destroy();
     doc.destroy();
+  });
+
+  it("keeps accepting writes and loads the snapshot after the document passes 2 MB", async () => {
+    const docId = "large";
+    const docUrl = `${host.url}/v1/yjs/test/docs/${docId}`;
+    expect((await fetch(docUrl, { method: "PUT" })).ok).toBe(true);
+    const doc = new Y.Doc();
+    let pending = new Uint8Array();
+    doc.on("update", (update: Uint8Array) => {
+      pending = frame(update);
+    });
+
+    // Ten 300 kB inserts: the merged state passes the 2 MB SQLite value limit,
+    // and local workerd's measured ceiling between 2.1 and 3 MB.
+    for (const letter of "ABCDEFGHIJ") {
+      doc.getText("text").insert(doc.getText("text").length, letter.repeat(300_000));
+      expect((await fetch(docUrl, { method: "POST", body: pending })).status).toBe(204);
+    }
+
+    const expected = doc.getText("text").toJSON();
+
+    // Wait for the snapshot that covers the last update, then check its size.
+    let body = new Uint8Array();
+    await wait(async () => {
+      const location = await snapshotLocation(docUrl);
+      const response = await fetch(new URL(location, docUrl));
+      body = new Uint8Array(await response.arrayBuffer());
+      const check = new Y.Doc();
+      Y.applyUpdate(check, body);
+      const done = check.getText("text").toJSON() === expected;
+      check.destroy();
+
+      return response.ok && done;
+    });
+    expect(body.length).toBeGreaterThan(3_000_000);
+
+    const fresh = peer(docId);
+    await wait(() => fresh.provider.synced);
+    expect(fresh.doc.getText("text").toJSON()).toBe(expected);
+    fresh.provider.destroy();
+    doc.destroy();
+  });
+
+  it("rejects an update above the message limit before it reaches storage", async () => {
+    const docUrl = `${host.url}/v1/yjs/test/docs/oversized`;
+    expect((await fetch(docUrl, { method: "PUT" })).ok).toBe(true);
+    const response = await fetch(docUrl, { method: "POST", body: new Uint8Array(2_000_000) });
+    expect(response.status).toBe(413);
+    const log = await fetch(`${docUrl}?offset=-1`);
+    expect(log.status).toBe(200);
+    expect((await log.arrayBuffer()).byteLength).toBe(0);
   });
 
   it("serializes concurrent compactions without losing either writer's updates", async () => {

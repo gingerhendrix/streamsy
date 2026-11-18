@@ -1,12 +1,45 @@
-import { StreamId, Streamsy } from "@streamsy/core";
+import { StorageFault, StreamAddress, StreamId, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { Projection, Transaction } from "@streamsy/projection";
-import { Clock, Effect, Schema } from "effect";
-import * as buffer from "lib0/buffer";
+import { Commit, Projection } from "@streamsy/projection";
+import { Clock, Config, Context, Effect, Layer, Option, Schema } from "effect";
 import * as decoding from "lib0/decoding";
 import * as Y from "yjs";
 
-const FoldState = Schema.Struct({ update: Schema.String, bytes: Schema.Finite });
+/** Each document's update log. The id grammar puts every document under `yjs/`. */
+export class Updates extends Streamsy.custom<Updates>()("YjsEditor/Updates", {
+  parse: (id: string) => {
+    const match = /^(yjs\/[^/]+\/docs\/.+)\/\.updates$/.exec(id);
+
+    return match?.[1] === undefined ? Option.none() : Option.some({ document: match[1] });
+  },
+  address: ({ document }: { readonly document: string }) =>
+    StreamAddress.bytes(`${document}/.updates`),
+}) {}
+
+/** Bytes of new updates that publish the next snapshot. */
+export class CompactionThreshold extends Context.Service<CompactionThreshold, number>()(
+  "yjs-editor/CompactionThreshold",
+) {
+  static readonly layer = Layer.effect(
+    CompactionThreshold,
+    Config.Number("COMPACTION_THRESHOLD").pipe(
+      Config.withDefault(1048576),
+      Effect.mapError(
+        (cause) =>
+          new StorageFault({
+            operation: "yjs-editor.config",
+            message: cause.message,
+            retryable: false,
+          }),
+      ),
+    ),
+  );
+}
+
+/** Durable Object SQLite rejects a value over 2 MB, so a snapshot is stored as 1 MiB messages. */
+const SNAPSHOT_CHUNK = 1024 * 1024;
+
+const binary = "application/octet-stream";
 
 const IndexEntry = Schema.Struct({
   snapshotOffset: Schema.String,
@@ -16,93 +49,152 @@ const IndexEntry = Schema.Struct({
 
 const IndexEntryJson = Schema.fromJsonString(IndexEntry);
 
-/** Every saved value is a full Yjs update; the mutable Y.Doc never survives a step. */
-export const documentFold = (document: string) =>
-  Projection.fold({
-    id: `yjs-compaction:${document}`,
-    params: {},
-    inputs: { updates: Streamsy.Wildcard.at({ id: `${document}/.updates` }) },
-    state: { schema: FoldState, initial: { update: "", bytes: 0 } },
-    fold: (state, { item }) => {
-      const doc = new Y.Doc();
+export const snapshotStream = (document: string, offset: string) =>
+  StreamId.make(`${document}/.snapshots/${offset}_snapshot`);
 
-      try {
-        if (state.update) Y.applyUpdate(doc, buffer.fromBase64(state.update));
-        const decoder = decoding.createDecoder(item);
+const indexStream = (document: string) => StreamId.make(`${document}/.index`);
 
-        while (decoding.hasContent(decoder))
-          Y.applyUpdate(doc, decoding.readVarUint8Array(decoder));
+export const readIndex = Effect.fn("Yjs.readIndex")(function* (document: string) {
+  const reader = yield* StreamsReader;
 
-        return {
-          update: buffer.toBase64(Y.encodeStateAsUpdate(doc)),
-          bytes: state.bytes + item.length,
-        };
-      } finally {
-        doc.destroy();
-      }
-    },
-  }).at({});
+  const result = yield* reader
+    .read(indexStream(document), { offset: "-1" })
+    .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
 
-export const readIndex = (document: string) =>
-  Effect.gen(function* () {
-    const reader = yield* StreamsReader;
+  if (result === undefined) return [];
 
-    const result = yield* reader
-      .read(StreamId.make(`${document}/.index`), { offset: "-1" })
-      .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+  return yield* Effect.forEach(result.messages, (message) =>
+    Schema.decodeEffect(IndexEntryJson)(new TextDecoder().decode(message.data)),
+  );
+});
 
-    if (result === undefined) return [];
-    const entries: Array<typeof IndexEntry.Type> = [];
+/** Read every message of a stream from `offset` to its tail. Returns the tail cursor. */
+const readToTail = Effect.fn("Yjs.readToTail")(function* (
+  id: StreamId,
+  offset: string,
+  each: (data: Uint8Array) => void,
+) {
+  const reader = yield* StreamsReader;
+  let cursor = offset;
 
-    for (const message of result.messages) {
-      entries.push(
-        yield* Schema.decodeEffect(IndexEntryJson)(new TextDecoder().decode(message.data)),
-      );
-    }
+  while (true) {
+    const page = yield* reader.read(id, { offset: cursor });
 
-    return entries;
-  });
+    for (const message of page.messages) each(message.data);
+    const done = page.upToDate || page.nextOffset === cursor;
+    cursor = page.nextOffset;
 
-/** The fold checkpoint, snapshot and discovery index commit on the same SQLite owner. */
-export const compact = (document: string, threshold: number) =>
-  Effect.gen(function* () {
-    const tx = yield* Transaction;
+    if (done) return cursor;
+  }
+});
 
-    return yield* tx.withTransaction(
+const concat = (parts: ReadonlyArray<Uint8Array>) => {
+  let length = 0;
+
+  for (const part of parts) length += part.length;
+  const out = new Uint8Array(length);
+  let at = 0;
+
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+
+  return out;
+};
+
+/**
+ * Merge the previous snapshot with every update after it, up to the log's tail,
+ * and publish the result. Runs inside the fold's transaction, so no append
+ * interleaves and the snapshot, index entry and fold counter commit together.
+ */
+const publishSnapshot = Effect.fn("Yjs.publishSnapshot")(function* (
+  document: string,
+  foldedBytes: number,
+) {
+  const writer = yield* StreamsWriter;
+  const previous = (yield* readIndex(document)).at(-1);
+
+  const merged = yield* Effect.acquireUseRelease(
+    Effect.sync(() => new Y.Doc()),
+    (doc) =>
       Effect.gen(function* () {
-        const writer = yield* StreamsWriter;
-        const progress = yield* Projection.run(documentFold(document));
-        const entries = yield* readIndex(document);
-        const previous = entries.at(-1);
+        if (previous !== undefined) {
+          const parts: Array<Uint8Array> = [];
+          yield* readToTail(snapshotStream(document, previous.snapshotOffset), "-1", (data) =>
+            parts.push(data),
+          );
+          Y.applyUpdate(doc, concat(parts));
+        }
 
-        if (progress.state.bytes - (previous?.foldedBytes ?? 0) < threshold) return;
-        const offset = progress.offsets.updates;
+        // Each update message is a lib0 frame of one or more Yjs updates.
+        const tail = yield* readToTail(
+          StreamId.make(`${document}/.updates`),
+          previous?.snapshotOffset ?? "-1",
+          (data) => {
+            const decoder = decoding.createDecoder(data);
 
-        if (offset === undefined || previous?.snapshotOffset === offset) return;
-        const snapshot = `${document}/.snapshots/${offset}_snapshot`;
-        yield* writer.create(StreamId.make(snapshot), { contentType: "application/octet-stream" });
-        yield* writer.append(StreamId.make(snapshot), {
-          contentType: "application/octet-stream",
-          data: buffer.fromBase64(progress.state.update),
-        });
-        yield* writer.create(StreamId.make(`${document}/.index`), {
-          contentType: "application/json",
-        });
-        const createdAt = yield* Clock.currentTimeMillis;
-        yield* writer.append(StreamId.make(`${document}/.index`), {
-          contentType: "application/json",
-          data: new TextEncoder().encode(
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IndexEntry)))([
-              { snapshotOffset: offset, createdAt, foldedBytes: progress.state.bytes },
-            ]),
-          ),
-        });
+            while (decoding.hasContent(decoder))
+              Y.applyUpdate(doc, decoding.readVarUint8Array(decoder));
+          },
+        );
 
-        // Keep only the latest snapshot. Original updates remain available to stale readers.
-        if (previous !== undefined)
-          yield* writer
-            .remove(StreamId.make(`${document}/.snapshots/${previous.snapshotOffset}_snapshot`))
-            .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+        return { tail, update: Y.encodeStateAsUpdate(doc) };
       }),
-    );
+    (doc) => Effect.sync(() => doc.destroy()),
+  );
+
+  if (merged.tail === previous?.snapshotOffset) return;
+  const snapshot = snapshotStream(document, merged.tail);
+  yield* writer.create(snapshot, { contentType: binary });
+
+  for (let at = 0; at < merged.update.length; at += SNAPSHOT_CHUNK)
+    yield* writer.append(snapshot, {
+      contentType: binary,
+      data: merged.update.subarray(at, at + SNAPSHOT_CHUNK),
+    });
+
+  yield* writer.create(indexStream(document), { contentType: "application/json" });
+  const createdAt = yield* Clock.currentTimeMillis;
+  yield* writer.append(indexStream(document), {
+    contentType: "application/json",
+    data: new TextEncoder().encode(
+      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IndexEntry)))([
+        { snapshotOffset: merged.tail, createdAt, foldedBytes },
+      ]),
+    ),
   });
+
+  // Keep only the latest snapshot. Original updates remain available to stale readers.
+  if (previous !== undefined)
+    yield* writer
+      .remove(snapshotStream(document, previous.snapshotOffset))
+      .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
+});
+
+/** `bytes` counts every folded update; `published` is its value at the last snapshot. */
+const FoldState = Schema.Struct({ bytes: Schema.Finite, published: Schema.Finite });
+
+/**
+ * Count update bytes for each document and publish a snapshot every
+ * `COMPACTION_THRESHOLD` bytes. The checkpoint holds two numbers, so its size
+ * does not grow with the document. `ProjectionWakeup.attach` runs it from the
+ * object's alarm after each commit to `.updates`, off the request path.
+ */
+export const compaction = Projection.fold({
+  id: "yjs-compaction",
+  params: { document: Schema.String },
+  inputs: { updates: Updates },
+  state: { schema: FoldState, initial: { bytes: 0, published: 0 } },
+  commit: Commit.transaction,
+  fold: (state, { item }, unit) =>
+    Effect.gen(function* () {
+      const bytes = state.bytes + item.length;
+      const threshold = yield* CompactionThreshold;
+
+      if (bytes - state.published < threshold) return { bytes, published: state.published };
+      yield* publishSnapshot(unit.params.document, bytes);
+
+      return { bytes, published: bytes };
+    }),
+});

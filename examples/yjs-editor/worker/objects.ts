@@ -1,66 +1,37 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { CreateResult, Http, StorageFault, StreamId, Streamsy } from "@streamsy/core";
+import { CreateResult, Http, StreamId, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, ProjectionWakeup, Transaction } from "@streamsy/projection";
 import { StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { Digest, SecureRandom } from "effect/crypto";
-import {
-  Array,
-  Clock,
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Schema,
-  Semaphore,
-} from "effect";
+import { Array, Clock, ConfigProvider, Context, Effect, Layer, Schema, Semaphore } from "effect";
 import {
   Headers as HttpHeaders,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import { compact, documentFold, readIndex } from "./compaction.ts";
+import {
+  compaction,
+  CompactionThreshold,
+  readIndex,
+  snapshotStream,
+  Updates,
+} from "./compaction.ts";
 import type { Env } from "./env.ts";
 import { protocolErrorResponse, unavailable, YjsProtocolError } from "./protocol-error.ts";
 
-const streams = Streamsy.group(Streamsy.Wildcard);
+const streams = Streamsy.group(Updates, Streamsy.Wildcard);
 
 const binary = "application/octet-stream";
 
-const maxMessageSize = 4 * 1024 * 1024;
+/** One update message must fit in a Durable Object SQLite value, which is limited to 2 MB. */
+const maxMessageSize = 1.5 * 1024 * 1024;
 
-class DocumentRuntime extends Context.Service<
-  DocumentRuntime,
-  {
-    readonly mutations: Semaphore.Semaphore;
-    readonly threshold: number;
-  }
->()("yjs-editor/DocumentRuntime") {}
-
-const documentRuntime = Layer.effect(
-  DocumentRuntime,
-  Effect.gen(function* () {
-    const mutations = yield* Semaphore.make(1);
-
-    const threshold = yield* Config.Number("COMPACTION_THRESHOLD").pipe(
-      Config.withDefault(1048576),
-    );
-
-    return DocumentRuntime.of({ mutations, threshold });
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new StorageFault({
-          operation: "yjs-editor.config",
-          message: cause.message,
-          retryable: false,
-        }),
-    ),
-  ),
-);
+class Mutations extends Context.Service<Mutations, Semaphore.Semaphore>()("yjs-editor/Mutations") {
+  static readonly layer = Layer.effect(Mutations, Semaphore.make(1));
+}
 
 const storage = (state: DurableObjectState) =>
   Layer.mergeAll(
@@ -79,17 +50,15 @@ const storage = (state: DurableObjectState) =>
     Layer.provideMerge(Layer.merge(Digest.layerWebCrypto, SecureRandom.layerWebCrypto)),
   );
 
-// One permit covers Yjs and raw backing-stream mutations. Live reads never take it.
+// One permit covers Yjs and raw backing-stream mutations. Reads never take it.
 const serializeMutations = <A, E, R>(handler: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = new URL(request.url, "https://internal");
 
-    if (["GET", "HEAD"].includes(request.method) && url.searchParams.get("offset") !== "snapshot")
-      return yield* handler;
-    const runtime = yield* DocumentRuntime;
+    if (["GET", "HEAD"].includes(request.method)) return yield* handler;
+    const mutations = yield* Mutations;
 
-    return yield* runtime.mutations.withPermit(handler);
+    return yield* mutations.withPermit(handler);
   });
 
 const missingDocument = () =>
@@ -272,7 +241,14 @@ const removeStream = Effect.fn("Yjs.removeStream")(function* (id: string) {
   );
 });
 
+/** One transaction, so the compaction alarm never sees a half-deleted document. */
 const deleteDocument = Effect.fn("Yjs.deleteDocument")(function* (id: string) {
+  const tx = yield* Transaction;
+
+  return yield* tx.withTransaction(removeDocument(id));
+});
+
+const removeDocument = Effect.fn("Yjs.removeDocument")(function* (id: string) {
   const writer = yield* StreamsWriter;
   const deleted = yield* removeStream(`${id}/.updates`);
 
@@ -287,8 +263,7 @@ const deleteDocument = Effect.fn("Yjs.deleteDocument")(function* (id: string) {
     `${id}/.awareness/.index`,
   ]);
 
-  for (const entry of yield* readIndex(id))
-    paths.add(`${id}/.snapshots/${entry.snapshotOffset}_snapshot`);
+  for (const entry of yield* readIndex(id)) paths.add(snapshotStream(id, entry.snapshotOffset));
 
   for (const registry of [".awareness-index", ".awareness/.index"])
     for (const entry of yield* readAwarenessRegistry(`${id}/${registry}`))
@@ -298,7 +273,7 @@ const deleteDocument = Effect.fn("Yjs.deleteDocument")(function* (id: string) {
     yield* writer
       .remove(StreamId.make(path))
       .pipe(Effect.catchTag("StreamNotFound", () => Effect.void));
-  yield* Projection.forget(documentFold(id));
+  yield* Projection.forget(compaction.at({ document: id }));
 
   return HttpServerResponse.empty({ status: 204 });
 });
@@ -374,9 +349,15 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
 
   if (method === "GET" && offset === "snapshot") {
     yield* requireDocument(id);
-    const { threshold } = yield* DocumentRuntime;
-    yield* compact(id, threshold);
-    const latest = (yield* readIndex(id)).at(-1)?.snapshotOffset;
+
+    // Discovery only reads the index. A missing or unreadable index means "replay from -1".
+    const latest = yield* readIndex(id).pipe(
+      Effect.map((entries) => entries.at(-1)?.snapshotOffset),
+      Effect.catch((error) =>
+        Effect.logWarning("Yjs snapshot index unreadable", error).pipe(Effect.as(undefined)),
+      ),
+    );
+
     url.searchParams.set("offset", latest ? `${latest}_snapshot` : "-1");
 
     return HttpServerResponse.empty({
@@ -423,16 +404,11 @@ const documentRequest = Effect.fn("Yjs.documentRequest")(function* (
     return yield* readStream(request, updates, query);
   }
 
+  // The append's commit marks the compaction fold; the object alarm runs it.
   const result = yield* writeStream(request, updates, body);
 
-  if (result.status >= 200 && result.status < 300) {
-    if (method === "PUT") yield* createAwareness(id, "default");
-
-    if (method === "POST" || (method === "PUT" && body.length > 0)) {
-      const { threshold } = yield* DocumentRuntime;
-      yield* compact(id, threshold);
-    }
-  }
+  if (method === "PUT" && result.status >= 200 && result.status < 300)
+    yield* createAwareness(id, "default");
 
   return result;
 });
@@ -469,14 +445,19 @@ const yjsRoutes = HttpRouter.add(
   ),
 );
 
-/** One object owns every stream and checkpoint belonging to a document. */
+/**
+ * One object owns every stream and checkpoint belonging to a document. Each
+ * commit to `.updates` writes a pending mark for the compaction fold in the same
+ * transaction; the object's alarm then runs the fold, so requests never compact.
+ */
 export class DocumentObject extends StreamsyObject.make({
   app: Layer.merge(
     HttpRouter.add("*", "/v1/stream/*", backingStreamProgram.pipe(serializeMutations)),
     yjsRoutes,
   ),
+  wakeups: [ProjectionWakeup.attach(compaction)],
   layer: (state: DurableObjectState, env: Env) =>
-    Layer.merge(storage(state), documentRuntime).pipe(
+    Layer.mergeAll(storage(state), Mutations.layer, CompactionThreshold.layer).pipe(
       Layer.provideMerge(
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
