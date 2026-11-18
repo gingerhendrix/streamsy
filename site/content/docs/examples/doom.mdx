@@ -1,23 +1,23 @@
 ---
 title: Doom
-description: Play Doom in the browser, record it as a stream of inputs, then watch, rewind and fork the game. The server replays the same inputs to publish a live scoreboard and the snapshots that make rewind possible.
+description: Play Doom in the browser, record it as a stream of inputs, then watch, rewind and fork the game. Streamsy projections replay the same inputs to publish a live scoreboard and the snapshots that make rewind cheap.
 ---
 
-This example is Doom, playable in a browser, where the whole game is a stream of key presses. Anyone can watch a game live, rewind it, or branch off from any moment and play a different ending. A server replays each game to publish stats that the player's browser cannot fake, and saves the memory snapshots that watchers use to rewind.
+This example is Doom, playable in a browser. The game state is recorded as a durable stream of key presses. Spectators can watch a game live, rewind it, or branch off from any moment and play a different ending. The server replays each game to publish stats and saves the memory snapshots that watchers use to rewind. The lobby syncs with durable state to show a live leaderboard.
 
-The full source is in the [streamsy-doom](https://github.com/gingerhendrix/streamsy-doom/tree/724539fd8b879f99c580e3ea5faf182a252f2480) repository, under GPL-2.0-or-later. The snippets on this page come from that commit. A live test deployment runs at [streamsy-doom-test.gingerhendrix.workers.dev](https://streamsy-doom-test.gingerhendrix.workers.dev/).
+The full source is in the [streamsy-doom](https://github.com/gingerhendrix/streamsy-doom/tree/724539fd8b879f99c580e3ea5faf182a252f2480) repository, under GPL-2.0-or-later. Play it at [streamsy-doom-test.gingerhendrix.workers.dev](https://streamsy-doom-test.gingerhendrix.workers.dev/).
 
-The page has four parts. The first three explain the idea, what Streamsy adds to it, and how it runs on Cloudflare. They contain no code. The last part walks through the implementation.
+## I'm too Young to Die (Doom on streams)
 
-## Doom on streams
+The idea comes from Electric's [Doom on Durable Streams](https://electric.ax/blog/2026/04/20/doom-on-durable-streams), read their article for the gory details.
 
-The idea comes from Electric's [Doom on Durable Streams](https://electric.ax/blog/2026/04/20/doom-on-durable-streams), which first showed a game recorded as a Durable Stream of inputs. This example rebuilds that demo from source on Streamsy and then extends it. It shares no code with the original.
+This example rebuilds that demo from source on Streamsy and extends it to show off some Streamsy projections.
 
 ![Concept diagram. The player's browser runs the Doom engine and appends each tic's input to an input stream. A watcher's browser reads the same stream and steps its own engine. The server replays the input stream and saves a snapshot of engine memory every ten minutes of play, which a watcher restores to rewind. A fork creates a new stream that shares history up to a chosen tic, and another player appends new inputs to it.](/docs/examples/doom-replay-concept.svg)
 
 ### The game is its inputs
 
-Doom runs in the browser as WebAssembly. It advances in fixed steps called tics, 35 of them a second. In each tic the engine reads one small command from the player: move, turn, fire, use.
+Doom runs in the browser as WebAssembly. It advances in fixed steps called tics, 35 per second. In each tic the engine reads one small command from the player: move, turn, fire, use.
 
 Doom is deterministic. Start two copies of the engine from the same state, give them the same commands in the same order, and they play out the same game. Monsters make the same choices and shots land in the same places.
 
@@ -27,56 +27,47 @@ So the player's browser does not send video or game state. It appends each tic's
 
 A watcher's browser loads the same Doom engine and reads the same stream. It feeds each command to its own engine and arrives at the same game. To watch live, it keeps reading as the player appends. To watch a finished game, it reads from the start.
 
-Each recorded command carries one extra byte from the engine's random-number generator. A replaying engine compares that byte with its own on every tic. If they ever differ, the replay has drifted from the original game and the watcher knows.
+Each recorded command carries one extra byte from the engine's random-number generator. A replaying engine compares that byte with its own on every tic, this provides an extra verification guard in case the games drift.
 
 ### Rewind
 
 Replaying from the first tic gets slower as a game gets longer. A snapshot of the engine's memory lets a watcher skip most of that work. To jump to a point in the game, a watcher restores the latest snapshot before that point and replays only the inputs after it.
 
-In this example the server makes the snapshots, not the player. It already replays every game for the scoreboard (see [The server plays along](#the-server-plays-along)). Every ten minutes of play it saves its engine's memory, and watchers download those snapshots. The player's browser only ever sends inputs.
+The original demo sent snapshots from the browser, in this example the server makes the snapshots, not the player. A streamsy projection follows the game stream replaying the game via the Doom WebAssembly on the server. Every ten minutes of play it saves its engine's memory, and watchers download those snapshots. The player's browser only ever sends inputs.
 
 A game shorter than ten minutes has no snapshot. Rewinding it replays from the start, which takes well under a second at that length.
 
 ### Fork
 
-Because the game is a log, any moment in it can become the start of a different game. A fork creates a new stream that shares the original's history up to a chosen tic. The server shares the stored bytes and copies nothing. A new player loads the game at that tic and appends different inputs. The original game carries on unchanged, and the fork can be forked again.
+Because the game is a log, any moment in it can become the start of a different game. Forks are a first-class feature in Durable Streams and Streamsy. A fork creates a new stream that shares the original's history up to a chosen tic. The server shares the stored bytes and copies nothing. A new player loads the game at that tic and appends different inputs. The original game carries on unchanged, and the fork can be forked again.
 
-## What Streamsy adds
+## Hey Not Too Rough (Streamsy Projections)
 
-In the original demo the server only stores bytes. It has no idea a game is being played. Everything a visitor sees about a game, such as who is playing and how far they got, is a row that the player's browser wrote.
+In the original demo the backend only stores bytes. It has no idea a game is being played.
 
-Streamsy adds projections. A projection is server code that follows a stream, does some work for each new item, and writes the result to another stream. Streamsy saves the projection's progress, so a restarted server continues from where it stopped.
+Streamsy adds projections. A projection is server code that follows a stream, does some work for each new item, and writes the result. Streamsy saves the projection's progress, so a restarted projection continues from where it stopped.
 
 ### The server plays along
 
-This example runs a third copy of Doom on the server, with no screen or sound. A projection follows each game's input stream and steps that engine with every recorded command, the same way a watcher's browser does. After each tic it reads the game's stats from the engine's memory: health, armor, kills, deaths and the current map.
+The example runs a third copy of Doom on the server. A projection follows each game's input stream and steps that engine with every recorded command, the same way a watcher's browser does. After each tic it reads the game's stats from the engine's memory: health, armor, kills, deaths and the current map and writes them to a stats stream.
 
-The stats come from the inputs, and the inputs are the game. A player cannot post a kill count. They can only post key presses, and the server works out what those key presses did.
+The same replay makes the rewind snapshots. Each time its engine reaches a multiple of 21,000 tics (ten minutes), it compresses the engine's memory and stores it.
 
-The same replay makes the rewind snapshots. Each time its engine reaches a multiple of 21,000 tics (ten minutes), it compresses the engine's memory and stores it. A snapshot is a pure function of the inputs, so nobody else needs to make one, and a watcher can trust that a snapshot matches the recorded game.
+The stats and snaphots are pure functions over the inputs, we don't need to trust the browser, so observers can trust they match the recorded game.
 
 ### A live scoreboard
 
-The projection publishes the stats to a Durable State stream. A State stream holds keyed rows. Each update replaces the row for one game, and a reader folds the updates into a table. The lobby page follows that stream over a WebSocket and shows every game's stats as they change, with no polling and no database query.
+Each game has its own stats stream. Another projection collects the stats and publishes them to a Durable State stream. The state stream holds keyed rows. Each update replaces the row for one game, and a reader folds the updates into a table. The lobby page follows that stream over a WebSocket and shows every game's stats as they change, with no polling and no database query.
 
-Each row carries two flags:
+## Hurt Me Plenty (Cloudflare)
 
-- **Verified** means the server's replay matched the player's random-number byte on every tic. It shows that the stats belong to these inputs on this engine build. It does not show that a human played or that the player is who they claim to be.
-- **Live** turns off after 30 seconds without new input.
+The example runs on Cloudflare Workers and Durable Objects. A Durable Object is a small single-threaded server with its own SQLite storage and 128MB of memory.&#x20;
 
-A fork gets its own row. Its stats include everything that happened in the shared history before the fork.
-
-The lobby lists the newest games first. It does not rank players. The rows hold what a ranking needs.
-
-## Running on Cloudflare
-
-The example runs on Cloudflare Workers and Durable Objects. A Durable Object is a small single-threaded server with its own SQLite storage. Cloudflare starts one on demand for each name you ask for and stops it when it goes idle. Streamsy stores each stream in exactly one object, and a placement table decides which.
-
-### Three kinds of object
+Running all the games and the projections on one Durable Object will quickly hit scaling limits, so we scale horizontally with three kinds odf Durable Object&#x20;
 
 | Object       | One for each                             | Holds                                                          | Why it is split this way                                                               |
 | ------------ | ---------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `DoomGames`  | Family, meaning a game and all its forks | Input streams and their batch manifests                        | A fork shares stored bytes with its parent, so both streams must be in the same object |
+| ` DoomGames` | Family, meaning a game and all its forks | Input streams and their batch manifests                        | A fork shares stored bytes with its parent, so both streams must be in the same object |
 | `DoomReplay` | Game or fork                             | The server's Doom engine, its saved progress and its snapshots | An engine needs most of an object's memory, so each replay gets its own                |
 | `DoomLobby`  | Whole site                               | Session list and scoreboard                                    | One subscription shows every game                                                      |
 
@@ -100,30 +91,10 @@ These figures were measured against a test deployment from one client on a home 
 "Key press to scoreboard" runs from the browser sending an input batch to the matching stats row arriving over the WebSocket. It covers the game object, the wake, the server engine and the lobby object.
 
 - **Separate games scale.** Each family has its own object, so input appends stay at about 100 ms from 1 to 50 players.
-- **The shared lobby slows the scoreboard as players join.** At 50 players the lobby object takes about 110 stats rows a second, and the delay grows from 0.3 s to 1.0 s. This cause is inferred from the flat append times.
-- **Many live forks of one game are slow.** All forks of a game share one game object. With 20 forks playing at once, stats ran 9 to 20 seconds behind. The cause is inferred and was not isolated on the server.
-- **A cold start costs little.** The replay object drops its engine after 30 seconds without input. Rebuilding it by replaying a ten-minute game from the first tic added no measurable delay.
-- **Forking takes about a second,** however many times the game was forked before, up to the 25 levels tested.
+- **The shared lobby slows the scoreboard as players join.** At 50 simultaneous players the lobby object takes about 110 stats rows a second, and the delay grows from 0.3 s to 1.0 s. We could trade scale for latency here by writing stats less frequently.
+- **Many live forks of one game are slow.** All forks of a game share one game object. With 20 forks playing at once, stats ran 9 to 20 seconds behind.
 
-Locally, in the Cloudflare runtime, compressing one 595 KB snapshot took 92 ms. A snapshot restored in a browser engine and then replayed 1,000 tics with no drift.
-
-### Limits
-
-- **Everything expires.** A recording is deleted 24 hours after it starts, including a game still being played. Its snapshots expire at the same moment.
-- **No accounts.** Anyone can write to any game. The delete button appears only in the browser that created a game, but nothing on the server enforces that. Scores and snapshots are read-only to browsers.
-- **One engine fills an object.** The replay object's memory reached 107 MiB of the 128 MB Cloudflare allows (p95 at 50 players, measured before server snapshots). Making snapshots keeps a second 16 MiB copy of the engine's memory for each engine. Memory at a snapshot tic has not been measured on Cloudflare.
-- **A snapshot cannot exceed 2 MB.** A snapshot of the shareware game measured about 595 KB. A larger one, for example from other game data, fails the replay step, and that game's stats stop updating.
-- **Snapshots trail the game.** A snapshot exists only once the server's replay reaches that tic. A fork's replay rebuilds the shared history and writes its own snapshots, so a new fork seeks from an older snapshot or from the start until its replay catches up. A seek still downloads every input up to the target.
-- **One lobby.** Every stats row goes through a single object, and a new visitor reads the whole retained scoreboard history before going live.
-- **A family shares one object.** Forks cannot be spread across objects, because a fork must be stored beside its parent.
-- **Writes are separate.** Inputs, the batch manifest and lobby rows are separate requests. A browser that closes between them can leave a recording without its latest manifest entry or lobby update. The example has no repair step.
-- **Some state outlives a game.** The replay deletes its snapshots when the game's input stream is gone. The replay object still keeps a small record of the session ID and the projection's progress.
-
-The example also runs locally on Bun with one SQLite file. There the projections run in the same process as the streams and no wakes are needed. All replays share one snapshot table in that file, keyed by session ID and tic.
-
-## Implementation
-
-This part follows the code. It assumes you know TypeScript and have seen [Effect](https://effect.website). Snippets are shortened. `// ...` marks omitted lines, and a snippet labelled "simplified" is rewritten to show the Streamsy calls without the surrounding bookkeeping. Paths are relative to the separate `streamsy-doom` repository.
+## Hurt Me Plenty (Implementation Details)
 
 Words used below:
 
@@ -134,16 +105,6 @@ Words used below:
 | Family   | A game and all its forks. Forks keep their parent's family part                             |
 | Owner    | The Durable Object that stores a stream                                                     |
 | Snapshot | A gzip of the engine's settings and tic, then its memory XOR the memory just after start-up |
-
-| Section | Feature                                                                                 | Source                                                                                                                |
-| ------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| 1       | `Streamsy.bytes`, `Stream-Expected-Offset`                                              | `src/streams/v2.ts`, `src/streams/sessions.ts`                                                                        |
-| 2       | Native forks with `Stream-Fork-Offset` and `Stream-Fork-Sub-Offset`                     | `src/streams/sessions.ts`                                                                                             |
-| 3       | `Placement.byRoute`                                                                     | `apps/host-cloudflare/topology.ts`                                                                                    |
-| 4       | `Projection.wake`, `ObjectLink`, `ProjectionWakeup.attach`                              | `src/projection/wake.ts`, `apps/host-cloudflare/worker.ts`                                                            |
-| 5       | `Projection.mapAccumBatch`, `Commit.producer`                                           | `src/projection/stats.ts`                                                                                             |
-| 6       | A projection side effect into Durable Object SQLite, with a read route outside Streamsy | `src/projection/stats.ts`, `src/projection/snapshots.ts`, `src/server/snapshots.ts`, `apps/host-cloudflare/worker.ts` |
-| 7       | `Streamsy.state`, hibernatable WebSockets                                               | `src/streams/v2.ts`, `src/streams/live.ts`                                                                            |
 
 ### 1. Binary streams hold the input history
 
@@ -366,7 +327,7 @@ const snapshots = {
 };
 ```
 
-The snapshot is a side effect of the projection, not one of its outputs. Two limits of Streamsy 0.12.0 led there. A `Commit.producer` output must be a JSON or State stream, so a byte stream of snapshots cannot be one. A JSON stream of base64 snapshots works, but a Streamsy read has no end offset. A read from one snapshot's offset returns that snapshot and every later one. A table and a small read route return exactly one.
+The snapshot is a side effect of the projection, not one of its outputs.&#x20;
 
 `engine.snapshot()` uses the format the browser already restores: a gzip of a JSON line with the engine settings and tic, then the engine's 16 MiB of memory XOR the memory just after start-up. The XOR leaves mostly zeros, so a snapshot compresses to about 600 KB. `compressSnapshot` in `engine/src/snapshot.ts` streams the XOR in 64 KiB chunks into the runtime's native gzip, so it never holds a second full copy of memory.
 
@@ -493,6 +454,6 @@ followJson(client, "doom/v2/scores", {
 
 `StateRows` folds upserts and deletes into a map keyed by session ID. `render` joins the two maps by ID to draw the lobby table.
 
-### Why recordings expire after 24 hours
+### Stream Expiry
 
-Streamsy streams can use a sliding expiry that each read extends. In Streamsy 0.12.0 that extension is a commit, and a commit wakes any projection that reads the stream. The stats projection reads `Sessions`, so its own read woke it again in a loop. The example gives `Sessions`, `Batches` and `ReplayWake` a fixed expiry 24 hours after creation, which no read extends. The client applies that expiry to those paths whatever TTL the caller passes, which is why the `43200` in the fork snippet has no effect. A fork gets its own 24 hours from when it is created. Snapshot rows copy the `ReplayWake` deadline, so they expire with the game.
+The example gives `Sessions`, `Batches` and `ReplayWake` a fixed expiry 24 hours after creation, which no read extends. A fork gets its own 24 hours from when it is created. Snapshot rows copy the `ReplayWake` deadline, so they expire with the game.
