@@ -131,17 +131,9 @@ describe("native Cloudflare Yjs host", () => {
     await host.stop();
     host = await startWorker(directory, 0, 1500);
     doc.getText("text").insert(900, "B".repeat(900));
-    // Append through the backing route, then stop workerd. The append's pending
-    // mark makes the restarted object's alarm fold this tail with the saved count.
-    expect(
-      (
-        await fetch(`${host.url}/v1/stream/yjs/test/docs/${docId}/.updates`, {
-          method: "POST",
-          body: pending,
-          headers: { "content-type": "application/octet-stream" },
-        })
-      ).ok,
-    ).toBe(true);
+    // Append, then stop workerd. The append's pending mark makes the restarted
+    // object's alarm fold this tail with the saved count.
+    expect((await fetch(docUrl(), { method: "POST", body: pending })).ok).toBe(true);
     await host.stop();
     host = await startWorker(directory, 0, 1500);
 
@@ -252,6 +244,15 @@ describe("native Cloudflare Yjs host", () => {
     expect(fresh.doc.getText("text").toJSON()).toBe(accepted);
     fresh.provider.destroy();
     doc.destroy();
+  });
+
+  it("serves the backing streams read-only", async () => {
+    const docUrl = `${host.url}/v1/yjs/test/docs/raw`;
+    expect((await fetch(docUrl, { method: "PUT" })).ok).toBe(true);
+    const raw = `${host.url}/v1/stream/yjs/test/docs/raw/.updates`;
+    expect((await fetch(`${raw}?offset=-1`)).status).toBe(200);
+    expect((await fetch(raw, { method: "POST", body: new Uint8Array(1) })).status).toBe(405);
+    expect((await fetch(raw, { method: "DELETE" })).status).toBe(405);
   });
 
   it("serializes concurrent compactions without losing either writer's updates", async () => {

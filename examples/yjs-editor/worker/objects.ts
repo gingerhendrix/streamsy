@@ -56,7 +56,7 @@ const storage = (state: DurableObjectState) =>
     Layer.provideMerge(Layer.merge(Digest.layerWebCrypto, SecureRandom.layerWebCrypto)),
   );
 
-// One permit covers Yjs and raw backing-stream mutations. Reads never take it.
+// One permit covers Yjs mutations. Reads never take it.
 const serializeMutations = <A, E, R>(handler: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -471,10 +471,7 @@ const yjsRoutes = HttpRouter.add(
  * transaction; the object's alarm then runs the fold, so requests never compact.
  */
 export class DocumentObject extends StreamsyObject.make({
-  app: Layer.merge(
-    HttpRouter.add("*", "/v1/stream/*", backingStreamProgram.pipe(serializeMutations)),
-    yjsRoutes,
-  ),
+  app: Layer.merge(Http.routes(streams, { prefix: "/v1/stream", access: "read" }), yjsRoutes),
   wakeups: [ProjectionWakeup.attach(compaction)],
   layer: (state: DurableObjectState, env: Env) =>
     Layer.mergeAll(storage(state), Mutations.layer, CompactionThreshold.layer).pipe(
