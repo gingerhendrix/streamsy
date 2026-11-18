@@ -5,6 +5,21 @@ A small collaborative ProseMirror editor using the **unmodified
 windows to share text, selections, cursors and names. The three rooms are fixed in
 the frontend; the protocol accepts other document paths too.
 
+## Limits
+
+- **8 MiB of updates per document.** Past it, document `POST` returns `413`
+  with code `DOCUMENT_TOO_LARGE`; reads keep working. Compaction holds the
+  whole document in the object's memory, and the perf run measured clean
+  snapshots up to 11 MB but failures from about 12 MB (fragmented) and 40 MB
+  (large inserts). The count comes from the compaction fold, so it lags by the
+  updates the alarm has not folded yet: one write may land past the budget.
+- **Browsers replay the whole log.** The stock provider discovers snapshots with
+  `fetch(url, { redirect: "manual" })`. A browser returns an opaque redirect
+  (status 0), so every browser peer reads from `offset=-1`. Snapshots help Bun
+  and Node peers only. No server response can change this.
+- **Unauthenticated demo.** Anyone with the URL can create, edit and delete
+  documents. The backing streams under `/v1/stream` are read-only.
+
 ## Run locally
 
 From the repository root, build the workspace packages first:
@@ -70,7 +85,8 @@ Document POST forwards producer headers and forces `application/octet-stream`.
 It deliberately filters base-protocol `Stream-Closed`: the stock provider calls
 `producer.close()` on disconnect, which must not close the shared document.
 
-The underlying routes are also exposed, as in the upstream proxy:
+The underlying streams are also exposed read-only (`GET`, `HEAD`) through
+`Http.routes(..., { access: "read" })`:
 
 | Stream under `/v1/stream/yjs/:service/docs/:docPath/` | Contents                                                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -171,7 +187,6 @@ the task handoff.
 assets stack. `bun run --cwd examples/yjs-editor deploy` builds both bundles and
 invokes Alchemy for the selected stage. **Deployment was not run.**
 
-- This is an unauthenticated demo, including its underlying stream routes.
 - No snapshot subscription webhooks (`__ds` routes return 404), AI peer, room
   registry or offline persistence.
 - The stock 0.2.9 client has upstream [issue #413](https://github.com/durable-streams/durable-streams/issues/413): edits across reconnect can be lost because the producer epoch is reused.
