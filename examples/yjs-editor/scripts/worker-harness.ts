@@ -8,7 +8,7 @@ export const startWorker = async (
 ) => {
   const mf = new Miniflare({
     name: "yjs-editor",
-    scriptPath: `${import.meta.dir}/../public/worker/index.js`,
+    scriptPath: `${import.meta.dirname}/../public/worker/index.js`,
     modules: true,
     compatibilityDate: "2026-08-06",
     compatibilityFlags: ["nodejs_compat"],
@@ -19,7 +19,7 @@ export const startWorker = async (
     durableObjectsPersist: `${directory}/objects`,
     bindings: { COMPACTION_THRESHOLD: String(compactionThreshold) },
     assets: {
-      directory: `${import.meta.dir}/../public/web`,
+      directory: `${import.meta.dirname}/../public/web`,
       binding: "ASSETS",
       routerConfig: { has_user_worker: true, invoke_user_worker_ahead_of_assets: true },
       assetConfig: { not_found_handling: "single-page-application" },

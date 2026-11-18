@@ -7,7 +7,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { startWorker } from "../scripts/worker-harness.ts";
 
-const scratch = process.env.YJS_TEST_SCRATCH ?? `${import.meta.dir}/../.scratch/tests`;
+const scratch = process.env.YJS_TEST_SCRATCH ?? `${import.meta.dirname}/../.scratch/tests`;
 
 const wait = async (condition: () => boolean | Promise<boolean>) => {
   const deadline = Date.now() + 10000;
