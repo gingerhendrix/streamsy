@@ -10,7 +10,7 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import { compaction, CompactionThreshold, Updates } from "./compaction.ts";
 import { documentRequest } from "./document.ts";
 import type { Env } from "./env.ts";
-import { protocolErrorResponse, unavailable, YjsProtocolError } from "./protocol-error.ts";
+import { protocolErrorResponse, unexpected, YjsProtocolError } from "./protocol-error.ts";
 import { parseDocumentRoute } from "./route.ts";
 
 const streams = Streamsy.group(Updates, Streamsy.Wildcard);
@@ -52,12 +52,7 @@ const yjsRoutes = HttpRouter.add(
     Effect.catchTag("YjsProtocolError", (error) => Effect.succeed(protocolErrorResponse(error))),
     Effect.catch((error) =>
       Effect.logError("Yjs request failed", error).pipe(
-        Effect.as(protocolErrorResponse(unavailable())),
-      ),
-    ),
-    Effect.catchDefect((defect) =>
-      Effect.logError("Yjs request failed", defect).pipe(
-        Effect.as(protocolErrorResponse(unavailable())),
+        Effect.as(protocolErrorResponse(unexpected(error))),
       ),
     ),
   ),

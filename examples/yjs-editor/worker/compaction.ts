@@ -1,4 +1,4 @@
-import { StorageFault, StreamAddress, StreamId, Streamsy } from "@streamsy/core";
+import { StreamAddress, StreamId, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Commit, Projection } from "@streamsy/projection";
 import { Clock, Config, Context, Effect, Layer, Option, Schema } from "effect";
@@ -21,19 +21,10 @@ export class Updates extends Streamsy.custom<Updates>()("YjsEditor/Updates", {
 export class CompactionThreshold extends Context.Service<CompactionThreshold, number>()(
   "yjs-editor/CompactionThreshold",
 ) {
+  // A bad threshold is a deploy mistake, so it stops the object.
   static readonly layer = Layer.effect(
     CompactionThreshold,
-    Config.Number("COMPACTION_THRESHOLD").pipe(
-      Config.withDefault(1048576),
-      Effect.mapError(
-        (cause) =>
-          new StorageFault({
-            operation: "yjs-editor.config",
-            message: cause.message,
-            retryable: false,
-          }),
-      ),
-    ),
+    Config.Number("COMPACTION_THRESHOLD").pipe(Config.withDefault(1024 * 1024), Effect.orDie),
   );
 }
 

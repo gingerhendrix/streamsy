@@ -106,12 +106,10 @@ export const missingDocument = () =>
 export const requireDocument = Effect.fn("Yjs.requireDocument")(function* (id: string) {
   const reader = yield* StreamsReader;
 
-  // The original existence probe distinguished only a 404, not other base failures.
-  const exists = yield* reader.head(StreamId.make(`${id}/.updates`)).pipe(
-    Effect.as(true),
-    Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
-    Effect.orElseSucceed(() => true),
+  yield* reader.head(StreamId.make(`${id}/.updates`)).pipe(
+    Effect.catchTags({
+      StreamNotFound: () => Effect.fail(missingDocument()),
+      StreamGone: () => Effect.fail(missingDocument()),
+    }),
   );
-
-  return yield* exists ? Effect.void : missingDocument();
 });

@@ -5,6 +5,9 @@ import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { YjsProtocolError } from "./protocol-error.ts";
 import { binary, forward, requireDocument } from "./streams.ts";
 
+/** Presence is ephemeral: an awareness stream nobody writes to expires after an hour. */
+const awarenessTtlSeconds = 3600;
+
 const AwarenessEntry = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   createdAt: Schema.optionalKey(Schema.Finite),
@@ -34,7 +37,7 @@ export const createAwareness = Effect.fn("Yjs.createAwareness")(function* (
 
   const result = yield* writer.create(StreamId.make(`${id}/.awareness/${name}`), {
     contentType: binary,
-    ttlSeconds: 3600,
+    ttlSeconds: awarenessTtlSeconds,
   });
 
   const created = CreateResult.$is("Created")(result);
