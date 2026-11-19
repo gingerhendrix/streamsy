@@ -167,6 +167,23 @@
       }
     },
     {
+      // A fork of the upstream Promise-based YjsProvider. It keeps upstream's
+      // structure so upstream changes can be merged, so the Effect and style
+      // rules are off. Correctness rules and no-floating-promises stay on.
+      "files": ["packages/y-durable-streams/src/**"],
+      "rules": {
+        "anti-slop/no-unknown-parameters": "off",
+        "anti-slop/require-readable-spacing": "off",
+        "effecttsgo/async-function": "off",
+        "effecttsgo/global-console": "off",
+        "effecttsgo/global-fetch": "off",
+        "effecttsgo/global-timers": "off",
+        "effecttsgo/new-promise": "off",
+        "eslint/no-underscore-dangle": "off",
+        "typescript/no-unsafe-type-assertion": "off"
+      }
+    },
+    {
       "files": ["packages/storage/test/support/do-worker.ts"],
       "rules": {
         "anti-slop-effect/no-service-constructor-imports": "off"

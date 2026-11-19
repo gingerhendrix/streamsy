@@ -1,0 +1,48 @@
+{
+  "name": "@streamsy/y-durable-streams",
+  "version": "0.2.9-streamsy.1",
+  "private": true,
+  "description": "Streamsy fork of the @durable-streams/y-durable-streams YjsProvider, with snapshot discovery that works in browsers.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/y-durable-streams"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle yjs --deps.never-bundle y-protocols --deps.never-bundle lib0 --deps.never-bundle @durable-streams/client",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@durable-streams/client": "0.2.7"
+  },
+  "devDependencies": {
+    "lib0": "^0.2.99",
+    "typescript": "catalog:",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.24"
+  },
+  "peerDependencies": {
+    "lib0": "^0.2.0",
+    "y-protocols": "^1.0.0",
+    "yjs": "^13.0.0"
+  },
+  "tsdown": {
+    "fixedExtension": false,
+    "tsconfig": "tsconfig.build.json"
+  }
+}
