@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/new-promise, effecttsgo/global-timers, effecttsgo/global-date, effecttsgo/node-builtin-import, effecttsgo/process-env -- Black-box provider/workerd tests own native HTTP, timing and scratch storage. */
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { YjsProvider } from "@durable-streams/y-durable-streams";
+import { YjsProvider } from "@streamsy/y-durable-streams";
 import * as encoding from "lib0/encoding";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
@@ -32,6 +32,27 @@ const snapshotLocation = async (docUrl: string) => {
   });
 
   return location!;
+};
+
+/**
+ * Make `fetch` answer `redirect: "manual"` as a browser does, with status 0 and
+ * no Location header, and record every requested URL.
+ */
+const browserFetch = () => {
+  const native = globalThis.fetch;
+  const urls: Array<string> = [];
+
+  const fetchLikeBrowser = (input: string | URL | Request, init?: RequestInit) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+
+    if (init?.redirect === "manual") return Promise.resolve(Response.error());
+
+    return native(input, init);
+  };
+
+  globalThis.fetch = Object.assign(fetchLikeBrowser, { preconnect: native.preconnect });
+
+  return { urls, restore: () => (globalThis.fetch = native) };
 };
 
 const frame = (update: Uint8Array) => {
@@ -111,6 +132,30 @@ describe("native Cloudflare Yjs host", () => {
     expect(b.doc.getText("text").toJSON()).toBe(`${"S".repeat(1800)} tail`);
     a.provider.destroy();
     b.provider.destroy();
+  });
+
+  it("a provider with browser fetch semantics loads the snapshot instead of replaying the log", async () => {
+    const a = peer("browser-snapshot");
+    await wait(() => a.provider.synced);
+    a.doc.getText("text").insert(0, "B".repeat(1800));
+    await a.provider.flush();
+    await snapshotLocation(`${host.url}/v1/yjs/test/docs/browser-snapshot`);
+    a.doc.getText("text").insert(1800, " tail");
+    await a.provider.flush();
+
+    const browser = browserFetch();
+
+    try {
+      const b = peer("browser-snapshot");
+      await wait(() => b.provider.synced);
+      expect(b.doc.getText("text").toJSON()).toBe(`${"B".repeat(1800)} tail`);
+      expect(browser.urls).not.toContainEqual(expect.stringContaining("offset=-1"));
+      b.provider.destroy();
+    } finally {
+      browser.restore();
+    }
+
+    a.provider.destroy();
   });
 
   it("persists both a partial compaction counter and the published snapshot across workerd restarts", async () => {

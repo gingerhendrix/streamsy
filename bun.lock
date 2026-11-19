@@ -351,12 +351,12 @@
     "examples/yjs-editor": {
       "name": "yjs-editor",
       "dependencies": {
-        "@durable-streams/y-durable-streams": "0.2.9",
         "@effect/platform-bun": "4.1.2",
         "@streamsy/core": "workspace:*",
         "@streamsy/projection": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
+        "@streamsy/y-durable-streams": "workspace:*",
         "effect": "4.1.2",
         "lib0": "^0.2.99",
         "prosemirror-commands": "^1.7.1",
@@ -644,8 +644,6 @@
     "@durable-streams/server-conformance-tests": ["@durable-streams/server-conformance-tests@0.3.7", "", { "dependencies": { "@durable-streams/client": "0.2.7", "fast-check": "^4.4.0", "vitest": "^4.0.0" }, "bin": { "server-conformance-tests": "dist/cli.js", "durable-streams-server-conformance": "dist/cli.js", "durable-streams-server-conformance-dev": "bin/conformance-dev.mjs" } }, "sha512-1hf14EuaTgLEgIxa5LBLl7623N87RV5zccLFpfCQhCioI3pYRX07k9XyIzAUFIT42U693HD4FUF+Lz9W+GQXVA=="],
 
     "@durable-streams/state": ["@durable-streams/state@0.3.2", "", { "dependencies": { "@durable-streams/client": "0.2.7", "@standard-schema/spec": "^1.0.0" }, "peerDependencies": { "@tanstack/db": ">=0.6.0 <1.0.0" }, "optionalPeers": ["@tanstack/db"], "bin": { "intent": "bin/intent.js" } }, "sha512-pFj09315ARvyJR6iCt6p1CP6HW6tw/JsKgD1pfyjduveOzqxq3v01aXPSlUMb83ncwWjtMTuzwyfP6JsywbaJg=="],
-
-    "@durable-streams/y-durable-streams": ["@durable-streams/y-durable-streams@0.2.9", "", { "dependencies": { "@durable-streams/client": "0.2.7", "lib0": "^0.2.99", "y-protocols": "^1.0.6", "yjs": "^13.6.24" }, "bin": { "intent": "bin/intent.js" } }, "sha512-Zi+UdUkwb0pfclbfHbJum5UGS1EOp4F5nPQtEn28DdsyGWQ3uPJiHdU6S1KS+cB33IKYPd8dPXWvWY7IkQs7Xw=="],
 
     "@effect/ai-anthropic": ["@effect/ai-anthropic@4.1.2", "", { "peerDependencies": { "effect": "^4.1.2" } }, "sha512-HeFop5b4QY5YKKWXmdM1FJdqIqk91wueqt6hcGGTd9bASpQX2Pw2tjIzCsu+HxZgOKVW2EDQ9G1MpVOC+Tvs8g=="],
 

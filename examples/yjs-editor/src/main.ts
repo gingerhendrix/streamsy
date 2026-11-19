@@ -1,4 +1,4 @@
-import { YjsProvider } from "@durable-streams/y-durable-streams";
+import { YjsProvider } from "@streamsy/y-durable-streams";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { schema } from "prosemirror-schema-basic";

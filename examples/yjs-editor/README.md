@@ -1,12 +1,13 @@
 # Yjs editor on Cloudflare
 
-A small collaborative ProseMirror editor using the **unmodified
-`YjsProvider` from `@durable-streams/y-durable-streams` 0.2.9**. Open a room in two
-windows to share text, selections, cursors and names. The three rooms are fixed in
-the frontend; the protocol accepts other document paths too.
+A small collaborative ProseMirror editor using the `YjsProvider` from
+**`@streamsy/y-durable-streams`**, Streamsy's fork of the upstream
+`@durable-streams/y-durable-streams` 0.2.9 client. Open a room in two windows to
+share text, selections, cursors and names. The three rooms are fixed in the
+frontend; the protocol accepts other document paths too.
 
 What it shows: every document is a set of plain Streamsy streams in one SQLite
-Durable Object, served to the stock Yjs client, with a `@streamsy/projection` fold
+Durable Object, served to an upstream-compatible Yjs client, with a `@streamsy/projection` fold
 that compacts the update log from the object's alarm. Each room's raw update
 stream is linked from the page and readable with `curl`.
 
@@ -18,10 +19,6 @@ stream is linked from the page and readable with `curl`.
   snapshots up to 11 MB but failures from about 12 MB (fragmented) and 40 MB
   (large inserts). The count comes from the compaction fold, so it lags by the
   updates the alarm has not folded yet: one write may land past the budget.
-- **Browsers replay the whole log.** The stock provider discovers snapshots with
-  `fetch(url, { redirect: "manual" })`. A browser returns an opaque redirect
-  (status 0), so every browser peer reads from `offset=-1`. Snapshots help Bun
-  and Node peers only. No server response can change this.
 - **Unauthenticated demo.** Anyone with the URL can create, edit and delete
   documents. The backing streams under `/v1/stream` are read-only.
 
@@ -55,7 +52,8 @@ bun run format:check
 
 `YJS_TEST_SCRATCH` puts test state in another directory. Each test host is disposed
 and its temporary state is removed. Tests cover convergence, snapshot plus tail
-loading, partial compaction state and snapshot discovery after process restart,
+loading, snapshot loading with browser `fetch` redirect semantics, partial
+compaction state and snapshot discovery after process restart,
 a document past 2 MB, rejection of an oversized update, the 8 MiB budget, the
 read-only backing streams, concurrent compactions, continued editing after a peer
 disconnects, and awareness.
@@ -65,7 +63,7 @@ disconnects, and awareness.
 ```text
 ProseMirror + y-prosemirror
         │ Y.Doc / Awareness
-stock YjsProvider (HTTP writes, binary SSE live reads)
+YjsProvider fork (HTTP writes, binary SSE live reads)
         │ /v1/yjs/:service/docs/:docPath        /v1/stream/... (read-only)
 Worker: native fetch → one DocumentObject per document
         │ Effect HttpRouter: Yjs routes + Http.routes(streams, { access: "read" })
@@ -96,7 +94,7 @@ Document `PUT` creates `.updates` and the default awareness stream with typed
 writer calls. Document `POST`, update reads and awareness reads and writes run the
 base `Http.app` program on the declared stream's wire, so producer sequencing,
 `maxMessageSize`, framing, live modes and protocol errors come from Streamsy. An
-append keeps only the producer headers: the stock provider sends `Stream-Closed`
+append keeps only the producer headers: the provider sends `Stream-Closed`
 when it disconnects, and that must not close the shared document. `live=true`
 selects long-poll for documents and SSE for awareness.
 
@@ -172,6 +170,6 @@ assets stack. `bun run --cwd examples/yjs-editor deploy` builds both bundles and
 deploys the selected stage with Alchemy.
 
 - No snapshot subscription webhooks, AI peer, room registry or offline persistence.
-- The stock 0.2.9 client has upstream [issue #413](https://github.com/durable-streams/durable-streams/issues/413): edits across reconnect can be lost because the producer epoch is reused.
+- The fork fixes browser snapshot discovery only. The upstream 0.2.9 client, and so the fork, has [issue #413](https://github.com/durable-streams/durable-streams/issues/413): edits across reconnect can be lost because the producer epoch is reused.
   The UI pauses editing while disconnected; reload to reconnect.
 - Fonts are loaded from Google Fonts, with local serif/sans-serif fallbacks.
