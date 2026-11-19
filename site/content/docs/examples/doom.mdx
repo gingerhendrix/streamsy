@@ -6,108 +6,101 @@ image: /og/doom.webp
 
 ![Streamsy Doom title in metallic red-orange lettering over a hellish landscape. Three glowing streams branch apart at the bottom.](/docs/examples/streamsy-doom-cover.webp)
 
-This example is Doom, playable in a browser. The game state is recorded as a durable stream of key presses. Spectators can watch a game live, rewind it, or branch off from any moment and play a different ending. The server replays each game to publish stats and saves the memory snapshots that watchers use to rewind. The lobby syncs with durable state to show a live leaderboard.
+This example runs Doom in your browser and records every game as a durable stream of key presses. Spectators can watch live, scrub backward to rewind, or fork any moment into a new timeline and play a different ending. Behind the scenes, server-side Streamsy projections replay those inputs to power a live HUD, build rewind snapshots, and keep the lobby up to date with Durable State.
 
-The full source is in the [streamsy-doom](https://github.com/gingerhendrix/streamsy-doom/tree/724539fd8b879f99c580e3ea5faf182a252f2480) repository, under GPL-2.0-or-later. Play it at [streamsy-doom-test.gingerhendrix.workers.dev](https://streamsy-doom-test.gingerhendrix.workers.dev/).
+Play it at [doom.streamsy.dev](https://doom.streamsy.dev/). The [streamsy-doom repository](https://github.com/gingerhendrix/streamsy-doom) contains the full source under GPL-2.0-or-later.
 
 ## I'm too young to die: Doom on streams
 
-The idea comes from Electric's [Doom on Durable Streams](https://electric.ax/blog/2026/04/20/doom-on-durable-streams), read their article for the gory details.
-
-This example rebuilds that demo from source on Streamsy and extends it to show off some Streamsy projections.
+The idea comes from Electric's [Doom on Durable Streams](https://electric.ax/blog/2026/04/20/doom-on-durable-streams). Read their article for the gory details. This example rebuilds the demo from source on Streamsy, with no shared code, and extends it with Streamsy projections for live stats, server snapshots, and the lobby.
 
 ![Concept diagram. The player's browser runs the Doom engine and appends each tic's input to an input stream. A watcher's browser reads the same stream and steps its own engine. The server replays the input stream and saves a snapshot of engine memory every ten minutes of play, which a watcher restores to rewind. A fork creates a new stream that shares history up to a chosen tic, and another player appends new inputs to it.](/docs/examples/doom-replay-concept.svg)
 
 ### The game is its inputs
 
-Doom runs in the browser as WebAssembly. It advances in fixed steps called tics, 35 per second. In each tic the engine reads one small command from the player: move, turn, fire, use.
+Doom runs in your browser as WebAssembly. The engine advances in fixed steps called tics, 35 per second. On each tic, it reads one small command from the player: move, turn, fire, and use.
 
-Doom is deterministic. Start two copies of the engine from the same state, give them the same commands in the same order, and they play out the same game. Monsters make the same choices and shots land in the same places.
+Doom is deterministic. Start two copies of the engine from the same state, feed them the same commands in the same order, and both play out the same game. Monsters make the same choices, and shots land in the same places.
 
-So the player's browser does not send video or game state. It appends each tic's command to a [Durable Stream](https://github.com/durable-streams/durable-streams), an append-only log that browsers read and write over HTTP. A command takes nine bytes. A ten-minute game is about 190 KB.
+Because of that determinism, the player's browser sends neither video nor game state. Instead, it appends each tic's command to a [Durable Stream](https://github.com/durable-streams/durable-streams), an append-only log that browsers read and write over HTTP. Each recorded frame takes nine bytes, so ten minutes of play takes about 190 KB.
 
 ### Watching is replaying
 
-A watcher's browser loads the same Doom engine and reads the same stream. It feeds each command to its own engine and arrives at the same game. To watch live, it keeps reading as the player appends. To watch a finished game, it reads from the start.
+A spectator's browser loads the same Doom engine and reads the same stream. It feeds each command into its own engine and plays out the exact same game. To watch live, the browser keeps reading as the player appends new batches. To watch a finished game, it reads from the start.
 
-Each recorded command carries one extra byte from the engine's random-number generator. A replaying engine compares that byte with its own on every tic, this provides an extra verification guard in case the games drift.
+Every nine-byte frame includes one extra byte from the engine's random-number generator. Any replaying engine compares that byte against its own on every tic. If the two ever disagree, the replay has drifted from the original recording and the UI flags the game as unverified.
 
 ### Rewind
 
-Replaying from the first tic gets slower as a game gets longer. A snapshot of the engine's memory lets a watcher skip most of that work. To jump to a point in the game, a watcher restores the latest snapshot before that point and replays only the inputs after it.
+Replaying from the first tic gets slower as a game grows longer. A snapshot of the engine's memory lets a watcher skip most of that replay. To jump to a moment in the game, the watcher's browser downloads the latest snapshot at or before that tic, loads it into the engine, and replays only the frames that came after it.
 
-The original demo sent snapshots from the browser, in this example the server makes the snapshots, not the player. A streamsy projection follows the game stream replaying the game via the Doom WebAssembly on the server. Every ten minutes of play it saves its engine's memory, and watchers download those snapshots. The player's browser only ever sends inputs.
+The original demo uploaded snapshots from the player's browser. In this example, the server creates every snapshot. A Streamsy projection follows the input stream, steps a headless WebAssembly copy of Doom on the server, and saves compressed engine memory every ten minutes of play. The player's browser only ever sends inputs.
 
-A game shorter than ten minutes has no snapshot. Rewinding it replays from the start, which takes well under a second at that length.
+A game shorter than ten minutes has no snapshot yet. Without a snapshot, rewind replays from tic 0.
 
 ### Fork
 
-Because the game is a log, any moment in it can become the start of a different game. Forks are a first-class feature in Durable Streams and Streamsy. A fork creates a new stream that shares the original's history up to a chosen tic. The server shares the stored bytes and copies nothing. A new player loads the game at that tic and appends different inputs. The original game carries on unchanged, and the fork can be forked again.
+Because a game is an append-only log, any tic in its history can start a new game. Forks are a first-class feature in Durable Streams and Streamsy. Creating a fork opens a new stream that shares the parent's stored bytes up to your chosen tic. The server copies nothing.
+
+When you click Fork while watching, your browser loads the engine at that tic and starts appending your own commands to the forked stream. The original game continues untouched, and anyone can fork your fork later.
 
 ## Hey, not too rough: Streamsy projections
 
-In the original demo the backend only stores bytes. It has no idea a game is being played.
+In the original demo, the backend stores only raw bytes. It has no idea a game is happening inside them.
 
-Streamsy adds projections. A projection is server code that follows a stream, does some work for each new item, and writes the result. Streamsy saves the projection's progress, so a restarted projection continues from where it stopped.
+Streamsy adds projections. A projection is server code that follows a stream, runs work on each new batch, and writes the result. Streamsy saves the projection's progress as a checkpoint, so a restarted projection picks up where it left off.
 
 ### The server plays along
 
-The example runs a third copy of Doom on the server. A projection follows each game's input stream and steps that engine with every recorded command, the same way a watcher's browser does. After each tic it reads the game's stats from the engine's memory: health, armor, kills, deaths and the current map and writes them to a stats stream.
+This example runs a third copy of Doom on the server, with no screen and no audio. A projection follows each game's input stream and steps that headless engine through every recorded frame. After each tic, the projection reads live stats from engine memory: health, armor, ammo, kills, deaths, items, secrets, and the current map. It writes those updates to a per-game Durable State stream.
 
-The same replay makes the rewind snapshots. Each time its engine reaches a multiple of 21,000 tics (ten minutes), it compresses the engine's memory and stores it.
+That same replay loop produces the rewind snapshots. Every 21,000 tics (ten minutes of play), it compresses the engine's memory and stores the snapshot in SQLite.
 
-The stats and snapshots are pure functions over the inputs, we don't need to trust the browser, so observers can trust they match the recorded game.
+Both the stats and the snapshots are derived purely from the recorded inputs. The server does not trust the browser to report scores or upload snapshots, and the snapshot endpoints are read-only. That guarantee covers only the recording itself. The demo has no user accounts, so anyone can append to an active stream, and Verified checks only that the server's random-number bytes matched the player's on every tic for that engine build. It is not authentication, proof of human play, or a general anti-cheat guarantee.
 
-### A live scoreboard
+### Live HUD and lobby
 
-Each game has its own stats stream. Another projection collects the stats and publishes them to a Durable State stream. The state stream holds keyed rows. Each update replaces the row for one game, and a reader folds the updates into a table. The lobby page follows that stream over a WebSocket and shows every game's stats as they change, with no polling and no database query.
+Each game owns a Durable State stream that holds keyed rows for three collections: server-written session metadata, live stats, and presence. A reader loads a State snapshot first and then follows updates from that offset over a WebSocket when available. It folds those updates into local tables without querying the server database directly.
 
-In the lobby, Verified means the server's random-number bytes matched the player's on every tic, and Live turns off 30 seconds after the last input.
+That per-game State stream powers two live views:
+
+- **Per-game HUD.** Both the Play page and the Watch page follow the game's State stream to render server-computed health, armor, ammo, level progress, verification, and replay lag in real time.
+- **The lobby.** A second projection folds each game's State stream into compact summaries and sends them to a private lobby stream. A third projection turns those summaries into the public lobby list. It keeps the 50 newest games ordered by server start time rather than skill. Deleting a game removes its row without backfilling an older game into the list.
+
+In both views, Verified means the server's random-number byte matched the player's on every tic so far. Live turns on when frames arrive and switches off 30 seconds after the last input. Recordings and their snapshots expire 24 hours after creation.
 
 ## Hurt me plenty: Cloudflare
 
-The example runs on Cloudflare Workers and Durable Objects. A Durable Object is a small single-threaded server with its own SQLite storage and 128MB of memory.
+The hosted demo runs on Cloudflare Workers and Durable Objects. A Durable Object is a single-threaded server with its own SQLite database. Cloudflare limits memory to 128 MB per isolate.
 
-Running all the games and the projections on one Durable Object will quickly hit scaling limits, so we scale horizontally with three kinds of Durable Object:
+Putting every game and every headless Doom engine inside one Durable Object would exhaust that memory immediately. Instead, the example splits the work across three Durable Object classes:
 
-| Object       | One for each                             | Holds                                                          | Why it is split this way                                                               |
-| ------------ | ---------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `DoomGames`  | Family, meaning a game and all its forks | Input streams and their batch manifests                        | A fork shares stored bytes with its parent, so both streams must be in the same object |
-| `DoomReplay` | Game or fork                             | The server's Doom engine, its saved progress and its snapshots | An engine needs most of an object's memory, so each replay gets its own                |
-| `DoomLobby`  | Whole site                               | Session list and scoreboard                                    | One subscription shows every game                                                      |
+| Object       | One for each                             | Holds                                                                          | Why it is split this way                                                           |
+| ------------ | ---------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `DoomGames`  | Family, meaning a game and all its forks | Binary `Sessions` input streams and `Batches` manifests                        | A native fork shares stored bytes with its parent, so both must live in one object |
+| `DoomReplay` | Game or fork                             | The headless Doom engine, `ReplayWake`, the `Game` State stream, and snapshots | Each replay owns its engine and can recover it independently                       |
+| `DoomLobby`  | Whole site                               | Private `Entries` stream and public `Leaderboard` stream                       | One subscription serves the 50-game lobby list to every visitor                    |
 
-The objects cannot call each other's code directly. When a game object stores new inputs, it sends a wake to that game's replay object. The replay object reads the new inputs from the game object, steps its engine, appends the new stats to the lobby object, and every ten minutes of play writes a snapshot to its own SQLite storage. Browsers only talk to the Worker in front. The Worker uses the placement table to route each stream request to the right object, and sends snapshot reads to the game's replay object.
+Browsers talk only to the Cloudflare Worker in front. The Worker uses a shared placement table to route stream requests to the right object, forwards snapshot and State-snapshot reads to `DoomReplay` or `DoomLobby`, and returns 404 for internal links and the private `Entries` stream.
 
-![Architecture diagram. The browser's Play page appends binary input batches through the Cloudflare Worker to the DoomGames object for the game's family. That object holds the Sessions stream with its forks, plus the Batches manifest. A Sessions append runs frameWake, which appends to ReplayWake in the session's DoomReplay object over an internal link. The replay alarm runs replayStats, which reads frames from DoomGames, steps a headless engine and appends to Scores in the DoomLobby object. Every 21,000 tics replayStats also writes a gzip snapshot to the server_snapshots SQLite table in the same DoomReplay object. The browser writes session metadata to LobbyStream. The Lobby page follows LobbyStream and Scores over a WebSocket. The Watch page reads frames and forks through DoomGames, reads snapshots from DoomReplay, and reads scores from DoomLobby.](/docs/examples/doom-architecture.svg)
+Durable Objects do not call each other's TypeScript methods directly here. They talk through streams and internal links:
 
-The numbers in the diagram match the numbered sections under [Ultra-Violence: implementation details](#ultra-violence-implementation-details).
+1. When a player appends frames to `DoomGames`, a small wake projection appends a signal to that game's `ReplayWake` stream in `DoomReplay`.
+2. That wake triggers an alarm in `DoomReplay`. The replay projection reads the new frames from `DoomGames`, steps its headless engine, updates the local `Game` State stream, and writes a memory snapshot to its own SQLite database every ten minutes of play.
+3. A second projection in `DoomReplay` reads `Game` and sends compact summaries to `Entries` in `DoomLobby`.
+4. `DoomLobby` folds `Entries` into the public `Leaderboard` stream, which browsers follow over hibernatable WebSockets.
 
-### Performance
-
-These figures were measured against a test deployment from one client on a home network, using scripted copies of one recorded game. Each is a single short run. They show the shape of the system and are not capacity guarantees. They were measured before the server made snapshots, when the player's browser uploaded them. The cost of making a snapshot on the server has not been measured on Cloudflare.
-
-| Scenario                          | Input append, p50 / p95 | Key press to scoreboard, p50 / p95 |
-| --------------------------------- | ----------------------- | ---------------------------------- |
-| 1 game                            | 138 / 186 ms            | 0.3 / 0.4 s                        |
-| 10 separate games                 | 108 / 192 ms            | 0.3 / 0.5 s                        |
-| 50 separate games                 | 101 / 171 ms            | 1.0 / 1.7 s                        |
-| 20 forks of one game, all playing | 89 / 189 ms             | 8.7 / 19.7 s                       |
-
-"Key press to scoreboard" runs from the browser sending an input batch to the matching stats row arriving over the WebSocket. It covers the game object, the wake, the server engine and the lobby object.
-
-- **Separate games scale.** Each family has its own object, so input appends stay at about 100 ms from 1 to 50 players.
-- **The shared lobby slows the scoreboard as players join.** At 50 simultaneous players the lobby object takes about 110 stats rows a second, and the delay grows from 0.3 s to 1.0 s. We could trade scale for latency here by writing stats less frequently.
-- **Many live forks of one game are slow.** All forks of a game share one game object. With 20 forks playing at once, stats ran 9 to 20 seconds behind.
+The same application also runs locally on Bun. On Bun, every projection attaches in one process with no cross-object wakes, browsers use long polling instead of WebSockets, and server snapshots live in a separate sibling SQLite file rather than inside the stream database.
 
 ## Ultra-Violence: implementation details
 
 Snippet paths are relative to the `streamsy-doom` repository. `// ...` marks omitted lines, and a snippet labelled "simplified" is rewritten to show the Streamsy calls without the surrounding bookkeeping.
 
-### 1. Binary streams hold the input history
+### 1. Recording inputs and batch boundaries
 
-Each session has a byte stream. It starts with a line of JSON that names the engine build, the game data and the settings. Frames follow it with no wrapper.
+Each session is a binary stream declared with `Streamsy.bytes`. It opens with a single JSON header line naming the engine build, WAD hash, and game settings. Nine-byte frames follow with no wrapper.
 
-```ts title="src/streams/v2.ts"
+```ts title="src/streams/declarations.ts"
 export class Sessions extends Streamsy.bytes<Sessions>()(
   "DoomV2/Sessions",
   "doom/v2/sessions/:id",
@@ -115,80 +108,77 @@ export class Sessions extends Streamsy.bytes<Sessions>()(
 ) {}
 ```
 
-The browser sends about five frames in each append. It passes the offset it last saw as a precondition, so a second writer on the same session fails instead of interleaving frames.
+During play, the browser flushes batches of five frames. It passes its last confirmed offset in `Stream-Expected-Offset`, so a stale or competing writer fails instead of interleaving frames.
 
-```ts title="src/streams/sessions.ts"
+```ts title="src/streams/session-writer.ts"
 // SessionWriter.append (simplified)
 const before = this.offset;
-const response = await this.client.append(sessionPath(id), concat(frames), binary, {
+const response = await this.client.append(sessionPath(id), concat(frames), BINARY, {
   "Stream-Expected-Offset": before,
 });
 this.offset = offsetOf(response);
 
-// Remember where this batch starts and ends, for forks.
-const batch = { startTic, endTic, before, after: this.offset };
-await this.client.append(batchPath(id), JSON.stringify([{ batch }]), "application/json");
-```
-
-Offsets are opaque strings. The writer never calculates one from a frame count. It records the offset the server returns in a second JSON stream, `Batches`, called the manifest. The manifest maps tic ranges to offsets, and forks use it.
-
-The two appends are not one transaction. An interruption between them leaves frames with no manifest entry. These two appends are the only writes during play. The browser uploads no snapshots.
-
-### 2. Native forks branch inside a batch
-
-A fork is a stream created with headers that name its parent and an offset. The server shares the parent's stored bytes up to that offset.
-
-A player can fork at any tic, and most tics fall inside a batch. The manifest gives the offset before that batch. The sub-offset counts the bytes to keep from the batch.
-
-```ts title="src/streams/sessions.ts"
-// forkSession (simplified)
-const inside = batches.find((batch) => batch.startTic < tic && tic < batch.endTic);
-const offset = inside?.before ?? boundaryAt(tic);
-
-await client.request(`doom/v2/bootstrap/${childId}`, { method: "POST" });
-const headers = {
-  "Stream-Forked-From": `/${sessionPath(parentId)}`,
-  "Stream-Fork-Offset": offset,
+const batch = {
+  startTic: this.tic,
+  endTic: this.tic + frames.length,
+  before,
+  after: this.offset,
 };
-if (inside) headers["Stream-Fork-Sub-Offset"] = String((tic - inside.startTic) * 9);
-
-await client.create(sessionPath(childId), "", binary, 43200, headers);
+await this.client.append(batchPath(id), JSON.stringify([{ batch }]), JSON_CONTENT);
 ```
 
-`9` is the frame size. The browser does not copy frames or edit an offset string. The child inherits the parent's header line and frames. The example then writes the child's manifest and adds a lobby row that names the parent and the fork tic. The bootstrap call names the child's replay object, which section 4 explains.
+Stream offsets are opaque strings, and binary HTTP reads concatenate stored messages. A browser cannot calculate a mid-stream offset from a tic count. After each frame append, `SessionWriter` records `{ startTic, endTic, before, after }` in a companion JSON stream called `Batches`.
 
-Snapshots are not forked. The child's replay object replays the inherited history from the first tic and writes its own snapshots on the way (section 6).
+Frame appends and manifest appends are separate HTTP requests, not one transaction. If a browser disconnects between them, the last frames remain playable, but the manifest lacks that final boundary.
 
-### 3. Placement keeps native forks in one object
+### 2. Native forks inside a batch
 
-`Placement.byRoute` maps each stream to the name of its owner. A native fork needs the parent and child in the same owner, so every stream of a family goes to `game:<family>`.
+To fork a game, the browser reads the parent's `Batches` manifest and finds the boundary at or just before the chosen tic. If the tic falls inside a five-frame batch, the browser sends the offset before that batch and asks the server to keep `(tic - batch.startTic) * 9` bytes from inside it.
+
+```ts title="src/streams/session-fork.ts"
+// forkSession (simplified)
+const batchContainingTic = batches.find((b) => b.startTic < tic && tic < b.endTic);
+const forkOffset = batchContainingTic?.before ?? offsetAtBatchBoundary;
+
+const headers: Record<string, string> = {
+  "Stream-Forked-From": `/${sessionPath(parentId)}`,
+  "Stream-Fork-Offset": forkOffset,
+};
+if (batchContainingTic) {
+  headers["Stream-Fork-Sub-Offset"] = String((tic - batchContainingTic.startTic) * FRAME_BYTES);
+}
+
+const row = await bootstrapOnServer(client, id, {
+  ...parent,
+  playerName,
+  forkedFrom: parentId,
+  forkTic: tic,
+});
+const created = await client.create(sessionPath(id), "", { headers });
+```
+
+The server shares the parent's stored bytes up to that point without copying them. Because a protocol fork inherits the parent's binary header line verbatim, the server-written `Game` session row created by `bootstrapOnServer` is the authoritative record of `forkedFrom` and `forkTic`.
+
+Snapshots are not shared across forks. The child's `DoomReplay` object replays the inherited prefix and writes its own snapshots in its own SQLite table.
+
+### 3. Routing streams and linking Durable Objects
+
+`Placement.byRoute` maps every stream path to its owner name. Native forks require the parent and child in the same owner, so every session in a family shares `game:<family>` while each replay gets `replay:<id>`.
 
 ```ts title="apps/host-cloudflare/topology.ts"
 export const placement = Placement.byRoute([
-  rule({ stream: Sessions, owner: ({ id }) => `game:${familyOf(id)}` }),
-  rule({ stream: Batches, owner: ({ id }) => `game:${familyOf(id)}` }),
-  rule({ stream: ReplayWake, owner: ({ id }) => `replay:${id}` }),
-  rule({ stream: LobbyStream, owner: () => "lobby:v2" }),
-  rule({ stream: Scores, owner: () => "lobby:v2" }),
+  rule({ stream: Sessions, owner: gameObjectOf }),
+  rule({ stream: Batches, owner: gameObjectOf }),
+  rule({ stream: ReplayWake, owner: replayObjectOf }),
+  rule({ stream: Game, owner: replayObjectOf }),
+  rule({ stream: Leaderboard, owner: lobbyObject }),
+  rule({ stream: Entries, owner: lobbyObject }),
 ]);
 ```
 
-The Worker's public router and the internal links in section 4 use this same table. A request and a projection therefore always agree on where a stream lives. Snapshots are not streams, so they have no rule here. Section 6 shows how the Worker routes them.
+The Worker in `apps/host-cloudflare/edge.ts` and the internal links both use this table, so public requests and projections always agree on where a stream lives.
 
-### 4. Wake streams connect independent owners
-
-The stats projection runs in the replay object, but its input lives in the game object. A projection in one object is not woken by a commit in another. The game object therefore runs a small projection whose only job is to tell the replay object that frames arrived.
-
-```ts title="src/projection/wake.ts"
-export const frameWake = Projection.wake({
-  id: "doom-v2-frame-wake",
-  params: { id: SessionId },
-  input: Sessions,
-  output: ReplayWake,
-});
-```
-
-An `ObjectLink` gives one object access to streams in another. Each link names the streams and what the caller may do with them.
+Three `ObjectLink` definitions grant narrow cross-object permissions:
 
 ```ts title="apps/host-cloudflare/topology.ts"
 export const framesLink = ObjectLink.make({
@@ -203,254 +193,154 @@ export const wakeLink = ObjectLink.make({
   placement,
   access: "append",
 });
-export const scoresLink = ObjectLink.make({
-  group: Streamsy.group(Scores),
-  prefix: "/__scores",
+export const entriesLink = ObjectLink.make({
+  group: Streamsy.group(Entries),
+  prefix: "/__entries",
   placement,
   access: "append",
 });
 ```
 
-The game object serves the family's streams to browsers, serves frames to replay objects over `framesLink`, and attaches `frameWake` with a client for `wakeLink`.
+Every internal link uses a `/__` prefix. The Worker rejects any public request to `/__*` with 404, so only Durable Object stubs can reach them.
 
-```ts title="apps/host-cloudflare/worker.ts"
-export const DoomGames = StreamsyObject.make<Env /* ... */>({
-  app: Layer.merge(
-    Http.routes(familyStreams, {
-      prefix: "/",
-      access: "full",
-      maxMessageSize: 2_000_000,
-    }),
-    framesLink.routes,
-  ),
-  layer: gameLayer,
-  links: (env) => [wakeLink.client(env.REPLAYS)],
-  wakeups: [ProjectionWakeup.attach(frameWake)],
-});
+A commit in `DoomGames` cannot wake a projection in `DoomReplay` directly. Instead, `DoomGames` attaches `frameWake` (`Projection.wake` in `src/projection/frame-wake.ts`) with concurrency 8. Up to eight sibling forks in the same family can wake their replay objects in parallel.
+
+```ts title="apps/host-cloudflare/games-object.ts"
+export const gamesHost = (concurrency = SIBLING_REPLAYS_WOKEN_CONCURRENTLY) =>
+  StreamsyObject.make<Env, Layer.Success<ReturnType<typeof gamesLayer>>, ReplayWake>({
+    app: Layer.merge(publicFrameAndManifestStreams, framesLink.routes),
+    layer: gamesLayer,
+    links: (env) => [wakeLink.client(env.REPLAYS)],
+    wakeups: [ProjectionWakeup.attach(frameWake, { concurrency })],
+  });
 ```
 
-The replay object does the reverse. It accepts wakes, holds clients for `framesLink` and `scoresLink`, and attaches the stats projection with its local wake stream as the trigger. Its layer also provides the engine cache and the snapshot table from section 6.
+On the receiving side, `DoomReplay` (`apps/host-cloudflare/replay-object.ts` and `apps/host-cloudflare/replay-host.ts`) stores its session ID during bootstrap so it can rebuild its local wake trigger after eviction. It reads frames over `framesLink`, writes summaries over `entriesLink`, and attaches `replayStats`, `replayIdle`, and `lobbyEntry`.
 
-```ts title="apps/host-cloudflare/worker.ts"
-// replayHost (simplified)
-StreamsyObject.make({
-  app: Layer.mergeAll(wakeLink.routes /* ... */),
-  layer, // ReplayWake storage, checkpoints, ReplayEngines and SnapshotTable
-  links: (env) => [framesLink.client(env.GAMES), scoresLink.client(env.LOBBY)],
-  wakeups: [
-    ProjectionWakeup.attach(replayStats, { triggers: [LocalWake] }),
-    ProjectionWakeup.attach(replayIdle, { triggers: [LocalWake] }),
-  ],
-});
-```
+### 4. Transactional replay, snapshots, and cold recovery
 
-A wake sets a Durable Object alarm, and the alarm runs the projection. The chain from key press to stats has two alarms. The first, in the game object, sends the wake. The second, in the replay object, runs the replay.
+The replay projection (`doom-v2-replay`, built by `makeReplayStats`) reads pages of bytes from `Sessions`, steps the headless Doom engine, writes snapshots every 21,000 tics, and upserts rows into the local `Game` State stream.
 
-A replay object must know its session ID before it can build this host, including after Cloudflare evicts it. The browser calls a bootstrap route before it creates a session or a fork, and the replay object saves the ID in its storage.
-
-Link routes start with `/__`. The Worker returns 404 for any public request to those paths, so only object stubs reach them.
-
-### 5. A checkpointed projection computes stats with the engine
-
-The projection takes pages of bytes from `Sessions`, steps the engine, and returns new state plus rows for `Scores`. A factory builds it so that tests can pass a short snapshot interval.
-
-```ts title="src/projection/stats.ts"
-// simplified
+```ts title="src/projection/replay/projection.ts"
+// makeReplayStats (simplified)
 export function makeReplayStats({ snapshotInterval = SNAPSHOT_INTERVAL } = {}) {
   return Projection.mapAccumBatch({
-    id: "doom-v2-replay-stats",
+    id: "doom-v2-replay",
     params: { id: SessionId },
     inputs: { frames: Sessions },
-    outputs: { scores: Scores },
-    commit: Commit.producer,
-    state: { schema: StatsState, initial: initialStats },
+    outputs: { game: Game },
+    commit: Commit.transaction,
+    state: { schema: ReplayState, initial: initialReplayState },
     mapAccumBatch: (state, batch, unit) =>
       Effect.gen(function* () {
         // ...
-        const engine = yield* engineAt(unit.params.id, {
-          ...state,
-          header: decoded.header,
-        });
-        // ... snapshot set-up, see section 6
-        const next = yield* Effect.promise(() =>
-          replayDecoded(state, decoded, engine, unit.params.id, snapshots),
+        const engine = yield* engineAtCheckpoint(id, { ...state, header: decoded.header });
+        // ...
+        const replayed = yield* Effect.promise(() =>
+          replayDecoded(state, decoded, engine, id, {
+            intervalTics: snapshotInterval,
+            writeAfter: writeSnapshotWithResumePoint,
+          }),
         );
-        return [
-          next.state,
-          { scores: next.rows.map((row) => DurableState.upsert("stats", row)) },
-        ] as const;
+        const statsRows = replayed.rows.map((row) => DurableState.upsert("stats", row));
+        return [replayed.state, { game: statsRows }] as const;
       }),
   });
 }
-export const replayStats = makeReplayStats();
 ```
 
-Three choices matter here.
+The projection uses `Commit.transaction` instead of `Commit.producer`, because its output stream (`Game`) lives in the same `DoomReplay` object as its checkpoint. On Cloudflare, `server_snapshots` lives in that same Durable Object SQLite database too. The snapshot write, the `Game` stats append, and the projection checkpoint commit inside one SQLite transaction, so a failure rolls all three back together.
 
-**Batch input.** A page of bytes can end partway through a frame. `mapAccumBatch` hands the projection whole pages, and the leftover bytes go into `state` for the next run.
+On Bun (`apps/host-bun/runtime.ts`), snapshot writes do not share that transaction. Bun stores snapshots in a separate sibling `.snapshots.sqlite` file keyed by `(id, tic)` to avoid write-lock contention on the stream database, and `INSERT OR IGNORE` keeps retries idempotent.
 
-**State.** Streamsy saves `state` with the projection's input offset. It holds the running totals, the last published row and those leftover bytes. It does not hold the engine. The engine is a cache in the object's memory. When it is missing, `engineAt` builds a fresh one and replays the session from the first tic up to the saved tic. That costs more as a game gets longer. The replay could restore its own latest snapshot instead, but the example does not do that yet.
+Each snapshot is a gzipped envelope with a JSON identity line followed by the engine's 16 MiB heap XORed against its memory just after start-up. `compressSnapshot` in `engine/src/snapshot.ts` streams that XOR in 64 KiB chunks into `CompressionStream("gzip")` so it never allocates a second full delta buffer. A shareware snapshot compresses to about 600 KB. If a snapshot exceeds the 2,000,000-byte limit (`MAX_SNAPSHOT_BYTES` in `src/storage/snapshot-table.ts`), the projection skips that snapshot so stats and checkpoints keep moving.
 
-**Producer commit.** `Commit.producer` gives each output a delivery identity. If the append to the lobby object succeeds but the response is lost, the retry does not add a second copy. For that to work, a retry must produce the same rows. The projection therefore decides when to publish from the tic count and ignores page boundaries. It publishes when a visible stat changes and every 175 tics (five seconds). Between those points the scoreboard can trail the replay by up to 174 tics.
+Along with the compressed bytes, each snapshot row stores `resume_offset` and `resume_frames` for the unread tail of the input page. When `DoomReplay` starts cold or loses its cached engine, `engineAtCheckpoint` restores the newest unexpired snapshot at or before the checkpoint tic and resumes from that cursor instead of replaying from tic 0.
 
-The engine reports whether each frame's random-number byte matched. One mismatch sets `verified: false` on the row for the rest of the session.
+```ts title="src/projection/replay/engine-recovery.ts"
+// engineAtCheckpoint (simplified)
+const snapshot = (yield * SnapshotTable).latest(id, state.tic);
+if (snapshot) yield * Effect.sync(() => restoreSnapshot(engine, snapshot));
 
-A second projection, `replayIdle`, handles the Live flag. It uses `Projection.wakeAt` to wake 30 seconds after the last input, republishes the row with `live: false` and drops the cached engine. Wall-clock time stays out of `replayStats`, so its output depends only on the inputs.
-
-### 6. The replay object keeps snapshots in SQLite
-
-The stats projection already steps an engine through every tic, so it also makes the snapshots. Inside the replay loop, each tic that is a multiple of the interval triggers a write. The interval is 21,000 tics, ten minutes of play. The check runs on every tic, so a snapshot boundary inside a page is not skipped.
-
-```ts title="src/projection/stats.ts"
-// replayDecoded
-for (let at = 0; at < decoded.frames.length; at += 9) {
-  const valid = engine.step(decoded.frames.subarray(at, at + 9));
-  next = accumulate(next, engine.stats(), valid, id);
-  publish();
-  if (snapshots && next.tic % snapshots.interval === 0) await snapshots.write();
+const replay = replayerUpTo(state.tic, engine, header, snapshot);
+if (snapshot?.resume) replay([snapshot.resume.frames]);
+if (engine.tic < state.tic) {
+  const readFrom = snapshot?.resume ? { offset: snapshot.resume.offset } : undefined;
+  yield *
+    (yield * Sessions).read({ id }, readFrom).pipe(
+      Stream.takeUntil(() => engine.tic >= state.tic),
+      Stream.runForEach((batch) => Effect.sync(() => replay(batch.items))),
+    );
 }
 ```
 
-`snapshots.write` compresses the engine's memory and stores it through `SnapshotTable`, an Effect service that the replay object's layer provides. A snapshot takes the same absolute expiry as the replay's `ReplayWake` stream. The projection reads that expiry only in a unit that crosses a snapshot boundary.
+A companion projection, `replayIdle` (`src/projection/replay/idle.ts`), keeps wall-clock time out of the deterministic replay loop. When new frames arrive, `replayIdle` marks `live: true` in `Game` and schedules `Projection.wakeAt` for 30 seconds later. Once 30 seconds pass with no new frames and `doom-v2-replay` has settled on the same input offset, `replayIdle` writes `live: false` and releases the cached engine from memory. If `Sessions` expires, `replayIdle` deletes the game's snapshot rows.
 
-```ts title="src/projection/stats.ts"
-// makeReplayStats (simplified)
-const table = yield * SnapshotTable;
-let expiry = 0;
-if (crosses) expiry = Date.parse((yield * (yield * ReplayWake).head(unit.params)).expiresAt ?? "");
-const snapshots = {
-  interval: snapshotInterval,
-  write: async () => table.write(unit.params.id, engine.tic, await engine.snapshot(), expiry),
-};
-```
+Browsers read snapshots through two read-only endpoints handled by `src/server/snapshot-routes.ts` (any method other than `GET` or `HEAD` returns 405):
 
-The snapshot is a side effect of the projection, not one of its outputs.
+| Route                                | Returns                                                     |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `/doom/v2/server-snapshots/:id`      | Uncached JSON `[{ tic, size }]` listing unexpired snapshots |
+| `/doom/v2/server-snapshots/:id/:tic` | Gzip snapshot bytes, cached as immutable until row expiry   |
 
-`engine.snapshot()` uses the format the browser already restores: a gzip of a JSON line with the engine settings and tic, then the engine's 16 MiB of memory XOR the memory just after start-up. The XOR leaves mostly zeros, so a snapshot compresses to about 600 KB. `compressSnapshot` in `engine/src/snapshot.ts` streams the XOR in 64 KiB chunks into the runtime's native gzip, so it never holds a second full copy of memory.
+When a watcher seeks, `SessionReader.seek` (`src/streams/session-reader.ts`) fetches the latest snapshot at or before the target tic, validates its size, tic, and engine identity, restores it, and steps the remaining frames.
 
-The replay object owns the table in its own SQLite storage. The key is the tic, because the object holds one session.
+### 5. Per-game state, the bounded leaderboard, and live reading
 
-```ts title="src/projection/snapshots.ts"
-// snapshotTable (replay object form, simplified)
-sql.run(
-  `CREATE TABLE IF NOT EXISTS server_snapshots (
-  tic INTEGER NOT NULL, size INTEGER NOT NULL, expires_at INTEGER NOT NULL, bytes BLOB NOT NULL,
-  PRIMARY KEY (tic))`,
-  [],
-);
-// write(id, tic, bytes, expiresAt)
-if (bytes.length > MAX_SNAPSHOT_BYTES) throw new Error(`Snapshot too large: ${bytes.length}`);
-sql.run("DELETE FROM server_snapshots WHERE expires_at <= ?", [now()]);
-sql.run("INSERT OR IGNORE INTO server_snapshots (tic,size,expires_at,bytes) VALUES (?,?,?,?)", [
-  tic,
-  bytes.length,
-  expiresAt,
-  bytes,
-]);
-```
+Session metadata, per-game stats, and lobby entries live in three Durable State streams:
 
-`INSERT OR IGNORE` makes the write safe to repeat. A unit can write a snapshot and then fail before Streamsy saves its checkpoint. The retry replays the same tics, makes the same snapshot and leaves the existing row in place. Each write also deletes expired rows, and reads skip them. When the input stream is gone, `replayIdle` deletes every row.
-
-Browsers read snapshots through two routes that accept only `GET` and `HEAD`:
-
-| Route                                | Returns                                                   |
-| ------------------------------------ | --------------------------------------------------------- |
-| `/doom/v2/server-snapshots/:id`      | JSON `[{ tic, size }]` in tic order, not cached           |
-| `/doom/v2/server-snapshots/:id/:tic` | The gzip bytes, cached as immutable until the row expires |
-
-Any other method returns 405, so no browser can write a snapshot. The Worker checks for these paths before stream routing and forwards them to the session's replay object.
-
-```ts title="apps/host-cloudflare/worker.ts"
-// Worker fetch
-const snapshot = snapshotRoute(request);
-if (snapshot instanceof Response) return snapshot;
-if (snapshot)
-  return env.REPLAYS.get(env.REPLAYS.idFromName(`replay:${snapshot.id}`)).fetch(request);
-```
-
-The replay object answers these reads from its table without building the Streamsy host. It returns 404 when the ID in the path is not its own session.
-
-```ts title="apps/host-cloudflare/worker.ts"
-// DoomReplay.fetch
-const snapshot = snapshotRoute(request);
-if (snapshot instanceof Response) return snapshot;
-if (snapshot) {
-  if (this.identity && snapshot.id !== this.identity) return new Response(null, { status: 404 });
-  return snapshotResponse(request, snapshot, this.snapshots);
-}
-```
-
-A seek in the browser restores the latest snapshot at or before the target and replays the rest. `SnapshotStore` reads the list route and then one snapshot.
-
-```ts title="src/streams/sessions.ts"
-// SessionReader.seek
-const store = new SnapshotStore(this.client, this.id);
-const entry = (await store.entries()).filter((entry) => entry.tic <= target).at(-1);
-if (entry) engine.restore(await store.load(entry));
-// ...
-for (let i = engine.tic; i < target; i++) engine.step(this.frames[i]);
-```
-
-These are Doom memory snapshots, not Streamsy projection checkpoints. A snapshot only works with the same engine build, game data and settings. `SnapshotStore.load` checks the size and tic against the list entry, and `engine.restore` rejects a snapshot whose build, game data or settings differ from its own. While a game is being played, the Play page polls the list route every five seconds to show the latest snapshot tic.
-
-### 7. State streams deliver the live lobby
-
-The lobby object holds two State streams. Browsers write session rows (player name, skill, parent) to `LobbyStream`. Only the replay objects write to `Scores`.
-
-```ts title="src/streams/v2.ts"
-export class LobbyStream extends Streamsy.state<LobbyStream>()("DoomV2/Lobby", "doom/v2/lobby", {
-  params: {},
-  collections: { session: { schema: SessionRowSchema, key: "id" } },
-}) {}
-
-export class Scores extends Streamsy.state<Scores>()("DoomV2/Scores", "doom/v2/scores", {
-  params: {},
-  collections: { stats: { schema: StatsRowSchema, key: "id" } },
-}) {}
-```
-
-The split is what stops a browser overwriting a score. The public route to `Scores` is read-only, and the internal link stays appendable.
-
-```ts title="apps/host-cloudflare/worker.ts"
-export const DoomLobby = StreamsyObject.make<Env /* ... */>({
-  app: Layer.mergeAll(
-    Http.routes(lobbyStreams, {
-      prefix: "/",
-      access: (stream) => (stream === Scores ? "read" : "full"),
-    }),
-    scoresLink.routes,
-    initScores,
-  ),
-  layer: lobbyLayer,
-  live: { websocket: true },
-});
-```
-
-`live: { websocket: true }` turns on hibernatable WebSockets, so the lobby object can sleep while tabs stay connected.
-
-The browser reads both streams the same way. It catches up over HTTP from the start, then opens a WebSocket at the offset it reached. If the socket fails, it continues with long polling from the last confirmed offset. The Bun host has no WebSocket support and always takes that path.
-
-```ts title="apps/web/main.ts"
-// simplified
-const sessions = new StateRows<SessionMetadata>("session");
-const scores = new StateRows<StatsRow>("stats");
-
-followJson(client, "doom/v2/lobby", {
-  onBatch: (events) => {
-    sessions.apply(events);
-    render();
+```ts title="src/streams/declarations.ts"
+export class Game extends Streamsy.state<Game>()("DoomV2/Game", "doom/v2/games/:id", {
+  params,
+  collections: {
+    stats: { schema: StatsRowSchema, key: "id" },
+    presence: { schema: PresenceRowSchema, key: "id" },
+    session: { schema: SessionRowSchema, key: "id" },
   },
-});
-followJson(client, "doom/v2/scores", {
+}) {}
+
+export class Entries extends Streamsy.state<Entries>()("DoomV2/Entries", "doom/v2/entries", {
+  params: {},
+  collections: { entry: { schema: EntryRowSchema, key: "id" } },
+}) {}
+
+export class Leaderboard extends Streamsy.state<Leaderboard>()(
+  "DoomV2/Leaderboard",
+  "doom/v2/leaderboard",
+  {
+    params: {},
+    collections: { game: { schema: EntryRowSchema, key: "id" } },
+  },
+) {}
+```
+
+`Game` and `Leaderboard` are publicly read-only, and `Entries` is hidden from public routes. Only the server writes to `Game` (through replay projections and the `POST /doom/v2/bootstrap/:id`, `end`, and `delete` endpoints), so browsers cannot write these rows directly. Because routes are unauthenticated, any caller with a session ID can still call `end` or `delete`.
+
+Two projections connect per-game state to the lobby:
+
+1. **`lobbyEntry`** (`src/projection/lobby-entry.ts`) runs inside `DoomReplay` with `Commit.producer` and exponential backoff capped at 30 seconds. It folds `Game` events into one summary row and appends it to `Entries` over `entriesLink`. Session changes, presence changes, and the first score publish immediately. Routine score updates coalesce to five-second (175-tic) intervals so busy games do not flood `DoomLobby`. When `Game` expires, `lobbyEntry` removes the entry.
+2. **`leaderboard`** (`src/projection/leaderboard.ts`) runs inside `DoomLobby` with `Commit.transaction`. It syncs `EntriesTable` and `LeaderboardTable`, sorts candidates by server `createdAt` descending and then by `id`, and writes only the changes needed to keep the newest 50 rows in `Leaderboard`. Deleted entries are removed without scanning older games to backfill.
+
+Browsers never fold a State stream from the beginning of time. Both `followLeaderboard` (`apps/web/lobby-screen.ts`) and `GameHud` (`apps/web/hud.ts`) call `followState` (`src/streams/live.ts`):
+
+```ts title="apps/web/lobby-screen.ts"
+// followLeaderboard (simplified)
+const entries = new StateRows<EntryRow>("game");
+void followState<StateEvent<EntryRow>>(client, {
+  snapshot: leaderboardStateSnapshotPath,
+  stream: leaderboardStatePath,
+  signal,
   onBatch: (events) => {
-    scores.apply(events);
-    render();
+    entries.apply(events);
+    renderLeaderboard([...entries.rows.values()]);
   },
 });
 ```
 
-`StateRows` folds upserts and deletes into a map keyed by session ID. `render` joins the two maps by ID to draw the lobby table.
+`followState` first calls a `GET` snapshot route (`/doom/v2/state-snapshot/leaderboard` or `/doom/v2/state-snapshot/games/:id`). The server reads the synced State table in one transaction and returns the current rows alongside `Stream-Next-Offset`. `followState` then passes that offset to `followJson`, which opens a hibernatable WebSocket to `DoomLobby` or `DoomReplay` (`live: { websocket: true }`) and falls back to long polling if WebSockets are unavailable.
 
 ### Stream expiry
 
-The example gives `Sessions`, `Batches` and `ReplayWake` a fixed expiry 24 hours after creation, which no read extends. A fork gets its own 24 hours from when it is created. Snapshot rows copy the `ReplayWake` deadline, so they expire with the game.
+`Sessions`, `Batches`, `ReplayWake`, and `Game` expire at a fixed deadline 24 hours after creation. Reads do not extend that deadline. A fork receives its own 24-hour clock when created, and snapshot rows copy `ReplayWake`'s deadline so snapshots expire with the game.
+
+`Entries` and `Leaderboard` have no expiry. When a game expires, `lobbyEntry` removes its row, while the underlying State logs continue to grow until Streamsy adds State log trimming.
