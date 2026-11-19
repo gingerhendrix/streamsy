@@ -31,6 +31,16 @@ The upstream Node `YjsServer` (`@durable-streams/y-durable-streams/server`) is n
 
 The first commit imports the published 0.2.9 source unchanged. Later changes:
 
+- **Snapshot discovery works in browsers.** Upstream sends `GET ?offset=snapshot`
+  with `redirect: "manual"` and reads the `Location` header of the `307`. A
+  browser answers a manual redirect with an opaque response (status 0, no
+  headers), so upstream browser peers never found a snapshot and replayed the
+  whole update log from `offset=-1`. The fork follows the redirect and reads the
+  offset from the final response URL. When that offset is a snapshot, the same
+  response carries the snapshot body, so discovery and the snapshot read take one
+  request instead of two. Otherwise the body is cancelled unread and the updates
+  stream starts at the named offset. A `404` for a snapshot that was replaced
+  after discovery retries discovery at most three times, then replays the log.
 - The source is formatted with the repository's `oxfmt` settings.
 - `destroy()` has an `override` modifier, required by the repository's `noImplicitOverride`.
 - Fire-and-forget calls carry `void`, as the repository's `no-floating-promises` rule requires. Behaviour is unchanged.

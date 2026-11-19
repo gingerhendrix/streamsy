@@ -23,6 +23,11 @@ import {
 } from "@durable-streams/client";
 import type { HeadersRecord } from "@durable-streams/client";
 
+/**
+ * Discovery attempts when the snapshot it finds is gone before it is read.
+ */
+const MAX_DISCOVERY_ATTEMPTS = 3;
+
 // ---- State Machine ----
 
 /**
@@ -400,82 +405,67 @@ export class YjsProvider extends ObservableV2<YjsProviderEvents> {
 
   /**
    * Discover the current snapshot state via ?offset=snapshot.
-   * Handles 307 redirect to determine starting offset.
+   *
+   * The request follows the server's 307, and the final response URL holds the
+   * starting offset. Upstream 0.2.9 used `redirect: "manual"`. A browser answers
+   * that with an opaque redirect (status 0, no Location header), so browser peers
+   * never found a snapshot and replayed the whole log. Following the redirect
+   * works in browsers, Node and Bun, and a snapshot's body arrives in the same
+   * response.
    */
-  private async discoverSnapshot(ctx: ConnectionContext): Promise<void> {
+  private async discoverSnapshot(ctx: ConnectionContext, attempt = 1): Promise<void> {
     const url = `${this.docUrl()}?offset=snapshot`;
 
     const response = await fetch(url, {
       method: `GET`,
       // SAFETY: upstream cast. Function-valued HeadersRecord entries are not resolved on raw fetch calls (known upstream limit, see README).
       headers: this.headers as Record<string, string>,
-      redirect: `manual`, // Don't follow redirects automatically
       signal: ctx.controller.signal,
     });
 
-    if (response.status === 307) {
-      // Parse the redirect location
-      const location = response.headers.get(`location`);
-      if (location) {
-        const redirectUrl = new URL(location, url);
-        const offset = redirectUrl.searchParams.get(`offset`);
-        if (offset) {
-          if (offset.endsWith(`_snapshot`)) {
-            // Snapshot exists - load it
-            await this.loadSnapshot(ctx, offset);
-          } else {
-            // No snapshot - start from the indicated offset
-            ctx.startOffset = offset;
-          }
-          return;
+    // `response.url` is empty only for a Response that fetch did not produce.
+    const offset = new URL(response.url || url).searchParams.get(`offset`);
+
+    if (offset?.endsWith(`_snapshot`)) {
+      if (response.status === 404) {
+        await YjsProvider.discardBody(response);
+        // The snapshot was replaced after discovery. A browser can serve the
+        // cached 307 again, so retry a bounded number of times, then replay the log.
+        if (attempt < MAX_DISCOVERY_ATTEMPTS) {
+          await this.discoverSnapshot(ctx, attempt + 1);
+        } else {
+          ctx.startOffset = `-1`;
         }
+        return;
       }
-    }
-
-    // Fallback: if redirect parsing fails, start from beginning
-    ctx.startOffset = `-1`;
-  }
-
-  /**
-   * Load a snapshot from the server.
-   */
-  private async loadSnapshot(ctx: ConnectionContext, snapshotOffset: string): Promise<void> {
-    const url = `${this.docUrl()}?offset=${encodeURIComponent(snapshotOffset)}`;
-
-    try {
-      const response = await fetch(url, {
-        method: `GET`,
-        // SAFETY: upstream cast. Function-valued HeadersRecord entries are not resolved on raw fetch calls (known upstream limit, see README).
-        headers: this.headers as Record<string, string>,
-        signal: ctx.controller.signal,
-      });
 
       if (!response.ok) {
-        if (response.status === 404) {
-          // Snapshot deleted - retry discovery
-          await this.discoverSnapshot(ctx);
-          return;
-        }
+        await YjsProvider.discardBody(response);
         throw new Error(`Failed to load snapshot: ${response.status}`);
       }
 
-      // Apply snapshot
       const data = new Uint8Array(await response.arrayBuffer());
       if (data.length > 0) {
         Y.applyUpdate(this.doc, data, `server`);
       }
 
-      // Get the next offset from header
-      const nextOffset = response.headers.get(`stream-next-offset`);
-      ctx.startOffset = nextOffset ?? `-1`;
-    } catch (err) {
-      if (this.isNotFoundError(err)) {
-        // Snapshot deleted - retry discovery
-        await this.discoverSnapshot(ctx);
-        return;
-      }
-      throw err;
+      ctx.startOffset = response.headers.get(`stream-next-offset`) ?? `-1`;
+      return;
     }
+
+    // No snapshot. The redirect target is a log read, which the updates stream
+    // repeats, so do not download it here.
+    await YjsProvider.discardBody(response);
+
+    // Start from the offset the server named. Without a redirect, start from the beginning.
+    ctx.startOffset = offset !== null && offset !== `snapshot` ? offset : `-1`;
+  }
+
+  /**
+   * Release a response body without reading it.
+   */
+  private static async discardBody(response: Response): Promise<void> {
+    await response.body?.cancel().catch(() => {});
   }
 
   // ---- Updates Producer ----
