@@ -48,6 +48,8 @@ const state = Effect.gen(function* () {
       yield* sql`SELECT * FROM streamsy_view_arrangements ORDER BY namespace, arrangement, index_key, sort_key, row_key`,
     accumulators:
       yield* sql`SELECT * FROM streamsy_view_accumulators ORDER BY namespace, node, group_key`,
+    owners:
+      yield* sql`SELECT * FROM streamsy_view_key_owners ORDER BY namespace, relation, output_key`,
     circuits: yield* sql`SELECT * FROM streamsy_view_circuits ORDER BY namespace`,
   };
 });
@@ -80,7 +82,9 @@ it.live("new generations rebuild and remove the old operator namespace", () => {
     expect(after.circuits).toHaveLength(1);
     expect(after.circuits[0]?.generation).toBe(2);
 
-    for (const rows of [after.integrals, after.arrangements, after.accumulators])
+    expect(before.owners.length).toBeGreaterThan(0);
+
+    for (const rows of [after.integrals, after.arrangements, after.accumulators, after.owners])
       expect(Array.some(rows, (row) => row.namespace === oldNamespace)).toBe(false);
     yield* Projection.run(Table.at(params));
     expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
@@ -95,7 +99,13 @@ it.live("Projection.forget deletes the checkpoint and all namespace state", () =
     yield* seed;
     yield* Projection.forget(circuit().at(params));
     const after = yield* state;
-    expect(after).toEqual({ integrals: [], arrangements: [], accumulators: [], circuits: [] });
+    expect(after).toEqual({
+      integrals: [],
+      arrangements: [],
+      accumulators: [],
+      owners: [],
+      circuits: [],
+    });
     expect((yield* Projection.read(circuit().at(params))).offsets).toEqual({
       [Shop.key]: ZERO_OFFSET,
     });
@@ -273,3 +283,72 @@ it.live("an attached circuit advances through the normal Projection registry", (
     expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
   }).pipe(Effect.provide(attached));
 });
+
+const WireKey = Schema.Union([Schema.String, Schema.Finite]);
+
+class WireInput extends Streamsy.state<WireInput>()("ViewsTest/WireInput", "wire/input", {
+  params: {},
+  collections: {
+    row: { schema: Schema.Struct({ id: Schema.String, target: WireKey }), key: "id" },
+  },
+}) {}
+
+class WireOutput extends Streamsy.state<WireOutput>()("ViewsTest/WireOutput", "wire/output", {
+  params: {},
+  collections: {
+    row: { schema: Schema.Struct({ id: Schema.String, target: WireKey }), key: "target" },
+  },
+}) {}
+
+it.live(
+  "rejects distinct IR keys with the same State wire key and preserves the checkpoint",
+  () => {
+    const declaration = View.circuit({
+      id: "wire-key",
+      params: {},
+      output: WireOutput,
+      views: { row: View.from(WireInput, "row") },
+    }).at({});
+
+    const local = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+      Layer.provideMerge(
+        BunStorage.layer(Streamsy.group(WireInput, WireOutput), {
+          client: { filename: ":memory:" },
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* View.migrate(sql);
+      const input = yield* WireInput;
+      yield* input.create({});
+      yield* input.append(
+        {},
+        DurableState.changes(WireInput.at({}), {}, [
+          DurableState.upsert("row", { id: "one", target: 1 }),
+        ]),
+      );
+      yield* Projection.run(declaration);
+      const before = yield* Projection.read(declaration);
+      const stream = yield* WireOutput;
+      const head = yield* stream.head({});
+      yield* input.append(
+        {},
+        DurableState.changes(WireInput.at({}), {}, [
+          DurableState.upsert("row", { id: "two", target: "1" }),
+        ]),
+      );
+      const fault = yield* Projection.run(declaration).pipe(Effect.flip);
+      expect(fault).toMatchObject({
+        _tag: "ViewDataFault",
+        view: "row",
+        node: "row/key/0",
+        key: "1",
+        reason: "duplicate output key",
+      });
+      expect(yield* Projection.read(declaration)).toEqual(before);
+      expect((yield* stream.head({})).nextOffset).toBe(head.nextOffset);
+    }).pipe(Effect.provide(local));
+  },
+);

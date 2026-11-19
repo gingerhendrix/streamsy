@@ -2,6 +2,7 @@ import { Array as Arr, Effect } from "effect";
 import { evaluateOptional, isMissing } from "../runtime/expression.ts";
 import { canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
+import { checkData, dataFault, type DataFault } from "./data-fault.ts";
 import { orderKey } from "./encoding.ts";
 import type { Arrangement, Program } from "./planner.ts";
 import type { Entry, IndexEntry, Store } from "./store.ts";
@@ -26,9 +27,13 @@ export function delta(
 }
 
 /** Compare whole keyed relations only within the affected set. */
-export function difference(before: readonly Entry[], after: readonly Entry[]): Deltas {
-  const old = unique(before),
-    next = unique(after);
+export function difference(
+  before: readonly Entry[],
+  after: readonly Entry[],
+  fault: DataFault,
+): Deltas {
+  const old = unique(before, fault),
+    next = unique(after, fault);
 
   const result = new Map<string, Delta>();
 
@@ -44,13 +49,13 @@ export function difference(before: readonly Entry[], after: readonly Entry[]): D
   return result;
 }
 
-function unique(entries: readonly Entry[]): Map<string, Entry> {
+function unique(entries: readonly Entry[], fault: DataFault): Map<string, Entry> {
   const result = new Map<string, Entry>();
 
   for (const e of entries) {
     const key = encodeRowKey(e.key);
 
-    if (result.has(key)) throw new TypeError("relation has duplicate output keys");
+    if (result.has(key)) throw fault(e.key, "duplicate output key");
     result.set(key, e);
   }
 
@@ -84,6 +89,14 @@ export function indexEntry(a: Arrangement, entry: Entry): IndexEntry | undefined
  * No cache or payload survives the unit; SQL is authoritative between units.
  */
 export function runtime(program: Program, store: Store) {
+  const fault = (relation: string) => {
+    const location = program.locations.get(relation);
+
+    if (!location) throw new Error(`missing relation location for ${relation}`);
+
+    return dataFault(location);
+  };
+
   const changes = new Map<string, Deltas>();
   const cache = new Map<string, Map<string, Entry | undefined>>();
 
@@ -109,8 +122,15 @@ export function runtime(program: Program, store: Store) {
       return rows.get(key);
     });
 
-  const lookup = (a: Arrangement, key: string, before: boolean, limit?: number, reverse = false) =>
+  const lookup = (
+    a: Arrangement,
+    key: string,
+    before: boolean,
+    options: { readonly limit?: number; readonly reverse?: boolean; readonly batch?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
+      const { limit, reverse = false, batch = false } = options;
+
       const pending =
         indexChanges.get(a.id)?.get(key) ??
         new Map<string, { before?: IndexEntry; after?: IndexEntry }>();
@@ -143,6 +163,24 @@ export function runtime(program: Program, store: Store) {
         return reverse ? -x : x;
       });
       const selected = limit === undefined ? ordered : ordered.slice(0, limit);
+
+      if (batch) {
+        const rows = cache.get(a.relation) ?? new Map<string, Entry | undefined>();
+        cache.set(a.relation, rows);
+
+        const keys = Arr.map(
+          Arr.filter(
+            selected,
+            (e) => !rows.has(e.row_key) && !(before && changes.get(a.relation)?.has(e.row_key)),
+          ),
+          (e) => e.row_key,
+        );
+
+        const found = yield* store.getMany(a.relation, keys);
+
+        for (const id of keys) rows.set(id, found.get(id));
+      }
+
       const rows: Entry[] = [];
 
       for (const e of selected) {
@@ -189,10 +227,16 @@ export function runtime(program: Program, store: Store) {
 
         for (const d of deltas.values()) {
           const before =
-            d.before === undefined ? undefined : indexEntry(a, { key: d.key, row: d.before });
+            d.before === undefined
+              ? undefined
+              : checkData(fault(a.node), d.key, () =>
+                  indexEntry(a, { key: d.key, row: d.before! }),
+                );
 
           const after =
-            d.after === undefined ? undefined : indexEntry(a, { key: d.key, row: d.after });
+            d.after === undefined
+              ? undefined
+              : checkData(fault(a.node), d.key, () => indexEntry(a, { key: d.key, row: d.after! }));
 
           if (before?.index_key === after?.index_key && before?.sort_key === after?.sort_key)
             continue;
@@ -221,7 +265,7 @@ export function runtime(program: Program, store: Store) {
       }
     });
 
-  return { changes, get, lookup, apply };
+  return { changes, get, lookup, apply, fault };
 }
 
 export type Runtime = ReturnType<typeof runtime>;

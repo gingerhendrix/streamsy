@@ -287,7 +287,7 @@ it.live("rolls back a failed unit, including its integrals, arrangements, and ac
 });
 
 it.live(
-  "shares identical arrangements and stores only nonlinear inputs; every statement binds at most 100 values",
+  "shares identical arrangements and stores only sources and arranged relations; every statement binds at most 100 values",
   () => {
     const plans = shopPlans(true);
     const totals = plans.totals;
@@ -300,7 +300,7 @@ it.live(
       const extrema = Arr.filter(engine.program.arrangements, (a) => a.optional);
       expect(extrema.length).toBe(1); // min/max and two aggregate consumers share one index
       expect(Arr.filter(engine.program.nodes, (n) => n.kind === "inner-join").length).toBe(1);
-      expect(engine.program.stored.size).toBe(2); // only the two sources
+      expect(engine.program.stored.size).toBe(3); // sources and joined input to a sum
       const sizes: number[] = [];
       yield* engine
         .process("p", [
@@ -327,6 +327,7 @@ it.live(
           "streamsy_view_integrals",
           "streamsy_view_arrangements",
           "streamsy_view_accumulators",
+          "streamsy_view_key_owners",
         ]),
       );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));

@@ -7,7 +7,9 @@ import type {
   SqlGroupedAggregateNode,
   SqlRelationNode,
   TopNNode,
+  RowKey,
 } from "../ir/contracts.ts";
+import { checkData, type DataFault } from "./data-fault.ts";
 import { findArrangement, joinKeys, type Program } from "./planner.ts";
 import { difference, type Deltas, type Runtime } from "./runtime.ts";
 import type { Accumulator, Entry, Store } from "./store.ts";
@@ -15,30 +17,31 @@ import type { Accumulator, Entry, Store } from "./store.ts";
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening -- Mutable aggregate fields and sums use the IR's open dictionary contract; Expression results are checked at the operator boundary. */
 
 export function linear(
-  node: Extract<SqlRelationNode, { kind: "filter" | "project" | "key" }>,
+  node: Extract<SqlRelationNode, { kind: "filter" | "project" }>,
   input: Deltas,
+  fault: DataFault,
 ): Deltas {
-  const map = (entry: Entry): Entry | undefined => {
-    if (node.kind === "filter") {
-      const accepted = evaluate(node.predicate, { row: entry.row, key: entry.key });
+  const map = (entry: Entry): Entry | undefined =>
+    checkData(fault, entry.key, () => {
+      if (node.kind === "filter") {
+        const accepted = evaluate(node.predicate, { row: entry.row, key: entry.key });
 
-      if (typeof accepted !== "boolean") throw new TypeError("filter predicate must be Boolean");
+        if (typeof accepted !== "boolean")
+          throw fault(entry.key, "filter predicate must be Boolean");
 
-      return accepted ? entry : undefined;
-    }
+        return accepted ? entry : undefined;
+      }
 
-    if (node.kind === "key")
-      return { ...entry, key: asRowKey(evaluate(node.key, { row: entry.row, key: entry.key })) };
-    const row: Record<string, JsonValue> = {};
+      const row: Record<string, JsonValue> = {};
 
-    for (const [name, e] of Rec.toEntries(node.fields)) {
-      const value = evaluateOptional(e, { row: entry.row, key: entry.key });
+      for (const [name, e] of Rec.toEntries(node.fields)) {
+        const value = evaluateOptional(e, { row: entry.row, key: entry.key });
 
-      if (!isMissing(value)) row[name] = value;
-    }
+        if (!isMissing(value)) row[name] = value;
+      }
 
-    return { key: entry.key, row };
-  };
+      return { key: entry.key, row };
+    });
 
   const before: Entry[] = [],
     after: Entry[] = [];
@@ -52,7 +55,7 @@ export function linear(
     if (b) after.push(b);
   }
 
-  return difference(before, after);
+  return difference(before, after, fault);
 }
 
 export const join = Effect.fnUntraced(function* (
@@ -60,6 +63,7 @@ export const join = Effect.fnUntraced(function* (
   program: Program,
   rt: Runtime,
 ) {
+  const fault = rt.fault(node.id);
   const keys = joinKeys(node.on);
 
   if (!keys) throw new TypeError("join was not checked");
@@ -71,7 +75,7 @@ export const join = Effect.fnUntraced(function* (
   for (const d of rt.changes.get(node.right)?.values() ?? []) {
     for (const row of [d.before, d.after]) {
       if (!row) continue;
-      const key = evaluateOptional(keys.right, { row, key: d.key });
+      const key = checkData(fault, d.key, () => evaluateOptional(keys.right, { row, key: d.key }));
 
       if (!isMissing(key)) rightKeys.add(canonicalJson([key]));
     }
@@ -88,7 +92,10 @@ export const join = Effect.fnUntraced(function* (
       const left = yield* rt.get(node.left, id, before);
 
       if (!left) return [];
-      const key = evaluateOptional(keys.left, { row: left.row, key: left.key });
+
+      const key = checkData(fault, left.key, () =>
+        evaluateOptional(keys.left, { row: left.row, key: left.key }),
+      );
 
       const right = isMissing(key)
         ? []
@@ -113,7 +120,7 @@ export const join = Effect.fnUntraced(function* (
     after.push(...(yield* evaluateLeft(id, false)));
   }
 
-  return difference(before, after);
+  return difference(before, after, fault);
 });
 
 export const aggregate = Effect.fnUntraced(function* (
@@ -122,7 +129,26 @@ export const aggregate = Effect.fnUntraced(function* (
   rt: Runtime,
   store: Store,
 ) {
+  const fault = rt.fault(node.id);
   const expressions = Rec.values(node.groupBy);
+
+  const sumFields = Arr.flatMap(Rec.toEntries(node.aggregates), ([name, a]) =>
+    a.function === "sum" && a.expression ? [[name, a.expression] as const] : [],
+  );
+
+  const operands = (row: JsonObject, key: RowKey, sign: 1 | -1) =>
+    checkData(fault, key, () =>
+      Arr.flatMap(sumFields, ([field, expression]) => {
+        const value = evaluateOptional(expression, { row, key });
+
+        if (isMissing(value)) return [];
+
+        if (typeof value !== "number" || !Number.isFinite(value))
+          throw fault(key, "sum requires finite numbers");
+
+        return [{ field, value, sign }];
+      }),
+    );
 
   const groups = new Map<
     string,
@@ -130,7 +156,7 @@ export const aggregate = Effect.fnUntraced(function* (
       key: ReturnType<typeof asRowKey>;
       row: JsonObject;
       count: number;
-      sums: Record<string, number>;
+      operands: SignedOperand[];
     }
   >();
 
@@ -140,28 +166,17 @@ export const aggregate = Effect.fnUntraced(function* (
       [d.after, 1],
     ] as const) {
       if (row === undefined) continue;
-      const fields: Record<string, JsonValue> = {};
 
-      for (const [name, e] of Rec.toEntries(node.groupBy))
-        fields[name] = evaluate(e, { row, key: d.key });
-      const values = Rec.values(fields);
+      const { key, fields } = checkData(fault, d.key, () => {
+        const groupFields = Rec.map(node.groupBy, (e) => evaluate(e, { row, key: d.key }));
 
-      const key = asRowKey(values),
-        encoded = canonicalJson(values);
+        return { key: asRowKey(Rec.values(groupFields)), fields: groupFields };
+      });
 
-      const group = groups.get(encoded) ?? { key, row: fields, count: 0, sums: {} };
+      const encoded = canonicalJson(key);
+      const group = groups.get(encoded) ?? { key, row: fields, count: 0, operands: [] };
       group.count += sign;
-
-      for (const [name, a] of Rec.toEntries(node.aggregates)) {
-        if (a.function !== "sum" || !a.expression) continue;
-        const value = evaluateOptional(a.expression, { row, key: d.key });
-
-        if (isMissing(value)) continue;
-
-        if (typeof value !== "number" || !Number.isFinite(value))
-          throw new TypeError("sum requires finite numbers");
-        group.sums[name] = (group.sums[name] ?? 0) + sign * value;
-      }
+      group.operands.push(...operands(row, d.key, sign));
 
       groups.set(encoded, group);
     }
@@ -172,17 +187,45 @@ export const aggregate = Effect.fnUntraced(function* (
 
   for (const [encoded, g] of groups) {
     const old = yield* store.accumulator(node.id, encoded);
-    const sums: Record<string, number> = { ...old?.sums };
+    const count = (old?.count ?? 0) + g.count;
 
-    for (const [name, change] of Rec.toEntries(g.sums)) {
-      sums[name] = (sums[name] ?? 0) + change;
+    if (count < 0) throw new Error("negative group count");
 
-      if (!Number.isFinite(sums[name])) throw new TypeError("sum overflow");
+    let next: Accumulator = { count, sums: {} };
+
+    if (count > 0 && sumFields.length > 0) {
+      const exact =
+        old === undefined || old.integerMass !== undefined
+          ? addIntegers(old, g.operands)
+          : undefined;
+
+      if (exact) next = { count, ...exact };
+      else {
+        const index = findArrangement(program, node.input, expressions, []);
+        const sums: Record<string, number> = {};
+        let integerMass: Record<string, number> | undefined = {};
+
+        // The arrangement returns canonical encoded-row-key order. Rebuild from
+        // live operands so deletions, replays and unit boundaries round identically.
+        for (const entry of yield* rt.lookup(index, encoded, false, { batch: true })) {
+          for (const { field, value } of operands(entry.row, entry.key, 1)) {
+            sums[field] = (sums[field] ?? 0) + value;
+
+            if (integerMass) {
+              const mass = (integerMass[field] ?? 0) + Math.abs(value);
+
+              if (Number.isSafeInteger(value) && Number.isSafeInteger(mass))
+                integerMass[field] = mass;
+              else integerMass = undefined;
+            }
+          }
+        }
+
+        if (Arr.some(Rec.values(sums), (sum) => !Number.isFinite(sum)))
+          return yield* fault(g.key, "sum overflow");
+        next = integerMass ? { count, sums, integerMass } : { count, sums };
+      }
     }
-
-    const next: Accumulator = { count: (old?.count ?? 0) + g.count, sums };
-
-    if (next.count < 0) throw new TypeError("negative group count");
 
     const derive = (acc: Accumulator | undefined, prior: boolean) =>
       Effect.gen(function* () {
@@ -197,15 +240,17 @@ export const aggregate = Effect.fnUntraced(function* (
               { expression: a.expression, direction: "ascending" },
             ]);
 
-            const first = (yield* rt.lookup(
-              arrangement,
-              encoded,
-              prior,
-              1,
-              a.function === "max",
-            ))[0];
+            const first = (yield* rt.lookup(arrangement, encoded, prior, {
+              limit: 1,
+              reverse: a.function === "max",
+            }))[0];
 
-            if (first) row[name] = evaluate(a.expression, { row: first.row, key: first.key });
+            if (first) {
+              const expression = a.expression;
+              row[name] = checkData(fault, first.key, () =>
+                evaluate(expression, { row: first.row, key: first.key }),
+              );
+            }
           } else throw new TypeError(`unsupported aggregate ${a.function}`);
         }
 
@@ -223,32 +268,59 @@ export const aggregate = Effect.fnUntraced(function* (
     if (b) after.push(b);
   }
 
-  return difference(before, after);
+  return difference(before, after, fault);
 });
 
 export const top = Effect.fnUntraced(function* (node: TopNNode, program: Program, rt: Runtime) {
-  const limit = evaluate(node.limit, {});
+  const fault = rt.fault(node.id);
+  const limit = checkData(fault, null, () => evaluate(node.limit, {}));
 
   if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0 || limit > node.maximum)
-    throw new TypeError("invalid top limit");
+    return yield* fault(null, "invalid top limit");
   const a = findArrangement(program, node.input, node.partitionBy ?? [], node.orderBy);
   const partitions = new Set<string>();
 
   for (const d of rt.changes.get(node.input)?.values() ?? [])
     for (const row of [d.before, d.after]) {
       if (!row) continue;
-      const values = Arr.map(node.partitionBy ?? [], (e) => evaluate(e, { row, key: d.key }));
-      asRowKey(values);
-      partitions.add(canonicalJson(values));
+
+      const key = checkData(fault, d.key, () =>
+        asRowKey(Arr.map(node.partitionBy ?? [], (e) => evaluate(e, { row, key: d.key }))),
+      );
+
+      partitions.add(canonicalJson(key));
     }
 
   const before: Entry[] = [],
     after: Entry[] = [];
 
   for (const key of partitions) {
-    before.push(...(yield* rt.lookup(a, key, true, limit)));
-    after.push(...(yield* rt.lookup(a, key, false, limit)));
+    before.push(...(yield* rt.lookup(a, key, true, { limit })));
+    after.push(...(yield* rt.lookup(a, key, false, { limit })));
   }
 
-  return difference(before, after);
+  return difference(before, after, fault);
 });
+
+interface SignedOperand {
+  readonly field: string;
+  readonly value: number;
+  readonly sign: 1 | -1;
+}
+
+/** The sum of absolute operands bounds every partial sum, even after cancellation. */
+function addIntegers(old: Accumulator | undefined, operands: readonly SignedOperand[]) {
+  const sums = { ...old?.sums };
+  const integerMass = { ...old?.integerMass };
+
+  for (const { field, value, sign } of operands) {
+    const mass = (integerMass[field] ?? 0) + sign * Math.abs(value);
+
+    if (!Number.isSafeInteger(value) || !Number.isSafeInteger(mass) || mass < 0) return undefined;
+
+    integerMass[field] = mass;
+    sums[field] = (sums[field] ?? 0) + sign * value;
+  }
+
+  return { sums, integerMass };
+}

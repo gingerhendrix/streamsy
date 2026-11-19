@@ -5,6 +5,7 @@ import type {
   JsonObject,
   JsonValue,
   SqlRelationPlan,
+  SqlRelationNode,
   RowKey,
   TopNNode,
 } from "../ir/contracts.ts";
@@ -12,7 +13,9 @@ import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts"
 import type { Evaluated } from "../runtime/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 
-import type { Entry as StateRow } from "./store.ts";
+import { dataFault } from "./data-fault.ts";
+import type { Program } from "./planner.ts";
+import type { Accumulator, Entry as StateRow } from "./store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
@@ -35,12 +38,54 @@ export interface FullRecomputeResult {
 }
 
 /** Direct collection evaluator. It deliberately imports no transition operator. */
-export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
+export function fullRecompute(
+  input: FullRecomputeInput,
+  stateOutputKey = false,
+): FullRecomputeResult {
+  const { relations, ordered } = evaluateRelations(input.plan.nodes, input, {
+    location: (node) => ({ view: input.plan.name, node }),
+    stateKeys: new Set(stateOutputKey ? [input.plan.output] : []),
+  });
+
+  return {
+    rows: sortRows(rows(relations, input.plan.output)),
+    ordered: ordered.get(input.plan.output) ?? [],
+  };
+}
+
+/** Read the R1 before image from the stored inputs and the actual R1 sum results. */
+export function legacyRelations(
+  program: Program,
+  sources: FullRecomputeInput["sources"],
+  accumulators: ReadonlyMap<string, ReadonlyMap<string, Accumulator>>,
+) {
+  return evaluateRelations(
+    program.nodes,
+    { sources },
+    {
+      location: (node) => program.locations.get(node) ?? { view: "*", node },
+      stateKeys: program.stateKeys,
+      accumulators,
+    },
+  ).relations;
+}
+
+interface EvaluationOptions {
+  readonly location: (node: string) => { readonly view: string; readonly node: string };
+  readonly stateKeys?: ReadonlySet<string>;
+  readonly accumulators?: ReadonlyMap<string, ReadonlyMap<string, Accumulator>>;
+}
+
+function evaluateRelations(
+  nodes: readonly SqlRelationNode[],
+  input: Omit<FullRecomputeInput, "plan">,
+  options: EvaluationOptions,
+) {
   const relations = new Map<string, readonly StateRow[]>();
   const ordered = new Map<string, readonly OrderedPartition[]>();
   const parameters = input.parameters ?? {};
 
-  for (const node of input.plan.nodes) {
+  for (const node of nodes) {
     switch (node.kind) {
       case "source":
         relations.set(
@@ -95,12 +140,13 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
       case "key":
         relations.set(
           node.id,
-          Arr.map(rows(relations, node.input), (entry) => ({
-            key: asRowKey(
+          Arr.map(rows(relations, node.input), (entry) => {
+            const key = asRowKey(
               evaluate(node.key, { row: entry.row, key: entry.key, parameter: parameters }),
-            ),
-            row: entry.row,
-          })),
+            );
+
+            return { key: options.stateKeys?.has(node.id) ? String(key) : key, row: entry.row };
+          }),
         );
         break;
       case "inner-join":
@@ -136,7 +182,15 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
       }
 
       case "grouped-aggregate":
-        relations.set(node.id, recomputeAggregate(node, rows(relations, node.input), parameters));
+        relations.set(
+          node.id,
+          recomputeAggregate(
+            node,
+            rows(relations, node.input),
+            parameters,
+            options.accumulators?.get(node.id),
+          ),
+        );
         break;
       case "top-n": {
         const result = recomputeTop(node, rows(relations, node.input), parameters);
@@ -150,12 +204,19 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
           "full recomputation expects normalized relation changes after fact reduction",
         );
     }
+
+    const seen = new Set<string>();
+
+    for (const row of rows(relations, node.id)) {
+      const key = encodeRowKey(row.key);
+
+      if (seen.has(key))
+        throw dataFault(options.location(node.id))(row.key, "duplicate output key");
+      seen.add(key);
+    }
   }
 
-  return {
-    rows: sortRows(rows(relations, input.plan.output)),
-    ordered: ordered.get(input.plan.output) ?? [],
-  };
+  return { relations, ordered };
 }
 
 function sourceRows(
@@ -184,6 +245,7 @@ function recomputeAggregate(
   node: SqlGroupedAggregateNode,
   input: readonly StateRow[],
   parameters: JsonObject,
+  stored?: ReadonlyMap<string, Accumulator>,
 ): readonly StateRow[] {
   const groups = new Map<string, { key: RowKey; group: JsonObject; members: StateRow[] }>();
 
@@ -214,9 +276,24 @@ function recomputeAggregate(
           continue;
         }
 
+        if (aggregate.function === "sum" && stored !== undefined) {
+          row[name] = stored.get(canonicalJson(bucket.key))?.sums[name] ?? 0;
+          continue;
+        }
+
         if (aggregate.expression === undefined) throw new TypeError("aggregate operand is absent");
 
-        const values = Arr.map(bucket.members, (member) =>
+        const members =
+          aggregate.function === "sum"
+            ? [...bucket.members].sort((a, b) => {
+                const left = encodeRowKey(a.key),
+                  right = encodeRowKey(b.key);
+
+                return left < right ? -1 : left > right ? 1 : 0;
+              })
+            : bucket.members;
+
+        const values = Arr.map(members, (member) =>
           evaluateOptional(aggregate.expression!, {
             row: member.row,
             key: member.key,
@@ -240,6 +317,8 @@ function recomputeAggregate(
 
             return sum + value;
           });
+
+          if (!Number.isFinite(row[name])) throw new TypeError("sum overflow");
         } else {
           const present = Arr.filter(values, (value): value is JsonValue => !isMissing(value));
 

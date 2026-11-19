@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { encodeRowKey } from "../runtime/key.ts";
+import type { DataFault } from "./data-fault.ts";
 import type { StateChange } from "./engine.ts";
 import type { Store } from "./store.ts";
 
@@ -12,6 +13,7 @@ export const normalize = Effect.fn("View.normalize")(function* (
   sourceId: string,
   relation: string,
   collection: string,
+  fault: DataFault,
   events: readonly StreamAddress.CollectionsEvent<StreamAddress.Collections>[],
 ) {
   const pending = new Map<string, StateChange>();
@@ -62,7 +64,10 @@ export const normalize = Effect.fn("View.normalize")(function* (
     const key = event.key;
 
     if (StreamAddress.isUpsert(event)) {
-      const value = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(event.value);
+      const value = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(event.value).pipe(
+        Effect.mapError((error) => fault(key, error.message)),
+      );
+
       pending.set(key, { kind: "upsert", sourceId, key, value });
 
       if (open) {

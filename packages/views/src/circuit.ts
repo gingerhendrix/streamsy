@@ -26,6 +26,7 @@ import {
   storeFor,
 } from "./sql/store.ts";
 import type { Input, Relation } from "./view.ts";
+import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
 import type { SqlRelationPlan } from "./ir/contracts.ts";
 
@@ -75,7 +76,7 @@ type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
     : never;
 };
 
-type CircuitError = PlanChanged | ViewFault | ProjectionFault;
+type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
 
 type Definition<C extends StreamRoute.ParamCodecs, V extends Views, O extends Input, HE, HR> = {
   readonly id: string;
@@ -274,7 +275,7 @@ export function circuit<
   >[0]["outputs"];
 
   const hash = circuitPlanHash(plans);
-  const engine = Effect.runSync(makeEngine(plans));
+  const engine = Effect.runSync(makeEngine(plans, true));
 
   return Projection.process<
     C,
@@ -328,12 +329,16 @@ export function circuit<
           );
 
           if (Option.isNone(source)) throw new TypeError(`Missing compiled source ${sourceId}`);
+          const location = engine.program.locations.get(source.value.id);
+
+          if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
           changes.push(
             ...(yield* normalize(
               storeFor(sql, namespace),
               sourceId,
               source.value.id,
               input.collection,
+              dataFault(location),
               slice.items,
             )),
           );
@@ -378,6 +383,7 @@ export function circuit<
         Effect.mapError((cause) =>
           Schema.is(PlanChanged)(cause) ||
           Schema.is(ViewFault)(cause) ||
+          Schema.is(ViewDataFault)(cause) ||
           Schema.is(ProjectionFault)(cause)
             ? cause
             : new ProjectionFault({

@@ -185,6 +185,8 @@ export const { count, sum, min, max } = aggregate;
 
 export { circuit, forget, migrate, PlanChanged, ViewFault } from "./circuit.ts";
 
+export { ViewDataFault as DataFault } from "./sql/data-fault.ts";
+
 export type { CircuitDeclaration, CircuitBinding } from "./circuit.ts";
 
 export * as View from "./view.ts";

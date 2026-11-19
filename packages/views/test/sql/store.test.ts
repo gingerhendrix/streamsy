@@ -24,6 +24,11 @@ it.live(
       yield* a.put("r", entries);
       expect(yield* a.get("r", encodeRowKey(200))).toEqual(entries[200]);
       expect(yield* b.get("r", encodeRowKey(200))).toBeUndefined();
+      const keys = Arr.map(entries, (e) => encodeRowKey(e.key));
+      const all = yield* a.getMany("r", [...keys, "absent"]);
+      expect(all.size).toBe(201);
+      expect(all.get(encodeRowKey(200))).toEqual(entries[200]);
+      expect((yield* b.getMany("r", keys)).size).toBe(0);
       yield* a.remove(
         "r",
         Arr.map(entries, (e) => encodeRowKey(e.key)),
