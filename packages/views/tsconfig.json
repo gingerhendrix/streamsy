@@ -4,6 +4,6 @@
     "lib": ["ESNext", "DOM"],
     "types": ["bun"]
   },
-  "include": ["test/**/*", "src/**/*"],
+  "include": ["test/**/*", "src/**/*", "bench/**/*"],
   "exclude": ["node_modules", "dist"]
 }
