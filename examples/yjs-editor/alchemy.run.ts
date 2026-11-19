@@ -9,9 +9,11 @@ export default Alchemy.Stack(
   { providers: Cloudflare.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
+    const production = stage === "prod";
 
     const worker = yield* Cloudflare.Worker("Server", {
       name: `yjs-editor-${stage}`,
+      ...(production ? { domain: "yjs-editor.streamsy.dev", workersDev: false } : {}),
       main: "public/worker/index.js",
       bundle: false,
       compatibility: { date: "2026-08-06", flags: ["nodejs_compat"] },

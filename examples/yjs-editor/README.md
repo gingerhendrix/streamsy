@@ -167,7 +167,10 @@ The 3 skipped tests start, spy on or restart the upstream Node server. The failu
 
 `alchemy.run.ts` follows folder-sync's Worker + SQLite Durable Object + static
 assets stack. `bun run --cwd examples/yjs-editor deploy` builds both bundles and
-deploys the selected stage with Alchemy.
+deploys the selected stage with Alchemy. To update the public demo at
+<https://yjs-editor.streamsy.dev>, run `bun run --cwd examples/yjs-editor deploy --stage prod`.
+Only `prod` attaches the custom domain. Run Alchemy from the owning worktree to
+reuse its local deployment state.
 
 - No snapshot subscription webhooks, AI peer, room registry or offline persistence.
 - The fork fixes browser snapshot discovery only. The upstream 0.2.9 client, and so the fork, has [issue #413](https://github.com/durable-streams/durable-streams/issues/413): edits across reconnect can be lost because the producer epoch is reused.
