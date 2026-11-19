@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Record as Rec } from "effect";
 import { fullRecompute, makeEngine, migrate, type StateChange } from "@streamsy/views/sql";
@@ -8,10 +8,11 @@ import { shopPlans } from "./fixtures.ts";
 
 import { identity, materialize } from "./support.ts";
 
-it("matches the independent oracle: 200 seeds × 40 random multi-change units, with exact no-op suppression", async () => {
-  const started = performance.now();
-  await Effect.runPromise(
+it.live(
+  "matches the independent oracle: 200 seeds × 40 random multi-change units, with exact no-op suppression",
+  () =>
     Effect.gen(function* () {
+      const started = performance.now();
       yield* migrate();
       const plans = shopPlans(true);
       const engine = yield* makeEngine(plans);
@@ -94,9 +95,10 @@ it("matches the independent oracle: 200 seeds × 40 random multi-change units, w
           if (unit % 10 === 0) expect(yield* engine.process(`seed-${seed}`, input)).toEqual([]);
         }
       }
+
+      yield* Effect.log(
+        `SQL conformance: 200 seeds × 40 units; ${(performance.now() - started).toFixed(0)} ms`,
+      );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
-  );
-  console.log(
-    `SQL conformance: 200 seeds × 40 units; ${(performance.now() - started).toFixed(0)} ms`,
-  );
-}, 120_000);
+  120_000,
+);

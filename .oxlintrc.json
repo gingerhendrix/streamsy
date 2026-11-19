@@ -190,6 +190,76 @@
       }
     },
     {
+      // Preserve the exhaustive expression switches and the original failure site during the move.
+      "files": ["packages/views/src/sql/planner.ts"],
+      "rules": {
+        "effecttsgo/unnecessary-fail-yieldable-error": "off",
+        "typescript/consistent-return": "off"
+      }
+    },
+    {
+      // The imported comparator's parameters are local to its callback.
+      "files": ["packages/views/src/sql/runtime.ts"],
+      "rules": {
+        "eslint/no-shadow": "off"
+      }
+    },
+    {
+      // Keep the standalone benchmark's CLI, timing and JSON output during the move.
+      "files": ["packages/views/bench/sql-tier.ts"],
+      "rules": {
+        "effecttsgo/global-console": "off",
+        "effecttsgo/global-console-in-effect": "off",
+        "effecttsgo/global-date": "off",
+        "effecttsgo/node-builtin-import": "off",
+        "effecttsgo/prefer-schema-over-json": "off",
+        "effecttsgo/strict-effect-provide": "off",
+        "eslint/no-shadow": "off",
+        "unicorn/consistent-function-scoping": "off"
+      }
+    },
+    {
+      // Each test starts its own SQLite layer. The worker composes its layer at fetch.
+      "files": [
+        "packages/views/test/circuit/bun.test.ts",
+        "packages/views/test/circuit/lifecycle.test.ts",
+        "packages/views/test/circuit/support/worker.ts",
+        "packages/views/test/sql/*.test.ts"
+      ],
+      "rules": {
+        "effecttsgo/strict-effect-provide": "off"
+      }
+    },
+    {
+      // Miniflare and the worker entry point use native Promise APIs.
+      "files": [
+        "packages/views/test/circuit/workerd.test.ts",
+        "packages/views/test/circuit/support/worker.ts"
+      ],
+      "rules": {
+        "effecttsgo/async-function": "off"
+      }
+    },
+    {
+      "files": ["packages/views/test/circuit/workerd.test.ts"],
+      "rules": {
+        "effecttsgo/global-console": "off"
+      }
+    },
+    {
+      // The proof compares native serialized rows. The type fixture exercises the number codec.
+      "files": ["packages/views/test/circuit/support/proof.ts"],
+      "rules": {
+        "effecttsgo/prefer-schema-over-json": "off"
+      }
+    },
+    {
+      "files": ["packages/views/test/circuit/types.ts"],
+      "rules": {
+        "effecttsgo/schema-number": "off"
+      }
+    },
+    {
       // Tests and test support assert encoded wire shapes, so they name `_tag` directly.
       "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/src/testing/**"],
       "rules": {

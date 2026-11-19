@@ -1,4 +1,4 @@
-import { Array, Effect, Record, Stream } from "effect";
+import { Array, Effect, Order as EffectOrder, Record, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState } from "@streamsy/core";
 import { Projection, StateTable } from "@streamsy/projection";
@@ -56,8 +56,16 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
 
       const expected = fullRecompute({ plan, sources });
       const actual = (yield* Table.at(params).list(name)).rows;
-      const expectedRows = Array.map(expected.rows, ({ row }) => canonicalJson(row)).sort();
-      const actualRows = Array.map(actual, ({ value }) => canonicalJson(value)).sort();
+
+      const expectedRows = Array.sort(
+        Array.map(expected.rows, ({ row }) => canonicalJson(row)),
+        EffectOrder.String,
+      );
+
+      const actualRows = Array.sort(
+        Array.map(actual, ({ value }) => canonicalJson(value)),
+        EffectOrder.String,
+      );
 
       if (JSON.stringify(expectedRows) !== JSON.stringify(actualRows))
         throw new Error(`Oracle mismatch in ${name}`);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "@effect/vitest";
 import type { Change, Expression, RelationNode, RelationPlan } from "@streamsy/views/ir";
 
 const expressionKind = (expression: Expression): Expression["kind"] => {

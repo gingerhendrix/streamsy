@@ -83,12 +83,11 @@ Use `DurableObjectStorage.layer` with the object's full `storage`, plus `Checkpo
 The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals and per-customer top 3 against the full-recompute oracle after each unit. It also checks a no-op unit and a shared `txid` on every emitted change.
 
 ```sh
-bun test packages/views/test/circuit/workerd.test.ts
-bun test packages/views/test/circuit
-bun run check
+bun run --cwd packages/views test:unit
+bun run --cwd packages/views test:workerd
 ```
 
-`STREAMSY_TEST_SCRATCH` overrides the directory for workerd bundles and `workerd-slice-2/billing.json`. In the Personal workspace it defaults to the slice scratch folder. Billable counts come from native SQL cursor `rowsRead`/`rowsWritten`, read after consumption. Measurement brackets one `Projection.run(binding, { limit: 1 })`, including input reads, operator SQL, output appends and the checkpoint. Input appends, migration, output-table reads and oracle comparisons are outside that bracket. The three measured workloads are one order total change, one customer rename affecting ten orders and a 100-order change unit.
+The workerd test writes its bundle and `billing.json` under `packages/views/build/workerd/`. Billable counts come from native SQL cursor `rowsRead`/`rowsWritten`, read after consumption. Measurement brackets one `Projection.run(binding, { limit: 1 })`, including input reads, operator SQL, output appends and the checkpoint. Input appends, migration, output-table reads and oracle comparisons are outside that bracket. The three measured workloads are one order total change, one customer rename affecting ten orders and a 100-order change unit.
 
 ## Transaction and State semantics
 

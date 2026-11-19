@@ -2,7 +2,7 @@
 
 Incrementally maintain Streamsy State collections on SQLite. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
 
-Requires `@streamsy/core` and `@streamsy/projection` 0.12.0 and Effect 4.1.2. Runs on Bun SQLite and Durable Object SQLite. See the [guide](docs/guide.md) for host setup, lifecycle and checks.
+This private workspace package uses Streamsy's local core and projection packages and Effect 4.1.2. Runs on Bun SQLite and Durable Object SQLite. See the [guide](docs/guide.md) for host setup, lifecycle and checks.
 
 ```ts
 import { Schema } from "effect";

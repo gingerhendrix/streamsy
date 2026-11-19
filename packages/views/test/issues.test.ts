@@ -1,5 +1,5 @@
 import { Schema, Array as Arr } from "effect";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "@effect/vitest";
 import type { RelationNode, RelationPlan } from "@streamsy/views/ir";
 import { collectPlanIssues, PlanIssue } from "../src/check.ts";
 

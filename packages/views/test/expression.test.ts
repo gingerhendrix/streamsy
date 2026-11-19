@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "@effect/vitest";
 import type { Expression } from "@streamsy/views/ir";
 import { aggregate, literal, parameterReference, selectors } from "../src/expression.ts";
 

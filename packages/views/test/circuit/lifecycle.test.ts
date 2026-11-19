@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, it } from "@effect/vitest";
 import { Array, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
@@ -52,140 +52,126 @@ const state = Effect.gen(function* () {
   };
 });
 
-test("a changed plan faults without changing SQL, output or checkpoint", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      const before = yield* state;
-      const checkpoint = yield* Projection.read(circuit().at(params));
-      const head = yield* (yield* Results).head(params);
-      yield* update;
-      const fault = yield* Projection.run(circuit(1, true).at(params)).pipe(Effect.flip);
-      expect(fault).toBeInstanceOf(View.PlanChanged);
-      expect(yield* state).toEqual(before);
-      expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
-      expect((yield* (yield* Results).head(params)).nextOffset).toBe(head.nextOffset);
-      yield* Projection.run(circuit().at(params));
-      yield* Projection.run(Table.at(params));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(20);
-    }).pipe(Effect.provide(host)),
-  );
+it.live("a changed plan faults without changing SQL, output or checkpoint", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    const before = yield* state;
+    const checkpoint = yield* Projection.read(circuit().at(params));
+    const head = yield* (yield* Results).head(params);
+    yield* update;
+    const fault = yield* Projection.run(circuit(1, true).at(params)).pipe(Effect.flip);
+    expect(fault).toBeInstanceOf(View.PlanChanged);
+    expect(yield* state).toEqual(before);
+    expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
+    expect((yield* (yield* Results).head(params)).nextOffset).toBe(head.nextOffset);
+    yield* Projection.run(circuit().at(params));
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(20);
+  }).pipe(Effect.provide(host));
 });
 
-test("new generations rebuild and remove the old operator namespace", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      const before = yield* state;
-      const oldNamespace = before.circuits[0]?.namespace;
-      yield* Projection.run(circuit(2).at(params));
-      const after = yield* state;
-      expect(after.circuits).toHaveLength(1);
-      expect(after.circuits[0]?.generation).toBe(2);
+it.live("new generations rebuild and remove the old operator namespace", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    const before = yield* state;
+    const oldNamespace = before.circuits[0]?.namespace;
+    yield* Projection.run(circuit(2).at(params));
+    const after = yield* state;
+    expect(after.circuits).toHaveLength(1);
+    expect(after.circuits[0]?.generation).toBe(2);
 
-      for (const rows of [after.integrals, after.arrangements, after.accumulators])
-        expect(Array.some(rows, (row) => row.namespace === oldNamespace)).toBe(false);
-      yield* Projection.run(Table.at(params));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
-      yield* update;
-      const fault = yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
-      expect(fault).toBeInstanceOf(View.ViewFault);
-    }).pipe(Effect.provide(host)),
-  );
+    for (const rows of [after.integrals, after.arrangements, after.accumulators])
+      expect(Array.some(rows, (row) => row.namespace === oldNamespace)).toBe(false);
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
+    yield* update;
+    const fault = yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
+    expect(fault).toBeInstanceOf(View.ViewFault);
+  }).pipe(Effect.provide(host));
 });
 
-test("Projection.forget deletes the checkpoint and all namespace state", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      yield* Projection.forget(circuit().at(params));
-      const after = yield* state;
-      expect(after).toEqual({ integrals: [], arrangements: [], accumulators: [], circuits: [] });
-      expect((yield* Projection.read(circuit().at(params))).offsets).toEqual({
-        [Shop.key]: ZERO_OFFSET,
-      });
-      yield* Projection.run(circuit().at(params));
-      yield* Projection.run(Table.at(params));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
-    }).pipe(Effect.provide(host)),
-  );
+it.live("Projection.forget deletes the checkpoint and all namespace state", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    yield* Projection.forget(circuit().at(params));
+    const after = yield* state;
+    expect(after).toEqual({ integrals: [], arrangements: [], accumulators: [], circuits: [] });
+    expect((yield* Projection.read(circuit().at(params))).offsets).toEqual({
+      [Shop.key]: ZERO_OFFSET,
+    });
+    yield* Projection.run(circuit().at(params));
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
+  }).pipe(Effect.provide(host));
 });
 
-test("forget rolls back its checkpoint deletion when state cleanup fails", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      const before = yield* state;
-      const checkpoint = yield* Projection.read(circuit().at(params));
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TRIGGER fail_cleanup BEFORE DELETE ON streamsy_view_circuits BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END`;
-      yield* View.forget(circuit().at(params)).pipe(Effect.flip);
-      expect(yield* state).toEqual(before);
-      expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
-    }).pipe(Effect.provide(host)),
-  );
+it.live("forget rolls back its checkpoint deletion when state cleanup fails", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    const before = yield* state;
+    const checkpoint = yield* Projection.read(circuit().at(params));
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TRIGGER fail_cleanup BEFORE DELETE ON streamsy_view_circuits BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END`;
+    yield* View.forget(circuit().at(params)).pipe(Effect.flip);
+    expect(yield* state).toEqual(before);
+    expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
+  }).pipe(Effect.provide(host));
 });
 
-test("failed output appends roll back operators and input checkpoints", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      const before = yield* state;
-      const checkpoint = yield* Projection.read(circuit().at(params));
-      yield* (yield* Results).append(params, [], { close: true });
-      yield* update;
-      yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
-      expect(yield* state).toEqual(before);
-      expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
-    }).pipe(Effect.provide(host)),
-  );
+it.live("failed output appends roll back operators and input checkpoints", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    const before = yield* state;
+    const checkpoint = yield* Projection.read(circuit().at(params));
+    yield* (yield* Results).append(params, [], { close: true });
+    yield* update;
+    yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
+    expect(yield* state).toEqual(before);
+    expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
+  }).pipe(Effect.provide(host));
 });
 
-test("bindings with identical row keys remain independent", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      const input = yield* Shop;
-      const other = { shop: "b" };
-      yield* input.create(other);
-      yield* input.append(
-        other,
-        DurableState.changes(Shop.at(other), {}, [
-          DurableState.upsert("order", { ...order, total: 99 }),
-        ]),
-      );
-      yield* Projection.run(circuit().at(other));
-      yield* Projection.run(Table.at(params));
-      yield* Projection.run(Table.at(other));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
-      expect((yield* Table.at(other).get("customerTotals", "c1")).value?.revenue).toBe(99);
-      expect((yield* state).circuits).toHaveLength(2);
-    }).pipe(Effect.provide(host)),
-  );
+it.live("bindings with identical row keys remain independent", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    const input = yield* Shop;
+    const other = { shop: "b" };
+    yield* input.create(other);
+    yield* input.append(
+      other,
+      DurableState.changes(Shop.at(other), {}, [
+        DurableState.upsert("order", { ...order, total: 99 }),
+      ]),
+    );
+    yield* Projection.run(circuit().at(other));
+    yield* Projection.run(Table.at(params));
+    yield* Projection.run(Table.at(other));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
+    expect((yield* Table.at(other).get("customerTotals", "c1")).value?.revenue).toBe(99);
+    expect((yield* state).circuits).toHaveLength(2);
+  }).pipe(Effect.provide(host));
 });
 
-test("reordering view declarations preserves the plan and SQL identities", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* seed;
-      yield* update;
+it.live("reordering view declarations preserves the plan and SQL identities", () => {
+  return Effect.gen(function* () {
+    yield* seed;
+    yield* update;
 
-      const reordered = View.circuit({
-        id: "shop-views",
-        params: { shop: Schema.String },
-        output: Results,
-        views: {
-          topOrder: views.topOrder,
-          goldOrder: views.goldOrder,
-          customerTotals: views.customerTotals,
-        },
-      });
+    const reordered = View.circuit({
+      id: "shop-views",
+      params: { shop: Schema.String },
+      output: Results,
+      views: {
+        topOrder: views.topOrder,
+        goldOrder: views.goldOrder,
+        customerTotals: views.customerTotals,
+      },
+    });
 
-      yield* Projection.run(reordered.at(params));
-      yield* Projection.run(Table.at(params));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(20);
-    }).pipe(Effect.provide(host)),
-  );
+    yield* Projection.run(reordered.at(params));
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(20);
+  }).pipe(Effect.provide(host));
 });
 
 const NumericRow = Schema.Struct({ id: Schema.Finite, n: Schema.Finite });
@@ -210,7 +196,7 @@ const numericCircuit = View.circuit({
 
 const NumericTable = StateTable.define(NumericResult);
 
-test("numeric wire keys, reset and snapshots across units follow State semantics", async () => {
+it.live("numeric wire keys, reset and snapshots across units follow State semantics", () => {
   const local = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
     Layer.provideMerge(
       BunStorage.layer(Streamsy.group(Numeric, NumericResult), {
@@ -219,49 +205,44 @@ test("numeric wire keys, reset and snapshots across units follow State semantics
     ),
   );
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* View.migrate(sql);
-      yield* StateTable.migrate(sql);
-      const input = yield* Numeric;
-      yield* input.create({});
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* StateTable.migrate(sql);
+    const input = yield* Numeric;
+    yield* input.create({});
 
-      const append = (
-        entries: Array.NonEmptyReadonlyArray<DurableState.Entry<typeof Numeric.collections>>,
-      ) =>
-        Effect.gen(function* () {
-          yield* input.append({}, DurableState.changes(Numeric.at({}), {}, entries));
-          yield* Projection.run(numericCircuit.at({}));
-          yield* Projection.run(NumericTable.at({}));
+    const append = (
+      entries: Array.NonEmptyReadonlyArray<DurableState.Entry<typeof Numeric.collections>>,
+    ) =>
+      Effect.gen(function* () {
+        yield* input.append({}, DurableState.changes(Numeric.at({}), {}, entries));
+        yield* Projection.run(numericCircuit.at({}));
+        yield* Projection.run(NumericTable.at({}));
 
-          return Array.map((yield* NumericTable.at({}).list("row")).rows, ({ value }) => value.id);
-        });
+        return Array.map((yield* NumericTable.at({}).list("row")).rows, ({ value }) => value.id);
+      });
 
-      expect(
-        yield* append([
-          DurableState.upsert("row", { id: 1, n: 10 }),
-          DurableState.upsert("row", { id: 2, n: 20 }),
-        ]),
-      ).toEqual([1, 2]);
-      expect(
-        yield* append([
-          StreamAddress.snapshotStart(),
-          DurableState.upsert("row", { id: 1, n: 11 }),
-        ]),
-      ).toEqual([1, 2]);
-      expect(
-        yield* append([DurableState.upsert("row", { id: 3, n: 30 }), StreamAddress.snapshotEnd()]),
-      ).toEqual([1, 3]);
-      expect(
-        yield* append([StreamAddress.reset(), DurableState.upsert("row", { id: 5, n: 50 })]),
-      ).toEqual([5]);
-      expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
-    }).pipe(Effect.provide(local)),
-  );
+    expect(
+      yield* append([
+        DurableState.upsert("row", { id: 1, n: 10 }),
+        DurableState.upsert("row", { id: 2, n: 20 }),
+      ]),
+    ).toEqual([1, 2]);
+    expect(
+      yield* append([StreamAddress.snapshotStart(), DurableState.upsert("row", { id: 1, n: 11 })]),
+    ).toEqual([1, 2]);
+    expect(
+      yield* append([DurableState.upsert("row", { id: 3, n: 30 }), StreamAddress.snapshotEnd()]),
+    ).toEqual([1, 3]);
+    expect(
+      yield* append([StreamAddress.reset(), DurableState.upsert("row", { id: 5, n: 50 })]),
+    ).toEqual([5]);
+    expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
+  }).pipe(Effect.provide(local));
 });
 
-test("an attached circuit advances through the normal Projection registry", async () => {
+it.live("an attached circuit advances through the normal Projection registry", () => {
   const migrate = Layer.effectDiscard(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -275,22 +256,20 @@ test("an attached circuit advances through the normal Projection registry", asyn
     Layer.provideMerge(migrate.pipe(Layer.provideMerge(host))),
   );
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const registry = yield* Projection.Registry;
-      const input = yield* Shop;
-      yield* input.create(params);
+  return Effect.gen(function* () {
+    const registry = yield* Projection.Registry;
+    const input = yield* Shop;
+    yield* input.create(params);
 
-      const receipt = yield* input.append(
-        params,
-        DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", order)]),
-      );
+    const receipt = yield* input.append(
+      params,
+      DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", order)]),
+    );
 
-      yield* registry
-        .awaitOffset(circuit().at(params), Shop.key, receipt.offset)
-        .pipe(Effect.timeout("5 seconds"));
-      yield* Projection.run(Table.at(params));
-      expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
-    }).pipe(Effect.provide(attached)),
-  );
+    yield* registry
+      .awaitOffset(circuit().at(params), Shop.key, receipt.offset)
+      .pipe(Effect.timeout("5 seconds"));
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
+  }).pipe(Effect.provide(attached));
 });

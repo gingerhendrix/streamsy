@@ -46,6 +46,7 @@ const paper = tegami({
     "@streamsy/docs-snippets",
     "@streamsy/issue-tracker-demo-contract",
     "@streamsy/test-support",
+    "@streamsy/views",
     "@streamsy/y-durable-streams",
     "bugsy",
     "fold-agent-example",

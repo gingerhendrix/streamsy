@@ -1,13 +1,14 @@
-import { expect, it } from "bun:test";
+import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
 import { SqlClient } from "effect/sql";
 import { storeFor, migrate } from "../../src/sql/store.ts";
 import { encodeRowKey } from "../../src/runtime/key.ts";
 
-it("migrates idempotently, isolates namespaces, and batches below SQLite's DO bind limit", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
+it.live(
+  "migrates idempotently, isolates namespaces, and batches below SQLite's DO bind limit",
+  () => {
+    return Effect.gen(function* () {
       yield* migrate();
       yield* migrate();
       const sql = yield* SqlClient.SqlClient;
@@ -28,6 +29,6 @@ it("migrates idempotently, isolates namespaces, and batches below SQLite's DO bi
         Arr.map(entries, (e) => encodeRowKey(e.key)),
       );
       expect(yield* a.get("r", encodeRowKey(200))).toBeUndefined();
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
-  );
-});
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+  },
+);

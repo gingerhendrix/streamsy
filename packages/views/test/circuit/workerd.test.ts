@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect } from "@effect/vitest";
 import { Miniflare } from "miniflare";
 import { Array, Schema } from "effect";
 
@@ -15,7 +15,7 @@ const Result = Schema.Struct({
 });
 
 test("same spike C circuit on local workerd with billable SQL rows per unit", async () => {
-  const scratch = `${Bun.env.STREAMSY_TEST_SCRATCH ?? "/home/gareth/Documents/Personal/scratch/2026-11-19-views-ivm-slices"}/workerd-slice-2`;
+  const scratch = Bun.fileURLToPath(new URL("../../build/workerd", import.meta.url));
 
   const built = await Bun.build({
     entrypoints: [`${import.meta.dirname}/support/worker.ts`],
@@ -45,7 +45,7 @@ test("same spike C circuit on local workerd with billable SQL rows per unit", as
     const text = await response.text();
 
     if (response.status !== 200) throw new Error(text);
-    const result = Schema.decodeUnknownSync(Schema.fromJsonString(Result))(text);
+    const result = Schema.decodeSync(Schema.fromJsonString(Result))(text);
     expect(result.noopUnits).toBe(1);
     expect(Array.map(result.units, ({ name, outputChanges }) => [name, outputChanges])).toEqual([
       ["load", 90],
