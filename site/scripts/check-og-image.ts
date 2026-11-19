@@ -8,7 +8,9 @@ const imagePaths = new Set(["/og.webp"]);
 
 const docFiles = await readdir(`${siteDir}/content/docs`, { recursive: true });
 
-for (const file of docFiles.filter((name) => name.endsWith(".mdx"))) {
+for (const file of docFiles) {
+  if (!file.endsWith(".mdx")) continue;
+
   const text = await readFile(`${siteDir}/content/docs/${file}`, "utf8");
   const image = /^---\n[\s\S]*?^image:\s*(\S+)\s*$[\s\S]*?^---$/m.exec(text)?.[1];
 

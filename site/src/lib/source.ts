@@ -25,8 +25,6 @@ ${await page.data.getText("processed")}`,
  * Social image served by Cloudflare static assets. A page sets `image` in its
  * frontmatter to use its own file under `public/`. Other pages share `/og.webp`.
  */
-export function getPageImage(page: { data: { image?: string | undefined } }) {
-  const path = (page.data.image ?? "/og.webp") as `/${string}`;
-
-  return { url: withBasePath(path) };
+export function getPageImage(page: { data: { image?: `/${string}` | undefined } }) {
+  return { url: withBasePath(page.data.image ?? "/og.webp") };
 }

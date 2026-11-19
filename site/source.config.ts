@@ -19,7 +19,7 @@ export const docs = defineDocs({
     // `image` overrides the shared social image. It is a path under `public/`,
     // such as `/og/doom.webp`, so crawlers get a stable URL without a build hash.
     schema: pageSchema.extend({
-      image: z.string().startsWith("/").optional(),
+      image: z.templateLiteral(["/", z.string()]).optional(),
     }),
     postprocess: {
       includeProcessedMarkdown: true,
