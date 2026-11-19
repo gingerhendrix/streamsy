@@ -693,3 +693,97 @@ it("normalization reads the input integral once per distinct key in a multi-chan
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
   );
 });
+
+it("uses UTF-16 string order for predicates, extrema and top, including surrogate pairs", async () => {
+  const items = source("items");
+
+  const plans = {
+    filtered: plan("filtered", [
+      items,
+      {
+        kind: "filter",
+        id: "filtered",
+        schema,
+        input: "items",
+        predicate: {
+          kind: "binary",
+          operator: "less-than",
+          left: ref("row", "label"),
+          right: { kind: "literal", value: "a" },
+        },
+      },
+    ]),
+    extrema: plan("extrema", [
+      items,
+      {
+        kind: "grouped-aggregate",
+        id: "extrema",
+        schema,
+        input: "items",
+        groupBy: { group: { kind: "literal", value: "all" } },
+        aggregates: {
+          first: { kind: "aggregate", function: "min", expression: ref("row", "label") },
+          last: { kind: "aggregate", function: "max", expression: ref("row", "label") },
+        },
+      },
+    ]),
+    top: plan("top", [
+      items,
+      {
+        kind: "top-n",
+        id: "top",
+        schema,
+        input: "items",
+        maximum: 2,
+        limit: { kind: "literal", value: 2 },
+        orderBy: [
+          { expression: ref("row", "label"), direction: "ascending" },
+          { expression: ref("row", "id"), direction: "ascending" },
+        ],
+      },
+    ]),
+  };
+
+  const values = ["Z", "a", "ä", "😀", "\ue000"];
+  const changes = Arr.map(values, (label, i) => up("items", String(i), { id: String(i), label }));
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* migrate();
+      const engine = yield* makeEngine(plans);
+      const output = yield* engine.process("strings", changes);
+      expect(Arr.filter(output, (change) => change.view === "filtered")).toEqual([
+        { view: "filtered", kind: "upsert", key: "0", value: { id: "0", label: "Z" } },
+      ]);
+      expect(Arr.filter(output, (change) => change.view === "extrema")).toEqual([
+        {
+          view: "extrema",
+          kind: "upsert",
+          key: ["all"],
+          value: { group: "all", first: "Z", last: "\ue000" },
+        },
+      ]);
+      expect(
+        Arr.map(
+          Arr.filter(output, (change) => change.view === "top"),
+          (change) => change.key,
+        ).sort(),
+      ).toEqual(["0", "1"]);
+
+      for (const [name, p] of Rec.toEntries(plans)) {
+        const expected = fullRecompute({
+          plan: p,
+          sources: {
+            items: Arr.map(values, (label, i) => ({
+              key: String(i),
+              row: { id: String(i), label },
+            })),
+          },
+        });
+
+        expect(Arr.filter(output, (change) => change.view === name).length).toBe(
+          expected.rows.length,
+        );
+      }
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+  );
+});

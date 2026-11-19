@@ -196,7 +196,8 @@ function compareScalar(left: JsonValue, right: JsonValue, expression?: Expressio
     return left - right;
   }
 
-  if (typeof left === "string" && typeof right === "string") return left.localeCompare(right);
+  if (typeof left === "string" && typeof right === "string")
+    return left < right ? -1 : left > right ? 1 : 0;
 
   if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
   throw new ExpressionFault(
