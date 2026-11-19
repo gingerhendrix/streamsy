@@ -1,5 +1,5 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
-import { evaluate, isMissing, type Evaluated } from "../engine/expression.ts";
+import { evaluate, isMissing, type Evaluated } from "../runtime/expression.ts";
 import type { Entry } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */

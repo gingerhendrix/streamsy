@@ -1,6 +1,6 @@
 import { Array as Arr, Effect } from "effect";
-import { evaluateOptional, isMissing } from "../engine/expression.ts";
-import { canonicalJson, encodeRowKey } from "../engine/key.ts";
+import { evaluateOptional, isMissing } from "../runtime/expression.ts";
+import { canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
 import { orderKey } from "./encoding.ts";
 import type { Arrangement, Program } from "./planner.ts";

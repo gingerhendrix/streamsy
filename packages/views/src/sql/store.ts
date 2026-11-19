@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import type { JsonObject, RowKey } from "../ir/contracts.ts";
-import { encodeRowKey } from "../engine/key.ts";
+import { encodeRowKey } from "../runtime/key.ts";
 
 export interface Entry {
   readonly key: RowKey;

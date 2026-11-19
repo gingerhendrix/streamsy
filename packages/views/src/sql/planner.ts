@@ -1,6 +1,6 @@
 import { Array as Arr, Effect, Record as Rec, Schema, Option } from "effect";
 import { collectPlanIssues, PlanCheckFailed, type PlanIssue } from "../check.ts";
-import { canonicalJson } from "../engine/key.ts";
+import { canonicalJson } from "../runtime/key.ts";
 import type { Expression, SortTerm, SqlRelationNode, SqlRelationPlan } from "../ir/contracts.ts";
 
 export interface Arrangement {

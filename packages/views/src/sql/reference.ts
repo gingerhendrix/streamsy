@@ -8,14 +8,19 @@ import type {
   RowKey,
   TopNNode,
 } from "../ir/contracts.ts";
-import { evaluate, evaluateOptional, isMissing } from "../engine/expression.ts";
-import type { Evaluated } from "../engine/expression.ts";
-import { asRowKey, canonicalJson, encodeRowKey } from "../engine/key.ts";
-import type { OrderedPartition } from "../engine/operators/top.ts";
+import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
+import type { Evaluated } from "../runtime/expression.ts";
+import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
+
 import type { Entry as StateRow } from "./store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
+
+export interface OrderedPartition {
+  readonly partition: RowKey;
+  readonly keys: readonly RowKey[];
+}
 
 export interface FullRecomputeInput {
   readonly plan: SqlRelationPlan;

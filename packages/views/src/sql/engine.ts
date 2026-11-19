@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Schema, Record as Rec } from "effect";
 import { SqlClient } from "effect/sql";
-import { evaluate } from "../engine/expression.ts";
-import { asRowKey, encodeRowKey } from "../engine/key.ts";
+import { evaluate } from "../runtime/expression.ts";
+import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, SqlRelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
 import { aggregate, join, linear, top } from "./operators.ts";

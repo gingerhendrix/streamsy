@@ -1,5 +1,5 @@
 import type { OutputChange } from "../../src/sql/engine.ts";
-import { canonicalJson, encodeRowKey } from "../../src/engine/key.ts";
+import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 
 export function identity(view: string, key: Parameters<typeof encodeRowKey>[0]): string {
   return `${view}/${encodeRowKey(key)}`;

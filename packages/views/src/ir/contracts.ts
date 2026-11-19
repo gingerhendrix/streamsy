@@ -89,7 +89,7 @@ export type Expression =
   | BinaryExpression
   | VariadicExpression;
 
-export type AggregateFunction = "count" | "count-where" | "sum" | "max";
+export type AggregateFunction = "count" | "count-where" | "sum" | "min" | "max";
 
 export interface AggregateExpression {
   readonly kind: "aggregate";
@@ -196,7 +196,7 @@ export interface RelationPlan {
   readonly output: string;
 }
 
-/** SQL-tier extension; the 0.4 snapshot engine retains its original contract. */
+/** SQL plan aliases retained for the SQL-tier public API. */
 export interface MinAggregateExpression {
   readonly kind: "aggregate";
   readonly function: "min";

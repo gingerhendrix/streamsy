@@ -8,7 +8,7 @@ import { Array as Arr, Effect } from "effect";
 import { join } from "node:path";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This is a pure compiler, not an Effect service constructor.
 import { makeEngine, migrate, type StateChange, type OutputChange } from "../src/sql/engine.ts";
-import { canonicalJson, encodeRowKey } from "../src/engine/key.ts";
+import { canonicalJson, encodeRowKey } from "../src/runtime/key.ts";
 import { shopPlans } from "../test/sql/fixtures.ts";
 import type { JsonObject, RowKey } from "../src/ir/contracts.ts";
 

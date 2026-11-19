@@ -1,6 +1,6 @@
 import { Array as Arr, Effect, Record as Rec } from "effect";
-import { evaluate, evaluateOptional, isMissing } from "../engine/expression.ts";
-import { asRowKey, canonicalJson, encodeRowKey } from "../engine/key.ts";
+import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
+import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type {
   JsonObject,
   JsonValue,

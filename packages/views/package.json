@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/views",
-  "version": "0.4.0",
-  "description": "Typed keyed relations, serializable plan IR, and a pure incremental engine for Streamsy.",
+  "version": "0.5.0",
+  "description": "Incremental SQL views over Streamsy State collections, run as projections.",
   "homepage": "https://github.com/gingerhendrix/streamsy-extras/tree/main/packages/views#readme",
   "bugs": {
     "url": "https://github.com/gingerhendrix/streamsy-extras/issues"
@@ -31,16 +31,6 @@
       "import": "./dist/ir/contracts.js",
       "default": "./dist/ir/contracts.js"
     },
-    "./engine": {
-      "types": "./dist/engine/engine.d.ts",
-      "import": "./dist/engine/engine.js",
-      "default": "./dist/engine/engine.js"
-    },
-    "./engine/conformance": {
-      "types": "./dist/engine/reference.d.ts",
-      "import": "./dist/engine/reference.js",
-      "default": "./dist/engine/reference.js"
-    },
     "./sql": {
       "types": "./dist/sql/engine.d.ts",
       "import": "./dist/sql/engine.js",
@@ -51,7 +41,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/sql/engine.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
+    "build": "tsdown src/relation.ts src/ir/contracts.ts src/sql/engine.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },

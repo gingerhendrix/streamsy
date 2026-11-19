@@ -3,7 +3,7 @@ import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
 import { SqlClient } from "effect/sql";
 import { storeFor, migrate } from "../../src/sql/store.ts";
-import { encodeRowKey } from "../../src/engine/key.ts";
+import { encodeRowKey } from "../../src/runtime/key.ts";
 
 it("migrates idempotently, isolates namespaces, and batches below SQLite's DO bind limit", async () => {
   await Effect.runPromise(

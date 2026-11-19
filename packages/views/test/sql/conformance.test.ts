@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Record as Rec } from "effect";
 import { fullRecompute, makeEngine, migrate, type StateChange } from "@streamsy/views/sql";
-import { canonicalJson } from "../../src/engine/key.ts";
+import { canonicalJson } from "../../src/runtime/key.ts";
 import type { JsonObject } from "../../src/ir/contracts.ts";
 import { shopPlans } from "./fixtures.ts";
 

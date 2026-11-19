@@ -312,6 +312,8 @@ export const aggregate = Object.freeze({
     Object.freeze({ kind: "aggregate", function: "count-where", expression }),
   sum: (expression: TypedExpression<number>): TypedAggregateExpression<number> =>
     Object.freeze({ kind: "aggregate", function: "sum", expression }),
+  min: <T extends Ordered>(expression: TypedExpression<T>): TypedAggregateExpression<T> =>
+    Object.freeze({ kind: "aggregate", function: "min", expression }),
   max: <T extends Ordered>(expression: TypedExpression<T>): TypedAggregateExpression<T> =>
     Object.freeze({ kind: "aggregate", function: "max", expression }),
 });

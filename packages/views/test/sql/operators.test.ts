@@ -7,7 +7,7 @@ import { literal, selectors } from "../../src/expression.ts";
 import { makeEngine, migrate, sqlPlanIssues, type StateChange } from "../../src/sql/engine.ts";
 import type { JsonObject, SqlRelationNode } from "../../src/ir/contracts.ts";
 import { compareOrdered, scalarKey } from "../../src/sql/encoding.ts";
-import { canonicalJson, encodeRowKey } from "../../src/engine/key.ts";
+import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../../src/sql/reference.ts";
 import { identity, materialize } from "./support.ts";
 import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
