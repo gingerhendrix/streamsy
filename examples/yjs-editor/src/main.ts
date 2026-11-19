@@ -1,4 +1,5 @@
-import { YjsProvider } from "@streamsy/y-durable-streams";
+import { YjsProvider, type YjsProviderStatus } from "@streamsy/y-durable-streams";
+import { nanoid } from "nanoid";
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { schema } from "prosemirror-schema-basic";
@@ -8,6 +9,7 @@ import { Awareness } from "y-protocols/awareness";
 import { redo, undo, yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror";
 import * as Y from "yjs";
 import "prosemirror-view/style/prosemirror.css";
+import { roomIdFromHash } from "./room-link.ts";
 import "./style.css";
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Caller specifies the expected DOM element type for querySelector.
@@ -19,12 +21,6 @@ const element = <T extends HTMLElement>(selector: string) => {
   return found;
 };
 
-const rooms = [
-  { id: "notes", title: "Notes", detail: "The everyday scratchpad" },
-  { id: "ideas", title: "Ideas", detail: "Room for the next thing" },
-  { id: "draft", title: "Draft", detail: "A work in progress" },
-];
-
 const colors = ["#276b64", "#aa4c32", "#7059a6", "#386b9c"];
 
 const color = colors[crypto.getRandomValues(new Uint8Array(1))[0]! % colors.length]!;
@@ -33,23 +29,15 @@ const name = element<HTMLInputElement>("#name");
 
 name.value = `Writer ${crypto.getRandomValues(new Uint16Array(1))[0]!.toString().slice(0, 3)}`;
 
-let dispose = () => {};
+const statusBadge = element("#status");
 
-let currentRoom = "";
+const editorFooter = element("#editor-footer");
+
+const renderError = (error: Error) => {
+  editorFooter.textContent = `Connection error: ${error.message}. Reload to reconnect.`;
+};
 
 const openRoom = (roomId: string) => {
-  // oxlint-disable-next-line effecttsgo/prefer-effect-array -- The browser bundle does not use Effect.
-  const room = rooms.find((candidate) => candidate.id === roomId) ?? rooms[0]!;
-
-  if (room.id === currentRoom) return;
-  dispose();
-  currentRoom = room.id;
-  element("#room-title").textContent = room.title;
-  element<HTMLAnchorElement>("#raw-stream").href =
-    `/v1/stream/yjs/editor/docs/${room.id}/.updates?offset=-1`;
-
-  for (const button of document.querySelectorAll<HTMLButtonElement>("#rooms button"))
-    button.setAttribute("aria-current", String(button.dataset.room === room.id));
   const doc = new Y.Doc();
   const awareness = new Awareness(doc);
   awareness.setLocalStateField("user", { name: name.value, color });
@@ -58,7 +46,7 @@ const openRoom = (roomId: string) => {
     doc,
     awareness,
     baseUrl: `${location.origin}/v1/yjs/editor`,
-    docId: room.id,
+    docId: roomId,
     connect: false,
   });
 
@@ -73,9 +61,13 @@ const openRoom = (roomId: string) => {
         keymap(baseKeymap),
       ],
     }),
+    dispatchTransaction(this: EditorView, transaction) {
+      // y-prosemirror can dispatch a queued awareness update after the view is destroyed.
+      if (!this.isDestroyed) this.updateState(this.state.apply(transaction));
+    },
     editable: () => provider.connected,
     attributes: {
-      "aria-label": `${room.title} shared editor`,
+      "aria-label": "Shared editor",
       role: "textbox",
       "aria-multiline": "true",
       "data-placeholder": "Start a thought. Someone else can finish it.",
@@ -83,7 +75,6 @@ const openRoom = (roomId: string) => {
   });
 
   const toolbar = element("#toolbar");
-  toolbar.replaceChildren();
 
   const addCommand = (label: string, title: string, command: Command) => {
     const button = document.createElement("button");
@@ -105,8 +96,9 @@ const openRoom = (roomId: string) => {
   addCommand("↶", "Undo", undo);
   addCommand("↷", "Redo", redo);
 
+  const list = element("#people");
+
   const renderPeople = () => {
-    const list = element("#people");
     list.replaceChildren();
 
     for (const [id, state] of awareness.getStates()) {
@@ -124,49 +116,131 @@ const openRoom = (roomId: string) => {
     awareness.setLocalStateField("user", { name: name.value.trim() || "Anonymous", color });
 
   name.addEventListener("input", rename);
-  provider.on("status", (status) => {
-    element("#status").textContent = {
+
+  const renderStatus = (status: YjsProviderStatus) => {
+    statusBadge.textContent = {
       connected: "● Live",
       connecting: "Connecting…",
       disconnected: "Disconnected",
     }[status];
-    element("#status").dataset.state = status;
-    element("#editor-footer").textContent =
-      status === "connected"
-        ? "Changes sync while connected"
-        : "Editing paused. Reload to reconnect.";
+    statusBadge.dataset.state = status;
+    editorFooter.textContent = {
+      connected: "Changes sync while connected",
+      connecting: "Editing starts when the room connects.",
+      disconnected: "Editing paused. Reload to reconnect.",
+    }[status];
     view.setProps({ editable: () => provider.connected });
-  });
-  provider.on("error", (error) => {
-    element("#editor-footer").textContent =
-      `Connection error: ${error.message}. Reload to reconnect.`;
-  });
+  };
+
+  provider.on("status", renderStatus);
+  provider.on("error", renderError);
   void provider.connect();
-  dispose = () => {
+
+  return () => {
     name.removeEventListener("input", rename);
+    awareness.off("change", renderPeople);
+    provider.off("status", renderStatus);
+    provider.off("error", renderError);
     provider.destroy();
     view.destroy();
     awareness.destroy();
     doc.destroy();
+    toolbar.replaceChildren();
+    list.replaceChildren();
   };
 };
 
-for (const room of rooms) {
-  const button = document.createElement("button");
-  button.dataset.room = room.id;
-  const title = document.createElement("strong");
-  title.textContent = room.title;
-  const detail = document.createElement("span");
-  detail.textContent = room.detail;
-  button.append(title, detail);
-  button.addEventListener("click", () => {
-    location.hash = room.id;
-  });
-  element("#rooms").append(button);
-}
+const roomUi = {
+  landing: element("#landing"),
+  workspace: element(".workspace"),
+  roomLinkError: element("#room-link-error"),
+  rawStream: element<HTMLAnchorElement>("#raw-stream"),
+  rawStreamLink: element("#raw-stream-link"),
+  manualCopy: element("#manual-copy"),
+  roomLink: element<HTMLInputElement>("#room-link"),
+  copyStatus: element("#copy-status"),
+};
 
-window.addEventListener("hashchange", () => openRoom(location.hash.slice(1)));
+let activeRoom: { id: string; dispose: () => void } | undefined;
 
-window.addEventListener("pagehide", () => dispose());
+const closeRoom = () => {
+  activeRoom?.dispose();
+  activeRoom = undefined;
+};
 
-openRoom(location.hash.slice(1));
+const renderRoute = () => {
+  const roomId = roomIdFromHash(location.hash);
+
+  if (roomId !== null && roomId === activeRoom?.id) return;
+
+  closeRoom();
+  roomUi.landing.hidden = roomId !== null;
+  roomUi.workspace.hidden = roomId === null;
+  statusBadge.hidden = roomId === null;
+  roomUi.rawStreamLink.hidden = roomId === null;
+  roomUi.manualCopy.hidden = true;
+  roomUi.roomLink.value = "";
+  roomUi.copyStatus.textContent = "";
+  roomUi.roomLinkError.textContent =
+    roomId === null && location.hash
+      ? "This room link is invalid or outdated. Create a new room."
+      : "";
+
+  if (roomId === null) {
+    roomUi.rawStream.removeAttribute("href");
+
+    return;
+  }
+
+  roomUi.rawStream.href = `/v1/stream/yjs/editor/docs/${roomId}/.updates?offset=-1`;
+  activeRoom = { id: roomId, dispose: openRoom(roomId) };
+};
+
+element("#create-room").addEventListener("click", () => {
+  location.hash = nanoid();
+});
+
+// oxlint-disable-next-line effecttsgo/async-function -- Clipboard is a browser API.
+const copyRoomLink = async () => {
+  const room = activeRoom;
+
+  const hash = location.hash;
+
+  if (!room || roomIdFromHash(hash) !== room.id) return;
+
+  const url = location.href;
+
+  let copied = false;
+
+  try {
+    await navigator.clipboard.writeText(url);
+    copied = true;
+  } catch {
+    // Clipboard access can be blocked or unavailable.
+  }
+
+  if (room !== activeRoom || hash !== location.hash) return;
+
+  roomUi.manualCopy.hidden = copied;
+  roomUi.copyStatus.textContent = copied
+    ? "Room link copied."
+    : "Select and copy the room link below.";
+
+  if (!copied) {
+    roomUi.roomLink.value = url;
+    roomUi.roomLink.focus();
+    roomUi.roomLink.select();
+  }
+};
+
+element("#copy-room-link").addEventListener("click", () => void copyRoomLink());
+
+window.addEventListener("hashchange", renderRoute);
+
+window.addEventListener("pagehide", closeRoom);
+
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) renderRoute();
+});
+
+renderRoute();

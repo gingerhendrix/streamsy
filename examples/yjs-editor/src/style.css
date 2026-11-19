@@ -73,7 +73,7 @@ h1 {
   font-size: clamp(30px, 4vw, 46px);
   margin: 15px 0;
 }
-.intro p:last-child {
+.intro p:not(.eyebrow) {
   font-size: 14px;
   color: #6d7770;
 }
@@ -88,35 +88,36 @@ h1 {
   gap: 24px;
   min-height: 570px;
 }
+.workspace[hidden] {
+  display: none;
+}
 aside {
   padding: 12px 0;
 }
-nav {
-  display: grid;
-  gap: 6px;
-  margin: 20px 0 36px;
-}
-nav button {
-  border: 1px solid transparent;
-  text-align: left;
-  background: transparent;
-  padding: 15px;
+.room-button {
+  border: 0;
   border-radius: 6px;
-  color: inherit;
-}
-nav button[aria-current="true"] {
-  background: #e5eadf;
-  border-color: #cdd7c2;
-}
-nav strong {
-  display: block;
+  padding: 10px 15px;
+  background: #276b64;
+  color: #fffefa;
   font-size: 14px;
+  font-weight: 600;
 }
-nav span {
-  display: block;
-  font-size: 11px;
-  color: #6d7770;
-  margin-top: 5px;
+.room-button:hover {
+  background: #205952;
+}
+.sharing {
+  margin-bottom: 28px;
+}
+#room-link-error {
+  font-size: 14px;
+  color: #8f412c;
+}
+#copy-status {
+  font-size: 12px;
+}
+#room-link {
+  font-size: 12px;
 }
 .identity,
 .presence {
@@ -170,18 +171,11 @@ input {
 }
 .page-header {
   padding: 24px 30px 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 h2 {
   font-weight: 500;
   font-size: 18px;
   margin: 0;
-}
-.page-header span {
-  color: #90978c;
-  font-size: 11px;
 }
 #toolbar {
   display: flex;
@@ -285,20 +279,9 @@ footer {
     gap: 10px;
     grid-template-columns: 1fr 1fr;
   }
-  aside > .eyebrow {
-    display: none;
-  }
-  nav {
-    display: flex;
+  .sharing {
     grid-column: 1 / -1;
-    margin: 0;
-  }
-  nav button {
-    flex: 1;
-    padding: 10px;
-  }
-  nav span {
-    display: none;
+    margin-bottom: 8px;
   }
   .presence {
     margin: 0;

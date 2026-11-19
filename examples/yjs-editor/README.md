@@ -2,9 +2,13 @@
 
 A small collaborative ProseMirror editor using the `YjsProvider` from
 **`@streamsy/y-durable-streams`**, Streamsy's fork of the upstream
-`@durable-streams/y-durable-streams` 0.2.9 client. Open a room in two windows to
-share text, selections, cursors and names. The three rooms are fixed in the
-frontend; the protocol accepts other document paths too.
+`@durable-streams/y-durable-streams` 0.2.9 client. Choose **Create room**, then
+use **Copy room link** and open the link in another window to share text,
+selections, cursors and names. If clipboard access is blocked, the editor shows a
+selected link you can copy manually. The 21-character Nano ID in the URL fragment
+identifies the document, so opening or reloading that link returns to the same room.
+Old fixed-room links return to the create screen. Their documents are still
+addressable by the same paths in the Yjs API.
 
 What it shows: every document is a set of plain Streamsy streams in one SQLite
 Durable Object, served to an upstream-compatible Yjs client, with a `@streamsy/projection` fold
@@ -19,8 +23,9 @@ stream is linked from the page and readable with `curl`.
   snapshots up to 11 MB but failures from about 12 MB (fragmented) and 40 MB
   (large inserts). The count comes from the compaction fold, so it lags by the
   updates the alarm has not folded yet: one write may land past the budget.
-- **Unauthenticated demo.** Anyone with the URL can create, edit and delete
-  documents. The backing streams under `/v1/stream` are read-only.
+- **Unauthenticated demo.** Rooms are public. Anyone with the link can edit, so
+  keep private data out. The Yjs API also allows unauthenticated document creation
+  and deletion. The backing streams under `/v1/stream` are read-only.
 
 ## Run locally
 
@@ -51,8 +56,8 @@ bun run format:check
 ```
 
 `YJS_TEST_SCRATCH` puts test state in another directory. Each test host is disposed
-and its temporary state is removed. Tests cover convergence, snapshot plus tail
-loading, snapshot loading with browser `fetch` redirect semantics, partial
+and its temporary state is removed. Tests cover room link validation, convergence,
+snapshot plus tail loading, snapshot loading with browser `fetch` redirect semantics, partial
 compaction state and snapshot discovery after process restart,
 a document past 2 MB, rejection of an oversized update, the 8 MiB budget, the
 read-only backing streams, concurrent compactions, continued editing after a peer

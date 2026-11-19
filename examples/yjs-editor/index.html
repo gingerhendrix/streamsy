@@ -8,21 +8,32 @@
   <body>
     <main>
       <header>
-        <a class="brand" href="/">streamsy<span> / shared pages</span></a
-        ><span id="status" role="status">Connecting</span>
+        <a class="brand" href="#">streamsy<span> / shared pages</span></a>
+        <span id="status" role="status" hidden></span>
       </header>
       <section class="intro">
         <div>
           <p class="eyebrow">A SMALL COLLABORATIVE WORKSPACE</p>
           <h1>Put your heads together.</h1>
-          <p>One page, shared live. Open the same room in another window to write together.</p>
+          <p>Create a room and share its link to write together live.</p>
+          <p>Rooms are public. Anyone with the link can edit, so keep private data out.</p>
         </div>
         <span class="page-mark" aria-hidden="true">↗</span>
       </section>
-      <section class="workspace">
+      <section id="landing">
+        <p id="room-link-error" role="status"></p>
+        <button id="create-room" class="room-button" type="button">Create room</button>
+      </section>
+      <section class="workspace" hidden>
         <aside>
-          <p class="eyebrow">ROOMS</p>
-          <nav id="rooms" aria-label="Choose a room"></nav>
+          <div class="sharing">
+            <button id="copy-room-link" class="room-button" type="button">Copy room link</button>
+            <p id="copy-status" role="status"></p>
+            <div id="manual-copy" hidden>
+              <label for="room-link">Room link</label>
+              <input id="room-link" type="url" readonly />
+            </div>
+          </div>
           <div class="identity">
             <label for="name">Your name</label><input id="name" maxlength="40" />
             <p>Visible to everyone in this room.</p>
@@ -34,8 +45,7 @@
         </aside>
         <div class="page">
           <div class="page-header">
-            <h2 id="room-title">Notes</h2>
-            <span>Shared document</span>
+            <h2>Shared document</h2>
           </div>
           <div id="toolbar" role="toolbar" aria-label="Text formatting"></div>
           <div id="editor" aria-label="Shared editor"></div>
@@ -43,10 +53,8 @@
         </div>
       </section>
       <p class="footnote">
-        Built with Streamsy, Yjs &amp; ProseMirror · Hosted on Cloudflare ·
-        <a id="raw-stream" href="/v1/stream/yjs/editor/docs/notes/.updates?offset=-1"
-          >This room's update stream</a
-        >
+        Built with Streamsy, Yjs &amp; ProseMirror · Hosted on Cloudflare
+        <span id="raw-stream-link" hidden> · <a id="raw-stream">This room's update stream</a></span>
       </p>
     </main>
     <script type="module" src="/src/main.ts"></script>
