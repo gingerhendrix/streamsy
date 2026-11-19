@@ -47,7 +47,7 @@ it.live(
               input.push({ sourceId, kind: "delete", key });
             } else {
               const row: JsonObject = isOrder
-                ? { orderId: key, customerId: `c-${random(4)}`, total: random(21) - 10 }
+                ? { orderId: key, customerId: `c-${random(4)}`, total: (random(21) - 10) / 10 }
                 : {
                     customerId: key,
                     name: `Customer ${random(3)}`,

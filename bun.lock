@@ -665,6 +665,7 @@
         "@streamsy/core": "workspace:*",
         "@streamsy/projection": "workspace:*",
         "@streamsy/storage": "workspace:*",
+        "@tanstack/db-ivm": "0.2.0",
         "@types/bun": "^1.4.3",
         "effect": "4.1.2",
         "miniflare": "4.20260730.0",
