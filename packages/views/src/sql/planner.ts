@@ -196,22 +196,16 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     optional = false,
   ) => {
     stored.add(relation);
-    const signature = signatureOf({ relation, key, order, optional });
+    const signature = signatureOf({ relation, key, order });
 
-    const existing = Option.getOrUndefined(
-      Arr.findFirst(
-        arrangements,
-        (a) =>
-          signatureOf({
-            relation: a.relation,
-            key: a.key,
-            order: a.order,
-            optional: a.optional,
-          }) === signature,
-      ),
-    );
+    for (const [index, a] of arrangements.entries()) {
+      if (signatureOf({ relation: a.relation, key: a.key, order: a.order }) !== signature) continue;
+      // A required consumer (top) makes a shared index required; extrema alone skip absent operands.
+      arrangements[index] = { ...a, optional: a.optional && optional };
 
-    if (existing) return;
+      return;
+    }
+
     arrangements.push({ id: `a${arrangements.length}`, relation, key, order, optional });
   };
 
@@ -249,16 +243,13 @@ export function findArrangement(
   relation: string,
   key: readonly Expression[],
   order: readonly SortTerm[],
-  optional = false,
 ): Arrangement {
-  const signature = signatureOf({ relation, key, order, optional });
+  const signature = signatureOf({ relation, key, order });
 
   const found = Option.getOrUndefined(
     Arr.findFirst(
       program.arrangements,
-      (a) =>
-        signatureOf({ relation: a.relation, key: a.key, order: a.order, optional: a.optional }) ===
-        signature,
+      (a) => signatureOf({ relation: a.relation, key: a.key, order: a.order }) === signature,
     ),
   );
 

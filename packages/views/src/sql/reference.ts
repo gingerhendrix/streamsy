@@ -51,7 +51,11 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
         relations.set(
           node.id,
           Arr.filter(rows(relations, node.input), (entry) => {
-            const result = evaluate(node.predicate, { row: entry.row, parameter: parameters });
+            const result = evaluate(node.predicate, {
+              row: entry.row,
+              key: entry.key,
+              parameter: parameters,
+            });
 
             if (typeof result !== "boolean") throw new TypeError("filter predicate is not Boolean");
 
@@ -86,7 +90,9 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
         relations.set(
           node.id,
           Arr.map(rows(relations, node.input), (entry) => ({
-            key: asRowKey(evaluate(node.key, { row: entry.row, parameter: parameters })),
+            key: asRowKey(
+              evaluate(node.key, { row: entry.row, key: entry.key, parameter: parameters }),
+            ),
             row: entry.row,
           })),
         );
@@ -152,7 +158,9 @@ function sourceRows(
   parameters: JsonObject,
 ): readonly StateRow[] {
   for (const entry of source) {
-    const key = asRowKey(evaluate(keyExpression, { row: entry.row, parameter: parameters }));
+    const key = asRowKey(
+      evaluate(keyExpression, { row: entry.row, key: entry.key, parameter: parameters }),
+    );
 
     if (encodeRowKey(key) !== encodeRowKey(entry.key))
       throw new TypeError("source row key disagrees with the source key expression");
@@ -166,7 +174,7 @@ function recomputeAggregate(
   input: readonly StateRow[],
   parameters: JsonObject,
 ): readonly StateRow[] {
-  const groups = new Map<string, { key: RowKey; group: JsonObject; members: JsonObject[] }>();
+  const groups = new Map<string, { key: RowKey; group: JsonObject; members: StateRow[] }>();
 
   for (const entry of input) {
     const group: Record<string, JsonValue> = {};
@@ -181,7 +189,7 @@ function recomputeAggregate(
     const key = asRowKey(values);
     const identity = encodeRowKey(key);
     const bucket = groups.get(identity) ?? { key, group, members: [] };
-    bucket.members.push(entry.row);
+    bucket.members.push(entry);
     groups.set(identity, bucket);
   }
 
@@ -198,7 +206,11 @@ function recomputeAggregate(
         if (aggregate.expression === undefined) throw new TypeError("aggregate operand is absent");
 
         const values = Arr.map(bucket.members, (member) =>
-          evaluateOptional(aggregate.expression!, { row: member, parameter: parameters }),
+          evaluateOptional(aggregate.expression!, {
+            row: member.row,
+            key: member.key,
+            parameter: parameters,
+          }),
         );
 
         if (aggregate.function === "count-where") {

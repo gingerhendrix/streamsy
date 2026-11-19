@@ -1,8 +1,8 @@
 import { expect, it } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Effect } from "effect";
+import { Array as Arr, Effect } from "effect";
 import { SqlClient } from "effect/sql";
-import { makeStore, migrate } from "../../src/sql/store.ts";
+import { storeFor, migrate } from "../../src/sql/store.ts";
 import { encodeRowKey } from "../../src/engine/key.ts";
 
 it("migrates idempotently, isolates namespaces, and batches below SQLite's DO bind limit", async () => {
@@ -11,18 +11,21 @@ it("migrates idempotently, isolates namespaces, and batches below SQLite's DO bi
       yield* migrate();
       yield* migrate();
       const sql = yield* SqlClient.SqlClient;
-      const a = makeStore(sql, "a"),
-        b = makeStore(sql, "b");
+
+      const a = storeFor(sql, "a"),
+        b = storeFor(sql, "b");
+
       const entries = Array.from({ length: 201 }, (_, key) => ({
         key,
         row: { key, text: "quote'\u0000😀" },
       }));
+
       yield* a.put("r", entries);
       expect(yield* a.get("r", encodeRowKey(200))).toEqual(entries[200]);
       expect(yield* b.get("r", encodeRowKey(200))).toBeUndefined();
       yield* a.remove(
         "r",
-        entries.map((e) => encodeRowKey(e.key)),
+        Arr.map(entries, (e) => encodeRowKey(e.key)),
       );
       expect(yield* a.get("r", encodeRowKey(200))).toBeUndefined();
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),

@@ -193,13 +193,9 @@ export const aggregate = Effect.fnUntraced(function* (
           if (a.function === "count") row[name] = acc.count;
           else if (a.function === "sum") row[name] = acc.sums[name] ?? 0;
           else if ((a.function === "min" || a.function === "max") && a.expression) {
-            const arrangement = findArrangement(
-              program,
-              node.input,
-              expressions,
-              [{ expression: a.expression, direction: "ascending" }],
-              true,
-            );
+            const arrangement = findArrangement(program, node.input, expressions, [
+              { expression: a.expression, direction: "ascending" },
+            ]);
 
             const first = (yield* rt.lookup(
               arrangement,
