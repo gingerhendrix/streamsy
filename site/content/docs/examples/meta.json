@@ -12,6 +12,7 @@
     "hex-board",
     "bugsy",
     "folder-sync",
-    "doom"
+    "doom",
+    "yjs-editor"
   ]
 }

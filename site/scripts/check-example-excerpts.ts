@@ -53,6 +53,7 @@ export const pageExamples = new Map<string, readonly [string, ...Array<string>]>
   ["todo", ["examples/todo"]],
   ["fold-agent", ["examples/fold-agent"]],
   ["folder-sync", ["examples/folder-sync"]],
+  ["yjs-editor", ["examples/yjs-editor", "packages/y-durable-streams"]],
 ]);
 
 const excerptLanguages = new Set(["ts", "tsx"]);

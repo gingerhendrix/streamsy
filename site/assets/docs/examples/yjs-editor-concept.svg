@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 540" width="920" height="540" role="img" aria-labelledby="title desc">
+  <title id="title">Yjs on streams</title>
+  <desc id="desc">Two browser peers each hold a Yjs document. A peer posts each Yjs update to the document's update stream, and the other peer follows that stream with long-polling. Presence travels separately through an awareness stream that expires after an hour without writes, and peers follow it with server-sent events. A compaction fold follows the update stream and, after every mebibyte of new updates, merges the document into a snapshot. A new peer loads the latest snapshot, then reads only the updates after it.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .heading { fill: #64748b; font: 700 18px ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; }
+      .caption { fill: #64748b; font: 500 13px ui-sans-serif, system-ui, sans-serif; }
+      .group-label { fill: #94a3b8; font: 700 12px ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; }
+      .node-title { fill: #f8fafc; font: 700 16px ui-sans-serif, system-ui, sans-serif; }
+      .node-subtitle { fill: #e2e8f0; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .flow-label { fill: #64748b; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .legend { fill: #64748b; font: 500 12px ui-sans-serif, system-ui, sans-serif; }
+      .group { fill: none; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 6 5; }
+      .node { fill: #3f4756; stroke: #94a3b8; stroke-width: 1.5; }
+      .stream { fill: #416f68; stroke: #83b8ad; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #64748b; stroke-width: 3; marker-end: url(#arrow); }
+      .both { fill: none; stroke: #64748b; stroke-width: 3; marker-start: url(#arrow); marker-end: url(#arrow); }
+      .trigger { fill: none; stroke: #64748b; stroke-width: 2; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <text class="heading" x="24" y="38">Yjs on streams</text>
+  <text class="caption" x="24" y="60">Peers exchange Yjs updates through streams. A fold merges them into a snapshot for the next peer.</text>
+
+  <!-- Peer A -->
+  <rect class="group" x="20" y="84" width="240" height="260" rx="18"/>
+  <text class="group-label" x="36" y="108">PEER A</text>
+  <rect class="node" x="36" y="124" width="208" height="200" rx="14"/>
+  <text class="node-title" x="140" y="216" text-anchor="middle">Y.Doc</text>
+  <text class="node-subtitle" x="140" y="235" text-anchor="middle">ProseMirror · YjsProvider</text>
+
+  <!-- Streams of one document -->
+  <rect class="stream" x="356" y="124" width="208" height="64" rx="14"/>
+  <text class="node-title" x="460" y="152" text-anchor="middle">.awareness/default</text>
+  <text class="node-subtitle" x="460" y="171" text-anchor="middle">presence · TTL 1 hour</text>
+
+  <rect class="stream" x="356" y="260" width="208" height="64" rx="14"/>
+  <text class="node-title" x="460" y="288" text-anchor="middle">.updates</text>
+  <text class="node-subtitle" x="460" y="307" text-anchor="middle">Yjs updates · append-only</text>
+
+  <rect class="stream" x="356" y="400" width="208" height="64" rx="14"/>
+  <text class="node-title" x="460" y="428" text-anchor="middle">Snapshot</text>
+  <text class="node-subtitle" x="460" y="447" text-anchor="middle">merged document at an offset</text>
+
+  <!-- Peer B -->
+  <rect class="group" x="660" y="84" width="240" height="260" rx="18"/>
+  <text class="group-label" x="676" y="108">PEER B</text>
+  <rect class="node" x="676" y="124" width="208" height="200" rx="14"/>
+  <text class="node-title" x="780" y="216" text-anchor="middle">Y.Doc</text>
+  <text class="node-subtitle" x="780" y="235" text-anchor="middle">same updates, same text</text>
+
+  <!-- New peer -->
+  <rect class="group" x="660" y="380" width="240" height="124" rx="18"/>
+  <text class="group-label" x="676" y="404">NEW PEER</text>
+  <rect class="node" x="676" y="420" width="208" height="64" rx="14"/>
+  <text class="node-title" x="780" y="448" text-anchor="middle">Y.Doc</text>
+  <text class="node-subtitle" x="780" y="467" text-anchor="middle">snapshot, then the tail</text>
+
+  <!-- Flows -->
+  <path class="both" d="M 252 156 H 348"/>
+  <text class="flow-label" x="300" y="148" text-anchor="middle">presence</text>
+  <path class="both" d="M 572 156 H 668"/>
+  <text class="flow-label" x="620" y="148" text-anchor="middle">SSE</text>
+
+  <path class="flow" d="M 246 292 H 350"/>
+  <text class="flow-label" x="300" y="284" text-anchor="middle">POST</text>
+  <text class="flow-label" x="300" y="310" text-anchor="middle">update</text>
+  <path class="flow" d="M 566 292 H 670"/>
+  <text class="flow-label" x="618" y="284" text-anchor="middle">long-poll</text>
+
+  <path class="trigger" d="M 460 326 V 394"/>
+  <text class="flow-label" x="470" y="356">fold, every</text>
+  <text class="flow-label" x="470" y="370">1 MiB of updates</text>
+
+  <path class="flow" d="M 566 452 H 670"/>
+  <text class="flow-label" x="618" y="472" text-anchor="middle">snapshot</text>
+  <path class="flow" d="M 566 312 C 610 312, 612 432, 670 432"/>
+  <text class="flow-label" x="616" y="390" text-anchor="end">tail</text>
+
+  <!-- Key -->
+  <rect class="stream" x="36" y="403" width="30" height="14" rx="4"/>
+  <text class="legend" x="78" y="414">Streamsy stream</text>
+  <path class="flow" d="M 36 434 H 60"/>
+  <text class="legend" x="78" y="438">Bytes</text>
+  <path class="trigger" d="M 36 458 H 60"/>
+  <text class="legend" x="78" y="462">Compaction, off the request path</text>
+</svg>
