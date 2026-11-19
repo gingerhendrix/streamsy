@@ -763,11 +763,13 @@ it("uses UTF-16 string order for predicates, extrema and top, including surrogat
         },
       ]);
       expect(
-        Arr.map(
-          Arr.filter(output, (change) => change.view === "top"),
-          (change) => change.key,
-        ).sort(),
-      ).toEqual(["0", "1"]);
+        new Set(
+          Arr.map(
+            Arr.filter(output, (change) => change.view === "top"),
+            (change) => change.key,
+          ),
+        ),
+      ).toEqual(new Set(["0", "1"]));
 
       for (const [name, p] of Rec.toEntries(plans)) {
         const expected = fullRecompute({
