@@ -49,6 +49,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
             input.sources[node.sourceId] ?? input.sources[node.id] ?? [],
             node.key,
             parameters,
+            node.stateKey,
           ),
         );
         break;
@@ -161,11 +162,16 @@ function sourceRows(
   source: readonly StateRow[],
   keyExpression: Expression,
   parameters: JsonObject,
+  stateKey?: true,
 ): readonly StateRow[] {
   for (const entry of source) {
-    const key = asRowKey(
-      evaluate(keyExpression, { row: entry.row, key: entry.key, parameter: parameters }),
-    );
+    const value = evaluate(keyExpression, {
+      row: entry.row,
+      key: entry.key,
+      parameter: parameters,
+    });
+
+    const key = stateKey ? String(asRowKey(value)) : asRowKey(value);
 
     if (encodeRowKey(key) !== encodeRowKey(entry.key))
       throw new TypeError("source row key disagrees with the source key expression");

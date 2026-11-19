@@ -53,6 +53,7 @@ export interface SourceSpec<
   readonly key: Key;
   readonly mode: Mode;
   readonly collection?: SourceCollection;
+  readonly stateKey?: true;
 }
 
 export type SourceDeclaration<
@@ -347,6 +348,9 @@ export const from = <S extends Schema.Top>(
 ): RelationBuilder<SchemaType<S>> =>
   builder(deepFreeze({ kind: "source-relation", source: input }));
 
+/** Adapt a typed relation expression to the authoring builder. */
+export const buildRelation = builder;
+
 export interface ViewSpec<S extends Schema.Top, Key extends DeclaredKey = DeclaredKey> {
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
@@ -532,15 +536,17 @@ export function compilePlan(
 
   const walk = (relation: RelationExpression): string => {
     if (relation.kind === "source-relation") {
-      return add({
-        kind: "source",
+      const node = {
+        kind: "source" as const,
         id: relation.source.name,
         schema: relation.source.schemaRef,
         sourceId: relation.source.name,
         partitionBy: relation.source.partitionBy,
         key: relation.source.keyExpression,
         mode: relation.source.mode,
-      });
+      };
+
+      return add(relation.source.stateKey ? { ...node, stateKey: true } : node);
     }
 
     if (relation.kind === "reduce-by-key") {
@@ -736,3 +742,5 @@ export type {
 } from "./check.ts";
 
 export { encodePlan, planHash } from "./plan.ts";
+
+export { View } from "./view.ts";

@@ -59,6 +59,17 @@ export const migrate = Effect.fn("ViewsSql.migrate")(function* () {
 
 export function storeFor(sql: SqlClient.SqlClient, namespace: string) {
   return {
+    rows: (relation: string) =>
+      Effect.map(
+        sql<{
+          value: string;
+        }>`SELECT value FROM streamsy_view_integrals WHERE namespace = ${namespace} AND relation = ${relation}`,
+        (rows) => Arr.map(rows, (row) => decodeRow(row.value)),
+      ),
+    snapshotMark: (arrangement: string, key: string) => sql`INSERT INTO streamsy_view_arrangements
+      (namespace, arrangement, index_key, sort_key, row_key) VALUES (${namespace}, ${arrangement}, ${""}, ${""}, ${key}) ON CONFLICT DO NOTHING`,
+    clearIndex: (arrangement: string) =>
+      sql`DELETE FROM streamsy_view_arrangements WHERE namespace = ${namespace} AND arrangement = ${arrangement}`,
     get: (relation: string, rowKey: string) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
@@ -139,3 +150,33 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string) {
 }
 
 export type Store = ReturnType<typeof storeFor>;
+
+/** Circuit metadata is separate from the three operator-table kinds. */
+export const migrateCircuits = Effect.fn("ViewsSql.migrateCircuits")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  yield* sql`CREATE TABLE IF NOT EXISTS streamsy_view_circuits (
+    namespace TEXT PRIMARY KEY, projection_key TEXT NOT NULL,
+    generation INTEGER NOT NULL, plan_hash TEXT NOT NULL) WITHOUT ROWID`;
+  yield* sql`CREATE INDEX IF NOT EXISTS streamsy_view_circuits_key
+    ON streamsy_view_circuits (projection_key, generation)`;
+});
+
+export const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
+  sql: SqlClient.SqlClient,
+  namespace: string,
+) {
+  yield* sql`DELETE FROM streamsy_view_integrals WHERE namespace = ${namespace}`;
+  yield* sql`DELETE FROM streamsy_view_arrangements WHERE namespace = ${namespace}`;
+  yield* sql`DELETE FROM streamsy_view_accumulators WHERE namespace = ${namespace}`;
+  yield* sql`DELETE FROM streamsy_view_circuits WHERE namespace = ${namespace}`;
+});
+
+export const circuitState = (sql: SqlClient.SqlClient, projectionKey: string) => ({
+  generations: () => sql<{ namespace: string; generation: number; plan_hash: string }>`
+    SELECT namespace, generation, plan_hash FROM streamsy_view_circuits
+    WHERE projection_key = ${projectionKey}`,
+  save: (namespace: string, generation: number, hash: string) => sql`
+    INSERT INTO streamsy_view_circuits (namespace, projection_key, generation, plan_hash)
+    VALUES (${namespace}, ${projectionKey}, ${generation}, ${hash})`,
+});

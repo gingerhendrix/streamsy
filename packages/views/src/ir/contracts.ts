@@ -113,6 +113,8 @@ interface RelationNodeBase {
 }
 
 export interface SourceNode extends RelationNodeBase {
+  /** Durable State addresses keys as strings, including numeric key fields. */
+  readonly stateKey?: true;
   readonly kind: "source";
   readonly sourceId: string;
   readonly partitionBy: Expression;

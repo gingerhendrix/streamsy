@@ -72,8 +72,11 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
 
         if (
           c.kind === "upsert" &&
-          encodeRowKey(asRowKey(evaluate(source.key, { row: c.value, key: c.key }))) !==
-            encodeRowKey(c.key)
+          encodeRowKey(
+            source.stateKey
+              ? String(asRowKey(evaluate(source.key, { row: c.value, key: c.key })))
+              : asRowKey(evaluate(source.key, { row: c.value, key: c.key })),
+          ) !== encodeRowKey(c.key)
         )
           throw new TypeError("input key disagrees with source key expression");
         const entries = normalized.get(source.id) ?? new Map<string, Delta>();

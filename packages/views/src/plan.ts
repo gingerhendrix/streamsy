@@ -8,9 +8,18 @@ export function encodePlan(plan: SqlRelationPlan): string {
 
 /** Eight-lowercase-hex FNV-1a identity over the canonical UTF-8 bytes. */
 export function planHash(plan: SqlRelationPlan): string {
+  return hashText(encodePlan(plan));
+}
+
+/** Identity of every named output plan, independent of declaration order. */
+export function circuitPlanHash(plans: Readonly<Record<string, SqlRelationPlan>>): string {
+  return hashText(canonical(plans, new Set<object>(), "$circuit"));
+}
+
+function hashText(text: string): string {
   let hash = 0x811c9dc5;
 
-  for (const byte of new TextEncoder().encode(encodePlan(plan))) {
+  for (const byte of new TextEncoder().encode(text)) {
     hash ^= byte;
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
