@@ -2,7 +2,8 @@ import { Effect, Schema, Record as Rec, Array as Arr } from "effect";
 import type {
   Expression,
   ReferenceScope,
-  RelationNode,
+  SqlRelationNode,
+  SqlRelationPlan,
   RelationPlan,
   TopNNode,
 } from "./ir/contracts.ts";
@@ -26,6 +27,7 @@ export const PlanIssueCode = Schema.Literals([
   "unstable-top-order",
   "unsupported-plan-version",
   "non-json-plan-value",
+  "unsupported-sql-plan",
 ]);
 
 export type PlanIssueCode = typeof PlanIssueCode.Type;
@@ -47,12 +49,12 @@ export class PlanCheckFailed extends Schema.TaggedError<
   issues: Schema.Array(PlanIssue),
 }) {}
 
-export interface CheckedPlan {
-  readonly plan: RelationPlan;
+export interface CheckedPlan<P extends SqlRelationPlan = RelationPlan> {
+  readonly plan: P;
   readonly hash: string;
 }
 
-type CheckInput = ViewDeclaration | RelationPlan;
+type CheckInput = ViewDeclaration | SqlRelationPlan;
 
 export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
   const plan = "plan" in input ? input.plan : input;
@@ -196,16 +198,24 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
   return Object.freeze(issues);
 }
 
-export const checkPlan = (input: CheckInput): Effect.Effect<CheckedPlan, PlanCheckFailed> => {
+export function checkPlan(
+  input: ViewDeclaration | RelationPlan,
+): Effect.Effect<CheckedPlan, PlanCheckFailed>;
+export function checkPlan<P extends SqlRelationPlan>(
+  input: P,
+): Effect.Effect<CheckedPlan<P>, PlanCheckFailed>;
+export function checkPlan(
+  input: CheckInput,
+): Effect.Effect<CheckedPlan<SqlRelationPlan>, PlanCheckFailed> {
   const plan = "plan" in input ? input.plan : input;
   const issues = collectPlanIssues(input);
 
   return issues.length === 0
     ? Effect.succeed(Object.freeze({ plan, hash: planHash(plan) }))
     : Effect.fail(new PlanCheckFailed({ issues }));
-};
+}
 
-function inputsOf(node: RelationNode): readonly (readonly [string, string])[] {
+function inputsOf(node: SqlRelationNode): readonly (readonly [string, string])[] {
   switch (node.kind) {
     case "source":
       return [];
@@ -220,7 +230,7 @@ function inputsOf(node: RelationNode): readonly (readonly [string, string])[] {
   }
 }
 
-function expressionsOf(node: RelationNode): readonly (readonly [string, Expression])[] {
+function expressionsOf(node: SqlRelationNode): readonly (readonly [string, Expression])[] {
   switch (node.kind) {
     case "source":
       return [
@@ -264,7 +274,7 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
   }
 }
 
-function allowedScopes(node: RelationNode): ReadonlySet<ReferenceScope> {
+function allowedScopes(node: SqlRelationNode): ReadonlySet<ReferenceScope> {
   switch (node.kind) {
     case "inner-join":
     case "left-join":
@@ -280,7 +290,7 @@ function checkExpression(
   expression: Expression,
   scopes: ReadonlySet<ReferenceScope>,
   path: string,
-  plan: RelationPlan,
+  plan: SqlRelationPlan,
   add: (code: PlanIssueCode, path: string, message: string, nodeId?: string) => void,
   nodeId: string,
 ): void {
@@ -337,7 +347,7 @@ function couldBeBoolean(expression: Expression): boolean {
 function checkTop(
   node: TopNNode,
   path: string,
-  plan: RelationPlan,
+  plan: SqlRelationPlan,
   add: (code: PlanIssueCode, path: string, message: string, nodeId?: string) => void,
 ): void {
   if (!Number.isInteger(node.maximum) || node.maximum <= 0)

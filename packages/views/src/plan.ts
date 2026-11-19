@@ -1,13 +1,13 @@
-import type { RelationPlan } from "./ir/contracts.ts";
+import type { SqlRelationPlan } from "./ir/contracts.ts";
 import { Predicate, Record as Rec, Array as Arr } from "effect";
 
 /** Canonical JSON with lexicographically sorted object keys and preserved array order. */
-export function encodePlan(plan: RelationPlan): string {
+export function encodePlan(plan: SqlRelationPlan): string {
   return canonical(plan, new Set<object>(), "$plan");
 }
 
 /** Eight-lowercase-hex FNV-1a identity over the canonical UTF-8 bytes. */
-export function planHash(plan: RelationPlan): string {
+export function planHash(plan: SqlRelationPlan): string {
   let hash = 0x811c9dc5;
 
   for (const byte of new TextEncoder().encode(encodePlan(plan))) {

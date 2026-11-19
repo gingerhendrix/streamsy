@@ -57,3 +57,12 @@ Guide: [docs/guide.md](docs/guide.md).
 ## License
 
 MIT
+
+The experimental `@streamsy/views/sql` export adds `makeEngine`, `migrate`,
+`sqlPlanIssues`, and a full-recompute oracle. It accepts existing builder plans
+(and `SqlRelationPlan` from `./ir` for `min`), processes Durable State shaped
+upserts/deletes in namespaced SQLite transactions, and emits coalesced changes.
+SQL ordered arrangements use deterministic UTF-16 string order. Parameterized
+plans, fact folds, and `count-where` are rejected by this tier. The 0.4.0 snapshot
+engine and package version remain unchanged. Run the standalone benchmark with
+`bun packages/views/bench/sql-tier.ts 10000 <scratch-folder>` from the repo root.

@@ -40,13 +40,18 @@
       "types": "./dist/engine/reference.d.ts",
       "import": "./dist/engine/reference.js",
       "default": "./dist/engine/reference.js"
+    },
+    "./sql": {
+      "types": "./dist/sql/engine.d.ts",
+      "import": "./dist/sql/engine.js",
+      "default": "./dist/sql/engine.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
+    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/sql/engine.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },

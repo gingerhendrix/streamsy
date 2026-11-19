@@ -195,3 +195,20 @@ export interface RelationPlan {
   readonly nodes: readonly RelationNode[];
   readonly output: string;
 }
+
+/** SQL-tier extension; the 0.4 snapshot engine retains its original contract. */
+export interface MinAggregateExpression {
+  readonly kind: "aggregate";
+  readonly function: "min";
+  readonly expression: Expression;
+}
+
+export interface SqlGroupedAggregateNode extends Omit<GroupedAggregateNode, "aggregates"> {
+  readonly aggregates: Readonly<Record<string, AggregateExpression | MinAggregateExpression>>;
+}
+
+export type SqlRelationNode = Exclude<RelationNode, GroupedAggregateNode> | SqlGroupedAggregateNode;
+
+export interface SqlRelationPlan extends Omit<RelationPlan, "nodes"> {
+  readonly nodes: readonly SqlRelationNode[];
+}

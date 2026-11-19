@@ -23,20 +23,23 @@ const rowCodec = Schema.fromJsonString(
   Schema.Struct({
     key: Schema.Union([
       Schema.String,
-      Schema.Number,
+      Schema.Finite,
       Schema.Boolean,
-      Schema.Array(Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
+      Schema.Array(Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
     ]),
     row: Schema.JsonObject,
   }),
 );
+
 const accCodec = Schema.fromJsonString(
   Schema.Struct({
-    count: Schema.Number,
-    sums: Schema.Record(Schema.String, Schema.Number),
+    count: Schema.Finite,
+    sums: Schema.Record(Schema.String, Schema.Finite),
   }),
 );
+
 const decodeRow = Schema.decodeUnknownSync(rowCodec);
+
 const decodeAcc = Schema.decodeUnknownSync(accCodec);
 
 /** All engine SQL is here. Every statement binds at most 100 values. */
@@ -54,24 +57,27 @@ export const migrate = Effect.fn("ViewsSql.migrate")(function* () {
     PRIMARY KEY (namespace, node, group_key)) WITHOUT ROWID`;
 });
 
-export function makeStore(sql: SqlClient.SqlClient, namespace: string) {
+export function storeFor(sql: SqlClient.SqlClient, namespace: string) {
   return {
     get: (relation: string, rowKey: string) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
         WHERE namespace = ${namespace} AND relation = ${relation} AND row_key = ${rowKey}`;
+
         return rows[0] === undefined ? undefined : decodeRow(rows[0].value);
       }),
     put: (relation: string, entries: readonly Entry[]) =>
       Effect.gen(function* () {
         for (const batch of Arr.chunksOf(entries, 25)) {
           if (batch.length === 0) continue;
+
           const values = Arr.map(batch, (entry) => ({
             namespace,
             relation,
             row_key: encodeRowKey(entry.key),
             value: JSON.stringify(entry),
           }));
+
           yield* sql`INSERT INTO streamsy_view_integrals ${sql.insert(values)}
           ON CONFLICT (namespace, relation, row_key) DO UPDATE SET value = excluded.value`;
         }
@@ -101,9 +107,11 @@ export function makeStore(sql: SqlClient.SqlClient, namespace: string) {
     lookup: (arrangement: string, indexKey: string, limit?: number, reverse = false) => {
       const base = sql`SELECT row_key, sort_key FROM streamsy_view_arrangements
         WHERE namespace = ${namespace} AND arrangement = ${arrangement} AND index_key = ${indexKey}`;
+
       const ordered = reverse
         ? sql`${base} ORDER BY sort_key DESC, row_key DESC`
         : sql`${base} ORDER BY sort_key, row_key`;
+
       return limit === undefined
         ? sql<{ row_key: string; sort_key: string }>`${ordered}`
         : sql<{ row_key: string; sort_key: string }>`${ordered} LIMIT ${limit}`;
@@ -112,6 +120,7 @@ export function makeStore(sql: SqlClient.SqlClient, namespace: string) {
       Effect.gen(function* () {
         const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_accumulators
         WHERE namespace = ${namespace} AND node = ${node} AND group_key = ${groupKey}`;
+
         return rows[0] === undefined ? undefined : decodeAcc(rows[0].value);
       }),
     accumulatorPut: (
@@ -129,4 +138,4 @@ export function makeStore(sql: SqlClient.SqlClient, namespace: string) {
   };
 }
 
-export type Store = ReturnType<typeof makeStore>;
+export type Store = ReturnType<typeof storeFor>;
