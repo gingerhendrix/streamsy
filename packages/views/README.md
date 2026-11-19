@@ -1,68 +1,77 @@
-# @streamsy/views
+# @streamsy/views 0.5
 
-Declare a keyed relation over sources as data, compile it to a plan, and
-maintain its rows incrementally. Version 0.4.0 requires
-`effect@4.1.2`.
+Incrementally maintain Streamsy State collections on SQLite. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
 
-```sh
-bun add @streamsy/views effect
+Requires `@streamsy/core` and `@streamsy/projection` 0.12.0 and Effect 4.1.2. Runs on Bun SQLite and Durable Object SQLite. See the [guide](docs/guide.md) for host setup, lifecycle and checks.
+
+```ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection, StateTable } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+
+const Order = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+});
+
+class Shop extends Streamsy.state<Shop>()("Shop/Input", "shop/:shopId", {
+  params: { shopId: Schema.String },
+  collections: { order: { schema: Order, key: "orderId" } },
+}) {}
+
+class ShopViews extends Streamsy.state<ShopViews>()("Shop/Views", "shop/:shopId/views", {
+  params: { shopId: Schema.String },
+  collections: {
+    customerTotals: {
+      schema: Schema.Struct({
+        customerId: Schema.String,
+        orders: Schema.Finite,
+        revenue: Schema.Finite,
+      }),
+      key: "customerId",
+    },
+    topOrder: { schema: Order, key: "orderId" },
+  },
+}) {}
+
+const orders = View.from(Shop, "order");
+const customerTotals = orders
+  .groupBy((row) => ({ customerId: row.customerId }))
+  .aggregate((row) => ({ orders: View.count(), revenue: View.sum(row.total) }));
+const topOrders = orders.top({
+  partitionBy: (row) => row.customerId,
+  by: (row) => [row.total.desc(), row.orderId.asc()],
+  limit: 3,
+});
+
+export const shopViews = View.circuit({
+  id: "shop-views",
+  params: { shopId: Schema.String },
+  output: ShopViews,
+  views: { customerTotals, topOrder: topOrders },
+});
+
+const bound = shopViews.at({ shopId: "main" });
+const attached = Projection.attach(shopViews, { durable: true });
+const ShopViewsTable = StateTable.define(ShopViews);
 ```
 
-The package has three pure parts: relation authoring, plan IR, and the incremental engine.
+`View.from` derives the schema and key from the State class. `View.circuit` checks each view's row type against its output collection, derives its output key, and discovers its input streams. Callback arguments are typed expressions, including joined and optional fields.
 
-| Entry                  | Contents                                                        |
-| ---------------------- | --------------------------------------------------------------- |
-| `@streamsy/views`      | The authoring DSL and the plan compiler                         |
-| `./ir`                 | The serializable plan contracts                                 |
-| `./engine`             | The incremental graph runtime                                   |
-| `./engine/conformance` | A full-recompute reference implementation for testing an engine |
+Supported operators: `where`, `select`, equality `join`, `leftJoin`, `groupBy` with `count`, `sum`, `min`, `max`, and bounded `top` with optional `partitionBy`. Views share integrals and compatible arrangements. Each unit appends at most one change for each collection/key pair; unchanged rows emit nothing. All emitted changes carry the same `txid`.
 
-## Effect version
+String comparisons use **lexicographic UTF-16 code-unit ordering**, without locale comparison, case folding or Unicode normalization. This applies to comparisons, extrema and top ordering. Include the unique row key as the last top sort term. State rows have no result-list order; `StateTable.list` orders by its wire keys.
 
-This package tracks the stable Effect version Streamsy uses (`effect@4.1.2`).
-Move Streamsy and streamsy-extras to a new stable version together so apps that
-use both share one copy of Effect.
+Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `View.PlanChanged` before committing. Raise `generation` to rebuild; the first unit removes older operator namespaces for that projection key. Stop older runners first and delete/reset output streams if the rebuild must start with empty outputs. `Projection.forget(bound)` deletes the checkpoint and operator state atomically; `View.forget` is an alias. Neither removes output streams.
 
-## Authoring
+Limits: no fan-out cap, `avg`, `distinct`, fact fold, closure, memory tier, dynamic parameters-as-data, frontier rows or `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
 
-A declaration is a frozen, inspectable value. Building one does no I/O and
-stores no callbacks or runtime services, so a plan can be hashed, serialized,
-and checked before anything runs. `checkPlan` reports plan issues through the
-Effect error channel; `collectPlanIssues` returns all of them at once.
+| Export                | Purpose                                                                         |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `@streamsy/views`     | `View`, expression builder, legacy declaration builder, `checkPlan`, `planHash` |
+| `@streamsy/views/ir`  | Serializable plan contracts                                                     |
+| `@streamsy/views/sql` | SQL engine, SQL plan checks, migrations and full-recompute oracle               |
 
-- Sources and views declare their key as a field name or a tuple of field
-  names. A consumer can read that key as metadata without inspecting the plan.
-- Optional properties keep absence separate from JSON `null`. Test with
-  `isPresent()` before reading `.value`, or supply `orElse`.
-- `top` is always bounded, and its last sort term must be a stable ascending
-  key so ties never reorder between hosts.
-- `changes(relation)` declares a relation's change stream in arrival order.
-  A stream sink publishes it, and the host supplies the events.
-- `planHash` is a change-detection identity, not a security digest.
-
-## Incremental engine
-
-`maintainGraph` from `@streamsy/views/engine` takes a plan, prior operator
-state, and normalized source changes. It returns the next operator state,
-row changes, and current rows without I/O. The host owns input delivery and
-persistence.
-
-For fold state between projection passes, declare `state:` on a projection from
-`@streamsy/projection`. Persist row sets in application tables through the
-shared `SqlClient`; see the
-[State guide](https://streamsy.dev/docs/projections/projections#state).
-
-Guide: [docs/guide.md](docs/guide.md).
-
-## License
-
-MIT
-
-The experimental `@streamsy/views/sql` export adds `makeEngine`, `migrate`,
-`sqlPlanIssues`, and a full-recompute oracle. It accepts existing builder plans
-(and `SqlRelationPlan` from `./ir` for `min`), processes Durable State shaped
-upserts/deletes in namespaced SQLite transactions, and emits coalesced changes.
-SQL ordered arrangements use deterministic UTF-16 string order. Parameterized
-plans, fact folds, and `count-where` are rejected by this tier. The 0.4.0 snapshot
-engine and package version remain unchanged. Run the standalone benchmark with
-`bun packages/views/bench/sql-tier.ts 10000 <scratch-folder>` from the repo root.
+The 0.4 snapshot engine and its `./engine` and `./engine/conformance` exports have been removed. The lower-level builder and checks remain; SQL plans reject unsupported operators such as fact folds and `countWhere`.
