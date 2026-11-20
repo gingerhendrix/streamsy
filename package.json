@@ -60,7 +60,8 @@
     "test:conformance:remote": "bun run --cwd packages/conformance-tests test:remote",
     "tegami": "node scripts/tegami.mts",
     "smoke:command-stream": "bun run --cwd examples/command-stream smoke",
-    "smoke:timer-stream": "bun run --cwd examples/timer-stream smoke"
+    "smoke:timer-stream": "bun run --cwd examples/timer-stream smoke",
+    "smoke:views-shop": "bun run --cwd examples/views-shop smoke"
   },
   "devDependencies": {
     "@effect/sql-sqlite-bun": "4.1.2",
