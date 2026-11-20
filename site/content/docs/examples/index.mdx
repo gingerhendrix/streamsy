@@ -3,7 +3,7 @@ title: Examples
 description: Runnable Streamsy applications, grouped by what they show. An example can appear in more than one group.
 ---
 
-Each example is a runnable app in the repository's `examples/` folder, and each has a page that walks through its code. The groups below say what each example shows. Some examples appear in more than one group.
+Each page explains what the app does, how to run it, and which parts of Streamsy it uses. Most examples live in the repository's `examples/` folder. Doom links to its own repository. Some examples appear in more than one group.
 
 To start, read the [Memory server](/docs/examples/memory-server) for the protocol, then [Todo](/docs/examples/todo) for the smallest app built on events.
 
@@ -35,24 +35,25 @@ These two examples are Bun processes with smoke tests and no UI. In each, a proj
 
 ## Browser sync
 
-These apps put [Durable State](https://durablestreams.com/durable-state) on the wire. The server writes keyed row changes to a stream and serves it over HTTP. The browser reads the stream from the start, folds it into rows and then follows it live, so every open tab sees each change. When the browser writes, it posts to a JSON API and waits for the write's txid on the stream to confirm it. [Durable State streams](/docs/streams/durable-state) describes the stream format.
+These apps put [Durable State](https://durablestreams.com/durable-state) on the wire. The server writes keyed row changes to a stream. The browser applies those changes to local rows and follows the stream live, so open tabs see new changes without reloading. [Durable State streams](/docs/streams/durable-state) describes the format.
 
-Three examples read the stream with `createStreamDB` from `@durable-streams/state`. It replays the stream into [TanStack DB](https://tanstack.com/db) collections, and React renders them with `useLiveQuery`.
+The next three examples use `createStreamDB` from `@durable-streams/state` to replay changes into [TanStack DB](https://tanstack.com/db) collections. React reads those collections with `useLiveQuery`.
 
-- The [Issue tracker](/docs/examples/issue-tracker) shows your own change at once, faded. The change turns solid when its txid arrives, or goes away with a message when the server refuses it.
-- [Hacker News newest](/docs/examples/hackernews-newest-stream) shows the 50 newest stories. A server-side poller writes each change, and the page updates its rows without a reload.
-- [Folder sync](/docs/examples/folder-sync) shows live folders, file history and search in the browser. A sync CLI follows the same folder streams to mirror the folders to disk.
+In the [Issue tracker](/docs/examples/issue-tracker), the browser shows your edit immediately and posts it to a JSON API. The edit stays faded until the write's txid arrives on the stream. If the server rejects the write, the browser rolls the edit back and shows an error.
 
-TanStack DB is one option. Two issue tracker variants keep the server and the wire contract and fold the stream in another frontend:
+[Hacker News newest](/docs/examples/hackernews-newest-stream) follows a server-side poller to show the 50 newest stories. [Folder sync](/docs/examples/folder-sync) shows live folders, file history, and search in the browser. A sync CLI follows the same folder streams to mirror them to disk.
 
-- [Issue tracker, Foldkit](/docs/examples/issue-tracker/foldkit) turns each stream read into a Message. The `update` function folds the rows into the Model and owns the optimistic writes.
-- [Issue tracker, Effect Atom](/docs/examples/issue-tracker/atom) folds the stream in an atom with `Stream.scan`. Each live query becomes a derived atom, and writes go through a typed `HttpApiClient`.
+Two issue tracker variants keep the same server and wire format. [Foldkit](/docs/examples/issue-tracker/foldkit) turns each stream read into a Message. Its `update` function folds rows into the Model and handles optimistic writes. The [Effect Atom variant](/docs/examples/issue-tracker/atom) folds changes with `Stream.scan`, exposes live queries as derived atoms, and writes through a typed `HttpApiClient`.
+
+[Doom](/docs/examples/doom) loads a Durable State snapshot and follows updates for the live HUD and lobby. Replaying a game uses a separate stream of binary inputs.
 
 ## Binary streams
 
-[Doom](/docs/examples/doom) records player inputs as bytes. A spectator's browser replays those inputs to watch live, rewinds using snapshots, or forks the recording to play from an earlier point.
+Use binary streams to follow application-specific data such as game inputs or document updates. Both examples below use snapshots so a reader can skip earlier updates.
 
-The [Yjs editor](/docs/examples/yjs-editor) streams binary Yjs updates between browsers editing the same document. A projection builds snapshots so a new browser can load a snapshot and read only the updates that follow it.
+[Doom](/docs/examples/doom) records player inputs as bytes. Spectators can replay those inputs to watch live or rewind from a snapshot. A native stream fork lets a player continue from an earlier point without copying the input history.
+
+The [Yjs editor](/docs/examples/yjs-editor) sends binary Yjs updates between browsers editing the same document. A projection merges the updates into a snapshot. A new browser can load the snapshot, then read only the updates that follow it.
 
 ## Concurrent writers
 
