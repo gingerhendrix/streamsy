@@ -75,12 +75,13 @@ export const topOrders = orders.top({
 
 export const views = { goldOrder: goldOrders, customerTotals, topOrder: topOrders };
 
-export const circuit = (generation = 1, changed = false) =>
+export const circuit = (generation = 1, changed = false, maxAffectedKeys?: number) =>
   View.circuit({
     id: "shop-views",
     params: { shop: Schema.String },
     output: Results,
     generation,
+    maxAffectedKeys,
     views: {
       ...views,
       goldOrder: changed ? goldOrders.where((row) => row.total.gt(100)) : goldOrders,

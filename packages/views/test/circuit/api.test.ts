@@ -292,8 +292,8 @@ it("rejects partial and duplicate output coverage at declaration time", () => {
 });
 
 for (const alarm of [false, true]) {
-  for (const changedPlan of [false, true]) {
-    it.effect(`permanent circuit faults stop (alarm=${alarm}, changedPlan=${changedPlan})`, () =>
+  for (const fault of ["plan", "data", "fan-out"] as const) {
+    it.effect(`permanent circuit faults stop (alarm=${alarm}, fault=${fault})`, () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(0);
         yield* seed;
@@ -315,19 +315,21 @@ for (const alarm of [false, true]) {
         const bad = View.circuit({
           ...definition,
           retry,
+          maxAffectedKeys: fault === "fan-out" ? 1 : undefined,
           views: (params) => ({
-            row: changedPlan
-              ? buildResult("changed", 1)(params.minimum)
-              : joined.select((row) => ({
-                  id: row.id,
-                  label: row.details.unwrap().value.label.orElse("missing"),
-                })),
+            row:
+              fault === "plan"
+                ? buildResult("changed", 1)(params.minimum)
+                : joined.select((row) => ({
+                    id: row.id,
+                    label: row.details.unwrap().value.label.orElse("missing"),
+                  })),
           }),
         });
 
         const binding = bad.at({ minimum });
 
-        if (changedPlan) {
+        if (fault === "plan") {
           yield* Projection.run(circuit().at({ minimum }));
           yield* append([DurableState.remove("details", "present")]);
         }
@@ -365,7 +367,11 @@ for (const alarm of [false, true]) {
           failure: Option.some({
             reason: Option.some("non-retryable-handler"),
             message: expect.stringContaining(
-              changedPlan ? "Circuit plan changed" : "cannot unwrap an absent value",
+              {
+                plan: "Circuit plan changed",
+                data: "cannot unwrap an absent value",
+                "fan-out": "maxAffectedKeys (1) exceeded at key",
+              }[fault],
             ),
           }),
         });
@@ -376,6 +382,14 @@ for (const alarm of [false, true]) {
         expect(steps).toBe(0);
         expect((yield* registry.failed(binding))[0]?.attempts).toBe(1);
         expect(yield* Projection.read(binding)).toEqual(before);
+
+        if (fault === "fan-out") {
+          const output = yield* Results;
+
+          expect(yield* output.head({ minimum }).pipe(Effect.flip)).toMatchObject({
+            _tag: "StreamNotFound",
+          });
+        }
       }).pipe(Effect.provide(host)),
     );
   }

@@ -52,7 +52,14 @@ export class SqlEngineFault extends Schema.TaggedError<
 export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
   views: Readonly<Record<string, SqlRelationPlan>>,
   stateOutputKeys = false,
+  maxAffectedKeys?: number,
 ) {
+  if (
+    maxAffectedKeys !== undefined &&
+    (!Number.isSafeInteger(maxAffectedKeys) || maxAffectedKeys <= 0)
+  )
+    throw new RangeError("maxAffectedKeys must be a positive safe integer");
+
   const program: Program = yield* compile(views, stateOutputKeys);
 
   const sources = new Map(
@@ -67,7 +74,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     parameter: ExpressionScopes["parameter"],
   ) =>
     Effect.gen(function* () {
-      const rt = runtime(program, store, parameter);
+      const rt = runtime(program, store, parameter, maxAffectedKeys);
       const normalized = new Map<string, Map<string, Omit<Delta, "before">>>();
       const filtered = new Map<string, Deltas>();
 

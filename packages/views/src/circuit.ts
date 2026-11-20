@@ -102,6 +102,8 @@ type Common<C extends StreamRoute.ParamCodecs, V extends ViewMap, O extends Outp
   readonly generation?: number;
   readonly params: C;
   readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
+  /** Maximum distinct affected relation keys per unit, including intermediate changes. */
+  readonly maxAffectedKeys?: number;
   /** Return a wake request after the unit, or void to clear the deadline. */
   readonly wakeAt?: (unit: Unit<StreamRoute.Params<NoInfer<C>>>) => void | WakeAt;
 };
@@ -372,7 +374,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
   }
 
   const hash = circuitPlanHash(plans);
-  const engine = Effect.runSync(makeEngine(plans, true));
+  const engine = Effect.runSync(makeEngine(plans, true, definition.maxAffectedKeys));
 
   type ProjectionRoutes = Parameters<
     typeof Projection.process<C, Record<string, Input>, OutputMap>

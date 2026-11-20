@@ -3,7 +3,13 @@ import { Array, Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
-import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  NonRetryable,
+  Projection,
+  StateTable,
+  Transaction,
+} from "@streamsy/projection";
 import { View } from "../../src/index.ts";
 import { storeFor } from "../../src/sql/store.ts";
 import { host } from "./support/host.ts";
@@ -75,6 +81,48 @@ it.live("a changed plan faults without changing SQL, output or checkpoint", () =
     expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(20);
   }).pipe(Effect.provide(host));
 });
+
+it.live("a hot join key rolls back operators, output and checkpoint at the configured limit", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const input = yield* Shop;
+    yield* input.append(
+      params,
+      DurableState.changes(Shop.at(params), {}, [
+        DurableState.upsert("order", { ...order, orderId: "o2" }),
+        DurableState.upsert("order", { ...order, orderId: "o3" }),
+        DurableState.upsert("order", { ...order, orderId: "o4" }),
+      ]),
+    );
+    yield* Projection.run(circuit().at(params));
+    const limited = circuit(1, false, 3).at(params);
+    const before = yield* state;
+    const checkpoint = yield* Projection.read(limited);
+    const output = yield* Results;
+    const head = yield* output.head(params);
+    yield* input.append(
+      params,
+      DurableState.changes(Shop.at(params), {}, [
+        DurableState.upsert("customer", { customerId: "c1", name: "Renamed", tier: "gold" }),
+      ]),
+    );
+
+    const fault = yield* Projection.run(limited).pipe(Effect.flip);
+    expect(fault).toMatchObject({
+      _tag: "ViewDataFault",
+      key: "c1",
+      reason: 'maxAffectedKeys (3) exceeded at key "c1"',
+      [NonRetryable]: true,
+    });
+    expect(yield* state).toEqual(before);
+    expect(yield* Projection.read(limited)).toEqual(checkpoint);
+    expect((yield* output.head(params)).nextOffset).toBe(head.nextOffset);
+
+    expect((yield* Projection.run(circuit(1, false, 100).at(params))).units).toBe(1);
+    yield* Projection.run(Table.at(params));
+    expect((yield* Table.at(params).get("goldOrder", "o1")).value?.customerName).toBe("Renamed");
+  }).pipe(Effect.provide(host)),
+);
 
 it.live("new generations rebuild and remove the old operator namespace", () => {
   return Effect.gen(function* () {

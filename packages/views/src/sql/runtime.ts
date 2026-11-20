@@ -94,7 +94,12 @@ function indexEntry(
  * Ordered reads fetch at most limit + changed entries, never the whole partition.
  * No cache or payload survives the unit; SQL is authoritative between units.
  */
-export function runtime(program: Program, store: Store, parameter: ExpressionScopes["parameter"]) {
+export function runtime(
+  program: Program,
+  store: Store,
+  parameter: ExpressionScopes["parameter"],
+  maxAffectedKeys?: number,
+) {
   const fault = (relation: string) => {
     const location = program.locations.get(relation);
 
@@ -103,8 +108,23 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
     return dataFault(location);
   };
 
+  const checkFanOut =
+    maxAffectedKeys === undefined
+      ? undefined
+      : (relation: string, count: number, key: RowKey) => {
+          if (count > maxAffectedKeys)
+            throw fault(relation)(
+              key,
+              `maxAffectedKeys (${maxAffectedKeys}) exceeded at key ${canonicalJson(key)}`,
+            );
+        };
+
+  const fanOutReadLimit = maxAffectedKeys === undefined ? undefined : maxAffectedKeys + 1;
+  let affected = 0;
+
   const changes = new Map<string, Deltas>();
   const cache = new Map<string, Map<string, Entry | undefined>>();
+
   const indexReads = new Map<
     string,
     {
@@ -221,6 +241,10 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
 
   const apply = (relation: string, deltas: Deltas) =>
     Effect.gen(function* () {
+      if (maxAffectedKeys !== undefined && affected + deltas.size > maxAffectedKeys)
+        for (const { key } of deltas.values()) checkFanOut?.(relation, ++affected, key);
+
+      affected += deltas.size;
       changes.set(relation, deltas);
 
       if (!program.stored.has(relation) || deltas.size === 0) return;
@@ -293,7 +317,7 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
       }
     });
 
-  return { changes, get, lookup, apply, fault, parameter };
+  return { changes, get, lookup, apply, fault, parameter, checkFanOut, fanOutReadLimit };
 }
 
 export type Runtime = ReturnType<typeof runtime>;

@@ -134,9 +134,13 @@ A rebuild appends to the existing output stream. Delete or reset the outputs fir
 
 String expressions compare lexicographically by UTF-16 code units, without locale comparison, case folding or Unicode normalization. `min`, `max` and `top` follow that contract. Top needs a finite positive bound and the row key as its stable final sort term. It selects a keyed relation, not a ranked result list; StateTable reads order by wire key.
 
-Only the SQL tier exists: SQLite on Bun or Durable Objects. Operator state uses integrals, payload-free arrangements and accumulators; a separate circuit metadata table records identity and plan hash. SQL stays in the store module, computes index keys in JavaScript, uses no JSON SQL functions or expression indexes, and keeps statements below 100 bound parameters.
+Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
 
-There is no fan-out cap. A key with many dependants can create a large transaction. There is no `avg`, `distinct`, fact fold, closure, memory tier, dynamic parameters-as-data, frontier row or opt-in `old_value` output. Input values must be JSON objects; collection codecs requiring services cannot be used with Streamsy 0.12 projection declarations. Retained State streams are the source of truth; SQL state is rebuildable.
+A source used only by direct `where` filters keeps rows that pass at least one of those filters. Another consumer of the unfiltered source keeps its full integral. Existing namespaces resume with their current checkpoint and plan hash. Older rows outside the filters are removed when touched or cleared by a State reset. A fresh namespace gets the storage savings from its first unit.
+
+Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's distinct changed relation keys, including intermediate results. Joins also check the number of candidate keys before building large joined results. The unit rolls back on overflow and attached runners stop the binding with a `ViewDataFault` that names a key. The limit governs fan-out, so an operator may still read unchanged rows, for example when recomputing a fractional sum. The limit can be changed without changing the plan hash.
+
+Unsupported operators and features include `avg`, `distinct`, fact folds, closure, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Retained State streams are the source of truth for rebuilding SQL state.
 
 ## Lower-level API and migration from 0.4
 

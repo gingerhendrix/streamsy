@@ -66,7 +66,9 @@ String comparisons use **lexicographic UTF-16 code-unit ordering**, without loca
 
 Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `View.PlanChanged` before committing. Raise `generation` to rebuild; the first unit removes older operator namespaces for that projection key. Stop older runners first and delete/reset output streams if the rebuild must start with empty outputs. `Projection.forget(bound)` deletes the checkpoint and operator state atomically; `View.forget` is an alias. Neither removes output streams.
 
-Limits: no fan-out cap, `avg`, `distinct`, fact fold, closure, memory tier, dynamic parameters-as-data, frontier rows or `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
+Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
+
+Unsupported features include `avg`, `distinct`, fact folds, closure, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
 
 | Export            | Purpose                         |
 | ----------------- | ------------------------------- |

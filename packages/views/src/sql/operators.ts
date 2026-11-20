@@ -87,7 +87,10 @@ export const join = Effect.fnUntraced(function* (
   const leftIndex = findArrangement(program, node.left, [keys.left], []);
   const rightIndex = findArrangement(program, node.right, [keys.right], []);
   const affected = new Set(rt.changes.get(node.left)?.keys());
-  const rightKeys = new Set<string>();
+  const rightKeys = new Map<string, RowKey>();
+
+  const lookupOptions =
+    rt.fanOutReadLimit === undefined ? undefined : { limit: rt.fanOutReadLimit };
 
   for (const d of rt.changes.get(node.right)?.values() ?? []) {
     for (const row of [d.before, d.after]) {
@@ -97,15 +100,28 @@ export const join = Effect.fnUntraced(function* (
         evaluateOptional(keys.right, { row, key: d.key, parameter: rt.parameter }),
       );
 
-      if (!isMissing(key)) rightKeys.add(canonicalJson([key]));
+      if (!isMissing(key)) rightKeys.set(canonicalJson([key]), d.key);
     }
   }
 
-  for (const key of rightKeys)
+  for (const [key, trigger] of rightKeys)
     for (const before of [true, false]) {
-      for (const entry of yield* rt.lookup(leftIndex, key, before))
+      for (const entry of yield* rt.lookup(leftIndex, key, before, lookupOptions)) {
         affected.add(encodeRowKey(entry.key));
+        rt.checkFanOut?.(node.id, affected.size, trigger);
+      }
     }
+
+  const matched = lookupOptions === undefined ? undefined : new Set<string>();
+
+  const record = (entry: Entry, trigger: RowKey) => {
+    if (matched !== undefined) {
+      matched.add(encodeRowKey(entry.key));
+      rt.checkFanOut?.(node.id, matched.size, trigger);
+    }
+
+    return entry;
+  };
 
   const evaluateLeft = (id: string, before: boolean) =>
     Effect.gen(function* () {
@@ -119,17 +135,22 @@ export const join = Effect.fnUntraced(function* (
 
       const right = isMissing(key)
         ? []
-        : yield* rt.lookup(rightIndex, canonicalJson([key]), before);
+        : yield* rt.lookup(rightIndex, canonicalJson([key]), before, lookupOptions);
 
       if (right.length === 0)
         return node.kind === "left-join"
-          ? [{ key: ["unmatched", encodeRowKey(left.key)], row: left.row }]
+          ? [record({ key: ["unmatched", encodeRowKey(left.key)], row: left.row }, left.key)]
           : [];
 
-      return Arr.map(right, (r) => ({
-        key: ["match", encodeRowKey(left.key), encodeRowKey(r.key)],
-        row: { ...left.row, [node.rightAlias]: r.row },
-      }));
+      return Arr.map(right, (r) =>
+        record(
+          {
+            key: ["match", encodeRowKey(left.key), encodeRowKey(r.key)],
+            row: { ...left.row, [node.rightAlias]: r.row },
+          },
+          left.key,
+        ),
+      );
     });
 
   const before: Entry[] = [],
@@ -201,6 +222,7 @@ export const aggregate = Effect.fnUntraced(function* (
       group.operands.push(...operands(row, d.key, sign));
 
       groups.set(encoded, group);
+      rt.checkFanOut?.(node.id, groups.size, key);
     }
   }
 
@@ -315,6 +337,7 @@ export const top = Effect.fnUntraced(function* (node: TopNNode, program: Program
       );
 
       partitions.add(canonicalJson(key));
+      rt.checkFanOut?.(node.id, partitions.size, key);
     }
 
   const before: Entry[] = [],
