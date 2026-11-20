@@ -1,8 +1,8 @@
-import type { SqlRelationPlan } from "./ir/contracts.ts";
+import type { RelationPlan } from "./ir/contracts.ts";
 import { Predicate, Record as Rec, Array as Arr } from "effect";
 
 /** Keep circuit arrangement identities stable when view fields are reordered. */
-export function orderPlanFields(plan: SqlRelationPlan): SqlRelationPlan {
+export function orderPlanFields(plan: RelationPlan): RelationPlan {
   return {
     ...plan,
     nodes: Arr.map(plan.nodes, (node) => {
@@ -27,18 +27,8 @@ function orderedFields<A>(fields: Readonly<Record<string, A>>): Record<string, A
   return Rec.fromEntries(entries);
 }
 
-/** Canonical JSON with lexicographically sorted object keys and preserved array order. */
-export function encodePlan(plan: SqlRelationPlan): string {
-  return canonical(plan, new Set<object>(), "$plan");
-}
-
-/** Eight-lowercase-hex FNV-1a identity over the canonical UTF-8 bytes. */
-export function planHash(plan: SqlRelationPlan): string {
-  return hashText(encodePlan(plan));
-}
-
 /** Identity of every named output plan, independent of declaration order. */
-export function circuitPlanHash(plans: Readonly<Record<string, SqlRelationPlan>>): string {
+export function circuitPlanHash(plans: Readonly<Record<string, RelationPlan>>): string {
   return hashText(canonical(plans, new Set<object>(), "$circuit"));
 }
 

@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Record as Rec, Schema, Option } from "effect";
-import { collectPlanIssues, PlanCheckFailed, type PlanIssue } from "../check.ts";
+import { collectPlanIssues, PlanCheckFailed } from "../check.ts";
 import { canonicalJson } from "../runtime/key.ts";
-import type { Expression, SortTerm, SqlRelationNode, SqlRelationPlan } from "../ir/contracts.ts";
+import type { Expression, SortTerm, RelationNode, RelationPlan } from "../ir/contracts.ts";
 
 export interface Arrangement {
   readonly id: string;
@@ -13,12 +13,9 @@ export interface Arrangement {
 }
 
 export interface Program {
-  readonly nodes: readonly SqlRelationNode[];
+  readonly nodes: readonly RelationNode[];
   readonly outputs: Readonly<Record<string, string>>;
-  readonly pushedFilters: ReadonlyMap<
-    string,
-    readonly Extract<SqlRelationNode, { kind: "filter" }>[]
-  >;
+  readonly pushedFilters: ReadonlyMap<string, readonly Extract<RelationNode, { kind: "filter" }>[]>;
   readonly arrangements: readonly Arrangement[];
   readonly stored: ReadonlySet<string>;
   readonly locations: ReadonlyMap<string, { readonly view: string; readonly node: string }>;
@@ -26,7 +23,7 @@ export interface Program {
   readonly stateKeys: ReadonlySet<string>;
 }
 
-export function dependencies(node: SqlRelationNode): readonly string[] {
+export function dependencies(node: RelationNode): readonly string[] {
   if (node.kind === "source") return [];
 
   if (node.kind === "inner-join" || node.kind === "left-join") return [node.left, node.right];
@@ -89,58 +86,27 @@ function rowScope(e: Expression): Expression {
   }
 }
 
-export function sqlPlanIssues(plan: SqlRelationPlan): readonly PlanIssue[] {
-  const issues = [...collectPlanIssues(plan)];
-  const seen = new Set<string>();
-
-  for (const node of plan.nodes) {
-    const messages: string[] = [];
-
-    if (node.kind === "reduce-by-key")
-      messages.push("SQL tier does not support fact folds (reduce-by-key)");
-
-    if (node.kind === "source" && node.mode !== "state")
-      messages.push("SQL tier requires Durable State sources");
-
-    if (
-      (node.kind === "inner-join" || node.kind === "left-join") &&
-      joinKeys(node.on) === undefined
-    )
-      messages.push("SQL joins require an equality between left-only and right-only expressions");
-
-    if (
-      node.kind === "grouped-aggregate" &&
-      Arr.some(Rec.values(node.aggregates), (a) => a.function === "count-where")
-    )
-      messages.push("SQL tier does not support count-where");
-
-    for (const input of dependencies(node))
-      if (!seen.has(input))
-        messages.push(`input ${input} must precede its consumer (cycles are unsupported)`);
-
-    for (const message of messages)
-      issues.push({
-        code: "unsupported-sql-plan",
-        view: plan.name,
-        nodeId: node.id,
-        path: "nodes",
-        message,
-      });
-    seen.add(node.id);
-  }
-
-  return issues;
-}
-
 export const compile = Effect.fn("ViewsSql.compile")(function* (
-  views: Readonly<Record<string, SqlRelationPlan>>,
+  views: Readonly<Record<string, RelationPlan>>,
   stateOutputKeys: boolean,
 ) {
-  const issues = Arr.flatMap(Rec.values(views), sqlPlanIssues);
+  const issues = Arr.flatMap(Rec.values(views), collectPlanIssues);
   const sourceDefinitions = new Map<string, string>();
 
   for (const plan of Rec.values(views))
     for (const node of plan.nodes) {
+      if (
+        (node.kind === "inner-join" || node.kind === "left-join") &&
+        joinKeys(node.on) === undefined
+      )
+        issues.push({
+          code: "unsupported-sql-plan",
+          view: plan.name,
+          nodeId: node.id,
+          path: "nodes",
+          message: "SQL joins require an equality between left-only and right-only expressions",
+        });
+
       if (node.kind !== "source") continue;
       const { id: _id, ...definition } = node;
       const signature = signatureOf(definition);
@@ -158,7 +124,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     }
 
   if (issues.length) return yield* Effect.fail(new PlanCheckFailed({ issues }));
-  const nodes: SqlRelationNode[] = [];
+  const nodes: RelationNode[] = [];
   const signatures = new Map<string, string>();
   const outputs: Record<string, string> = {};
   const locations = new Map<string, { view: string; node: string }>();
@@ -183,7 +149,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
             ? { ...node, left: remap(node.left), right: remap(node.right) }
             : { ...node, input: remap(node.input) };
 
-      const { id: _id, schema: _schema, ...definition } = mapped;
+      const { id: _id, ...definition } = mapped;
       const stateKey = stateOutputKeys && node.kind === "key" && node.id === plan.output;
       const signature = signatureOf({ definition, stateKey });
       let id = signatures.get(signature);
@@ -206,7 +172,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
   const arrangements: Arrangement[] = [];
   const stored = new Set<string>();
   const checkedKeys = new Set<string>();
-  const pushedFilters = new Map<string, Extract<SqlRelationNode, { kind: "filter" }>[]>();
+  const pushedFilters = new Map<string, Extract<RelationNode, { kind: "filter" }>[]>();
   // Only record expressions that reproduce a relation's existing key from its row.
   const keyFields = new Map<string, { expression: Expression; stateKey: boolean }>();
 

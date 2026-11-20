@@ -1,6 +1,4 @@
-import type { Expression, SqlRelationNode, SqlRelationPlan } from "../../src/ir/contracts.ts";
-
-export const schema = { name: "Shop.Row", version: 1 };
+import type { Expression, RelationNode, RelationPlan } from "../../src/ir/contracts.ts";
 
 export const ref = (scope: "row" | "left" | "right" | "key", ...path: string[]): Expression => ({
   kind: "reference",
@@ -8,34 +6,33 @@ export const ref = (scope: "row" | "left" | "right" | "key", ...path: string[]):
   path,
 });
 
-export const source = (id: string, key = "id"): SqlRelationNode => ({
+export const source = (id: string, key = "id"): RelationNode => ({
   kind: "source",
   id,
   sourceId: id,
-  schema,
-  partitionBy: { kind: "literal", value: "all" },
+
   key: ref("row", key),
-  mode: "state",
 });
 
-export const plan = (name: string, nodes: readonly SqlRelationNode[]): SqlRelationPlan => ({
+export const plan = (name: string, nodes: readonly RelationNode[]): RelationPlan => ({
   version: 3,
+  parameters: [],
   name,
   nodes,
   output: nodes.at(-1)?.id ?? "",
 });
 
-type ShopPlans = Readonly<Record<string, SqlRelationPlan>>;
+type ShopPlans = Readonly<Record<string, RelationPlan>>;
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread -- Optional test fixtures add min and leftJoin coverage to the four benchmark views. */
 export function shopPlans(minimum = false): ShopPlans {
   const orders = source("orders", "orderId"),
     customers = source("customers", "customerId");
 
-  const joined: SqlRelationNode = {
+  const joined: RelationNode = {
     kind: "inner-join",
     id: "joined",
-    schema,
+
     left: "orders",
     right: "customers",
     rightAlias: "customer",
@@ -56,7 +53,7 @@ export function shopPlans(minimum = false): ShopPlans {
       {
         kind: "filter",
         id: "gold",
-        schema,
+
         input: "joined",
         predicate: {
           kind: "binary",
@@ -68,7 +65,7 @@ export function shopPlans(minimum = false): ShopPlans {
       {
         kind: "project",
         id: "selected",
-        schema,
+
         input: "gold",
         fields: {
           orderId: ref("row", "orderId"),
@@ -76,14 +73,14 @@ export function shopPlans(minimum = false): ShopPlans {
           total: ref("row", "total"),
         },
       },
-      { kind: "key", id: "keyed", schema, input: "selected", key: ref("row", "orderId") },
+      { kind: "key", id: "keyed", input: "selected", key: ref("row", "orderId") },
     ]),
     totals: plan("totals", [
       orders,
       {
         kind: "grouped-aggregate",
         id: "totals",
-        schema,
+
         input: "orders",
         groupBy: { customerId: ref("row", "customerId") },
         aggregates: {
@@ -107,15 +104,14 @@ export function shopPlans(minimum = false): ShopPlans {
       {
         kind: "top-n",
         id: "top",
-        schema,
+
         input: "orders",
         partitionBy: [ref("row", "customerId")],
         orderBy: [
           { expression: ref("row", "total"), direction: "descending" },
           { expression: ref("row", "orderId"), direction: "ascending" },
         ],
-        limit: { kind: "literal", value: 3 },
-        maximum: 3,
+        limit: 3,
       },
     ]),
     revenue: plan("revenue", [
@@ -125,7 +121,7 @@ export function shopPlans(minimum = false): ShopPlans {
       {
         kind: "grouped-aggregate",
         id: "revenue",
-        schema,
+
         input: "joined",
         groupBy: { tier: ref("row", "customer", "tier") },
         aggregates: {

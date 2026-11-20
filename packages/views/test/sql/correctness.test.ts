@@ -5,7 +5,7 @@ import { SqlClient } from "effect/sql";
 import { storeFor } from "../../src/sql/store.ts";
 import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
-import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
+import { plan, ref, shopPlans, source } from "./fixtures.ts";
 
 const order = (orderId: string, total: number, customerId = "c1") => ({
   orderId,
@@ -24,7 +24,7 @@ const remove = (key: string): StateChange => ({ sourceId: "orders", kind: "delet
 
 const byCustomer = plan("byCustomer", [
   source("orders", "orderId"),
-  { kind: "key", id: "keyed", schema, input: "orders", key: ref("row", "customerId") },
+  { kind: "key", id: "keyed", input: "orders", key: ref("row", "customerId") },
 ]);
 
 it.live("retains the union of direct filters unless another view needs the whole source", () =>
@@ -38,7 +38,7 @@ it.live("retains the union of direct filters unless another view needs the whole
         {
           kind: "filter",
           id: name,
-          schema,
+
           input: input.id,
           predicate: {
             kind: "binary",
@@ -170,11 +170,11 @@ it.live("transfers and swaps ownership from the final unit image", () =>
       {
         kind: "project",
         id: "projected",
-        schema,
+
         input: "orders",
         fields: { customerId: ref("row", "customerId"), total: ref("row", "total") },
       },
-      { kind: "key", id: "keyed", schema, input: "projected", key: ref("row", "customerId") },
+      { kind: "key", id: "keyed", input: "projected", key: ref("row", "customerId") },
     ]);
 
     const engine = yield* makeEngine({ projected });
@@ -275,7 +275,7 @@ it.live("skips ownership for a source key through top and a whole composite grou
 
     const top = plan("keyedTop", [
       ...topOrders.nodes,
-      { kind: "key", id: "keyed", schema, input: topOrders.output, key: ref("row", "orderId") },
+      { kind: "key", id: "keyed", input: topOrders.output, key: ref("row", "orderId") },
     ]);
 
     const group = plan("keyedGroup", [
@@ -283,7 +283,7 @@ it.live("skips ownership for a source key through top and a whole composite grou
       {
         kind: "key",
         id: "keyed",
-        schema,
+
         input: totals.output,
         key: { kind: "variadic", operator: "key", operands: [ref("row", "customerId")] },
       },

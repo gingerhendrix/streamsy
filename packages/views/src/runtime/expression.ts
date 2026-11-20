@@ -23,8 +23,6 @@ export interface ExpressionScopes {
   readonly left?: JsonValue;
   readonly right?: JsonValue;
   readonly key?: JsonValue;
-  readonly event?: JsonValue;
-  readonly state?: JsonValue;
   readonly parameter?: StreamRoute.Params<StreamRoute.ParamCodecs> | undefined;
 }
 

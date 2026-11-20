@@ -15,7 +15,7 @@ import {
   type WakeAt,
 } from "@streamsy/projection";
 import { SqlClient } from "effect/sql";
-import { compilePlan, parameter } from "./relation.ts";
+import { compilePlan } from "./relation.ts";
 import { keyExpression, parameterReference, type TypedExpression } from "./expression.ts";
 import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
@@ -31,7 +31,7 @@ import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
 import { encodeRowKey } from "./runtime/key.ts";
-import type { JsonValue, SqlRelationPlan } from "./ir/contracts.ts";
+import type { JsonValue, RelationPlan } from "./ir/contracts.ts";
 
 type Views = Readonly<Record<string, Pick<Relation<unknown>, "expression" | "inputs" | "rowType">>>;
 
@@ -297,9 +297,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Record.map preserves the named keys; their expression types are phantom.
   const params = refs as ParameterExpressions<C>;
 
-  const parameters = parameterized
-    ? Record.map(definition.params, (codec, name) => parameter(name, codec))
-    : {};
+  const parameters = parameterized ? Array.sort(Record.keys(definition.params), Order.String) : [];
 
   const { output: singleOutput } = definition;
   const routedOutputs = singleOutput === undefined ? definition.outputs : { output: singleOutput };
@@ -312,7 +310,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
       ? resolveViews(definition.views)
       : { output: resolveViews(definition.views) };
 
-  const plans: Record<string, SqlRelationPlan> = {};
+  const plans: Record<string, RelationPlan> = {};
   const targets = new Map<string, { readonly route: string; readonly collection: string }>();
   const sources = new Map<string, { readonly state: Input; readonly collection: string }>();
 
@@ -349,9 +347,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
       } as const;
 
       const planName = singleOutput === undefined ? JSON.stringify([route, name]) : name;
-      plans[planName] = orderPlanFields(
-        compilePlan(planName, expression, { name: `${state.key}/${name}`, version: 1 }, parameters),
-      );
+      plans[planName] = orderPlanFields(compilePlan(planName, expression, parameters));
       targets.set(planName, { route, collection: name });
 
       for (const [id, input] of relation.inputs) sources.set(id, input);
@@ -373,8 +369,8 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         throw new RangeError(`Missing circuit parameter ${name}`);
   }
 
-  const hash = circuitPlanHash(plans);
   const engine = Effect.runSync(makeEngine(plans, true, definition.maxAffectedKeys));
+  const hash = circuitPlanHash(plans);
 
   type ProjectionRoutes = Parameters<
     typeof Projection.process<C, Record<string, Input>, OutputMap>

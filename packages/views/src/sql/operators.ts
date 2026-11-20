@@ -9,8 +9,8 @@ import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type {
   JsonObject,
   JsonValue,
-  SqlGroupedAggregateNode,
-  SqlRelationNode,
+  GroupedAggregateNode,
+  RelationNode,
   TopNNode,
   RowKey,
 } from "../ir/contracts.ts";
@@ -22,7 +22,7 @@ import type { Accumulator, Entry, Store } from "./store.ts";
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening -- Mutable aggregate fields and sums use the IR's open dictionary contract; Expression results are checked at the operator boundary. */
 
 export function accepts(
-  node: Extract<SqlRelationNode, { kind: "filter" }>,
+  node: Extract<RelationNode, { kind: "filter" }>,
   key: RowKey,
   row: JsonObject,
   fault: DataFault,
@@ -38,7 +38,7 @@ export function accepts(
 }
 
 export function linear(
-  node: Extract<SqlRelationNode, { kind: "filter" | "project" }>,
+  node: Extract<RelationNode, { kind: "filter" | "project" }>,
   input: Deltas,
   fault: DataFault,
   parameter: ExpressionScopes["parameter"],
@@ -76,7 +76,7 @@ export function linear(
 }
 
 export const join = Effect.fnUntraced(function* (
-  node: Extract<SqlRelationNode, { kind: "inner-join" | "left-join" }>,
+  node: Extract<RelationNode, { kind: "inner-join" | "left-join" }>,
   program: Program,
   rt: Runtime,
 ) {
@@ -165,7 +165,7 @@ export const join = Effect.fnUntraced(function* (
 });
 
 export const aggregate = Effect.fnUntraced(function* (
-  node: SqlGroupedAggregateNode,
+  node: GroupedAggregateNode,
   program: Program,
   rt: Runtime,
   store: Store,
@@ -317,10 +317,7 @@ export const aggregate = Effect.fnUntraced(function* (
 
 export const top = Effect.fnUntraced(function* (node: TopNNode, program: Program, rt: Runtime) {
   const fault = rt.fault(node.id);
-  const limit = checkData(fault, null, () => evaluate(node.limit, { parameter: rt.parameter }));
-
-  if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0 || limit > node.maximum)
-    return yield* fault(null, "invalid top limit");
+  const { limit } = node;
   const a = findArrangement(program, node.input, node.partitionBy ?? [], node.orderBy);
   const partitions = new Set<string>();
 

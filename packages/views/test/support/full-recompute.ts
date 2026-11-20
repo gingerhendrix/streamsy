@@ -1,17 +1,16 @@
 import type {
-  DescriptorRef,
   Expression,
-  SqlGroupedAggregateNode,
+  GroupedAggregateNode,
   JsonObject,
   JsonValue,
-  SqlRelationPlan,
-  SqlRelationNode,
+  RelationPlan,
+  RelationNode,
   RowKey,
   TopNNode,
 } from "../../src/ir/contracts.ts";
 import { evaluate, evaluateOptional, isMissing } from "../../src/runtime/expression.ts";
 import type { Evaluated, ExpressionScopes } from "../../src/runtime/expression.ts";
-import { asRowKey, encodeRowKey } from "../../src/runtime/key.ts";
+import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 
 import { dataFault } from "../../src/sql/data-fault.ts";
 import type { Entry as StateRow } from "../../src/sql/store.ts";
@@ -25,10 +24,9 @@ export interface OrderedPartition {
 }
 
 export interface FullRecomputeInput {
-  readonly plan: SqlRelationPlan;
+  readonly plan: RelationPlan;
   readonly sources: Readonly<Record<string, readonly StateRow[]>>;
   readonly parameters?: ExpressionScopes["parameter"];
-  readonly decodeRow?: (schema: DescriptorRef, row: JsonObject, nodeId: string) => JsonObject;
 }
 
 export interface FullRecomputeResult {
@@ -58,7 +56,7 @@ interface EvaluationOptions {
 }
 
 function evaluateRelations(
-  nodes: readonly SqlRelationNode[],
+  nodes: readonly RelationNode[],
   input: Omit<FullRecomputeInput, "plan">,
   options: EvaluationOptions,
 ) {
@@ -113,7 +111,7 @@ function evaluateRelations(
 
             return {
               key: entry.key,
-              row: input.decodeRow?.(node.schema, row, node.id) ?? row,
+              row,
             };
           }),
         );
@@ -171,11 +169,6 @@ function evaluateRelations(
         ordered.set(node.id, result.ordered);
         break;
       }
-
-      case "reduce-by-key":
-        throw new TypeError(
-          "full recomputation expects normalized relation changes after fact reduction",
-        );
     }
 
     const seen = new Set<string>();
@@ -215,7 +208,7 @@ function sourceRows(
 }
 
 function recomputeAggregate(
-  node: SqlGroupedAggregateNode,
+  node: GroupedAggregateNode,
   input: readonly StateRow[],
   parameters: NonNullable<ExpressionScopes["parameter"]>,
 ): readonly StateRow[] {
@@ -268,14 +261,7 @@ function recomputeAggregate(
           }),
         );
 
-        if (aggregate.function === "count-where") {
-          row[name] = Arr.filter(values, (value) => {
-            if (isMissing(value) || typeof value !== "boolean")
-              throw new TypeError("count-where requires Booleans");
-
-            return value;
-          }).length;
-        } else if (aggregate.function === "sum") {
+        if (aggregate.function === "sum") {
           row[name] = Arr.reduce(values, 0, (sum, value) => {
             if (isMissing(value)) return sum;
 
@@ -304,10 +290,7 @@ function recomputeTop(
   input: readonly StateRow[],
   parameters: NonNullable<ExpressionScopes["parameter"]>,
 ): FullRecomputeResult {
-  const limit = evaluate(node.limit, { parameter: parameters });
-
-  if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0 || limit > node.maximum)
-    throw new TypeError("invalid top limit");
+  const { limit } = node;
 
   const partitions = new Map<
     string,

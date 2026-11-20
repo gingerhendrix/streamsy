@@ -2,7 +2,7 @@ import { Array as Arr, Effect, Schema, Record as Rec } from "effect";
 import { SqlClient } from "effect/sql";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
-import type { JsonObject, RowKey, SqlRelationPlan } from "../ir/contracts.ts";
+import type { JsonObject, RowKey, RelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
 import { accepts, aggregate, join, linear, top } from "./operators.ts";
 import { delta, runtime, type Delta, type Deltas } from "./runtime.ts";
@@ -13,8 +13,6 @@ import { storeFor, type Store } from "./store.ts";
 export { ViewDataFault } from "./data-fault.ts";
 
 export { migrate } from "./store.ts";
-
-export { sqlPlanIssues } from "./planner.ts";
 
 export type StateChange =
   | {
@@ -47,7 +45,7 @@ export class SqlEngineFault extends Schema.TaggedError<
  * Circuit outputs use the string key space of Durable State.
  */
 export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
-  views: Readonly<Record<string, SqlRelationPlan>>,
+  views: Readonly<Record<string, RelationPlan>>,
   stateOutputKeys = false,
   maxAffectedKeys?: number,
 ) {
@@ -180,8 +178,6 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           case "top-n":
             changes = yield* top(node, program, rt);
             break;
-          case "reduce-by-key":
-            throw new TypeError("unsupported fact fold");
         }
 
         yield* rt.apply(node.id, changes);

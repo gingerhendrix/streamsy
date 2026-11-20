@@ -18,30 +18,12 @@ export function isJsonObject(value: JsonValue): value is JsonObject {
   return value !== null && typeof value === "object" && !Arr.isArray(value);
 }
 
-export type Change<Row, Key extends RowKey = RowKey> =
-  | { readonly kind: "enter"; readonly key: Key; readonly after: Row }
-  | { readonly kind: "update"; readonly key: Key; readonly before: Row; readonly after: Row }
-  | { readonly kind: "exit"; readonly key: Key; readonly before: Row };
-
-/** Source items are ordered as read; the cursor resumes strictly after this batch. */
-export interface SourceBatch<Row> {
-  readonly sourceId: string;
-  readonly partition: string;
-  readonly afterExclusiveCursor: string;
-  readonly items: readonly Row[];
-}
-
-export interface DescriptorRef {
-  readonly name: string;
-  readonly version: number;
-}
-
 export interface LiteralExpression {
   readonly kind: "literal";
   readonly value: JsonValue;
 }
 
-export type ReferenceScope = "row" | "left" | "right" | "key" | "event" | "state" | "parameter";
+export type ReferenceScope = "row" | "left" | "right" | "key" | "parameter";
 
 export interface ReferenceExpression {
   readonly kind: "reference";
@@ -108,7 +90,7 @@ export type Expression =
   | FieldExpression
   | CallExpression;
 
-export type AggregateFunction = "count" | "count-where" | "sum" | "min" | "max";
+export type AggregateFunction = "count" | "sum" | "min" | "max";
 
 export interface AggregateExpression {
   readonly kind: "aggregate";
@@ -121,14 +103,8 @@ export interface SortTerm {
   readonly direction: "ascending" | "descending";
 }
 
-export interface ParameterDescriptor {
-  readonly schema: DescriptorRef;
-  readonly maximum?: number;
-}
-
 interface RelationNodeBase {
   readonly id: string;
-  readonly schema: DescriptorRef;
 }
 
 export interface SourceNode extends RelationNodeBase {
@@ -136,9 +112,7 @@ export interface SourceNode extends RelationNodeBase {
   readonly stateKey?: true;
   readonly kind: "source";
   readonly sourceId: string;
-  readonly partitionBy: Expression;
   readonly key: Expression;
-  readonly mode: "facts" | "state";
 }
 
 export interface FilterNode extends RelationNodeBase {
@@ -186,16 +160,8 @@ export interface TopNNode extends RelationNodeBase {
   readonly kind: "top-n";
   readonly input: string;
   readonly orderBy: readonly SortTerm[];
-  readonly limit: Expression;
-  readonly maximum: number;
+  readonly limit: number;
   readonly partitionBy?: readonly Expression[];
-}
-
-export interface ReduceByKeyNode extends RelationNodeBase {
-  readonly kind: "reduce-by-key";
-  readonly input: string;
-  readonly key: Expression;
-  readonly reducer: DescriptorRef;
 }
 
 export type RelationNode =
@@ -206,30 +172,12 @@ export type RelationNode =
   | InnerJoinNode
   | LeftJoinNode
   | GroupedAggregateNode
-  | TopNNode
-  | ReduceByKeyNode;
+  | TopNNode;
 
 export interface RelationPlan {
   readonly version: 3;
   readonly name: string;
-  readonly parameters?: Readonly<Record<string, ParameterDescriptor>>;
+  readonly parameters: readonly string[];
   readonly nodes: readonly RelationNode[];
   readonly output: string;
-}
-
-/** SQL plan aliases retained for the SQL-tier public API. */
-export interface MinAggregateExpression {
-  readonly kind: "aggregate";
-  readonly function: "min";
-  readonly expression: Expression;
-}
-
-export interface SqlGroupedAggregateNode extends Omit<GroupedAggregateNode, "aggregates"> {
-  readonly aggregates: Readonly<Record<string, AggregateExpression | MinAggregateExpression>>;
-}
-
-export type SqlRelationNode = Exclude<RelationNode, GroupedAggregateNode> | SqlGroupedAggregateNode;
-
-export interface SqlRelationPlan extends Omit<RelationPlan, "nodes"> {
-  readonly nodes: readonly SqlRelationNode[];
 }

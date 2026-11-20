@@ -277,15 +277,11 @@ export function fn<
     );
 }
 
-export interface Selectors<Row, Event, State, Parameter, Right> {
+export interface Selectors<Row, Right> {
   readonly row: Reference<Row>;
   readonly left: Reference<Row>;
   readonly right: Reference<Right>;
   readonly keyRef: Reference<unknown>;
-  readonly event: Reference<Event>;
-  readonly state: Reference<State>;
-  readonly parameter: Reference<Parameter>;
-  readonly literal: typeof literal;
   readonly key: (
     ...parts: readonly (
       | TypedExpression<boolean>
@@ -297,22 +293,12 @@ export interface Selectors<Row, Event, State, Parameter, Right> {
 
 type RowKeyValue = boolean | number | string;
 
-export const selectors = <
-  Row,
-  Event = Row,
-  State = Row,
-  Parameter = never,
-  Right = Row,
->(): Selectors<Row, Event, State, Parameter, Right> =>
+export const selectors = <Row, Right = Row>(): Selectors<Row, Right> =>
   Object.freeze({
     row: reference<Row>("row", []),
     left: reference<Row>("left", []),
     right: reference<Right>("right", []),
     keyRef: reference<unknown>("key", []),
-    event: reference<Event>("event", []),
-    state: reference<State>("state", []),
-    parameter: reference<Parameter>("parameter", []),
-    literal,
     key: (
       ...parts: readonly (
         | TypedExpression<boolean>
@@ -326,7 +312,7 @@ export const joinSelectors = <Left, Right>(): {
   readonly left: Reference<Left>;
   readonly right: Reference<Right>;
 } => {
-  const roots = selectors<Left, Left, Left, never, Right>();
+  const roots = selectors<Left, Right>();
 
   return Object.freeze({ left: roots.left, right: roots.right });
 };
@@ -342,9 +328,6 @@ export const parameterReference = <T>(name: string): TypedExpression<T> =>
  * metadata, and a sink's public collection metadata at once.
  */
 export type DeclaredKey = string | readonly string[];
-
-/** The key fields a row type actually has. */
-export type KeyFieldsOf<Row> = (keyof Row & string) | readonly (keyof Row & string)[];
 
 /**
  * Lower a declared key to its canonical row-scoped expression.
@@ -366,8 +349,6 @@ export const keyExpression = (declared: DeclaredKey): Expression => {
 export const aggregate = Object.freeze({
   count: (): TypedAggregateExpression<number> =>
     Object.freeze({ kind: "aggregate", function: "count" }),
-  countWhere: (expression: BooleanExpression): TypedAggregateExpression<number> =>
-    Object.freeze({ kind: "aggregate", function: "count-where", expression }),
   sum: (expression: TypedExpression<number>): TypedAggregateExpression<number> =>
     Object.freeze({ kind: "aggregate", function: "sum", expression }),
   min: <T extends Ordered>(expression: TypedExpression<T>): TypedAggregateExpression<T> =>

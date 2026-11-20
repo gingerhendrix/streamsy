@@ -1,17 +1,11 @@
 import { Array } from "effect";
 import type { StreamAddress, Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
-import {
-  from as relationFrom,
-  buildRelation,
-  source,
-  type RelationBuilder,
-  type RelationExpression,
-} from "./relation.ts";
+import { deepFreeze, type RelationExpression } from "./relation.ts";
 import {
   aggregate,
   joinSelectors,
-  literal,
+  keyExpression,
   selectors,
   type AggregateValue,
   type BooleanExpression,
@@ -85,8 +79,8 @@ export interface Relation<Row, Inputs extends Input = Input> {
   }) => Relation<Row, Inputs>;
 }
 
-function wrap<Row, Inputs extends Input>(
-  relation: RelationBuilder<Row>,
+function relation<Row, Inputs extends Input>(
+  expression: RelationExpression<Row>,
   inputs: Relation<Row, Inputs>["inputs"],
 ): Relation<Row, Inputs> {
   const row = selectors<Row>().row;
@@ -109,7 +103,7 @@ function wrap<Row, Inputs extends Input>(
     for (const [id, input] of other.inputs) combined.set(id, input);
 
     return {
-      left: relation.expression,
+      left: expression,
       right: other.expression,
       rightAlias: spec.as,
       on,
@@ -118,35 +112,51 @@ function wrap<Row, Inputs extends Input>(
   };
 
   return {
-    expression: relation.expression,
+    expression: deepFreeze(expression),
     inputs,
-    where: (predicate) => wrap(relation.where(predicate(row)), inputs),
-    select: (fields) => wrap(relation.select(fields(row)), inputs),
+    where: (predicate) =>
+      relation({ kind: "filter", input: expression, predicate: predicate(row) }, inputs),
+    select: (fields) =>
+      relation({ kind: "project", input: expression, fields: fields(row) }, inputs),
     join: (other, spec) => {
-      const { combined, ...expression } = join(other, spec);
+      const { combined, ...joined } = join(other, spec);
 
-      return wrap(buildRelation({ ...expression, kind: "inner-join" }), combined);
+      return relation({ ...joined, kind: "inner-join" }, combined);
     },
     leftJoin: (other, spec) => {
-      const { combined, ...expression } = join(other, spec);
+      const { combined, ...joined } = join(other, spec);
 
-      return wrap(buildRelation({ ...expression, kind: "left-join" }), combined);
+      return relation({ ...joined, kind: "left-join" }, combined);
     },
     groupBy: (fields) => ({
-      aggregate: (build) => wrap(relation.groupBy(fields(row)).aggregate(build(row)), inputs),
+      aggregate: (build) =>
+        relation(
+          {
+            kind: "grouped-aggregate",
+            input: expression,
+            groupBy: fields(row),
+            aggregates: build(row),
+          },
+          inputs,
+        ),
     }),
     top: (spec) => {
-      const by = spec.by(row);
+      const top = {
+        kind: "top-n",
+        input: expression,
+        orderBy: spec.by(row),
+        limit: spec.limit,
+      } as const;
 
-      if (spec.partitionBy === undefined)
-        return wrap(relation.top({ by, limit: spec.limit }), inputs);
+      if (spec.partitionBy === undefined) return relation(top, inputs);
+
       const partition = spec.partitionBy(row);
 
       const partitionBy = Array.isArray<Expression | readonly Expression[]>(partition)
         ? partition
         : [partition];
 
-      return wrap(relation.top({ by, limit: spec.limit, partitionBy }), inputs);
+      return relation({ ...top, partitionBy }, inputs);
     },
   };
 }
@@ -165,16 +175,10 @@ export function from<
   if (entry === undefined) throw new RangeError(`Unknown State collection ${collection}`);
   const id = JSON.stringify([state.key, collection]);
 
-  const declaration = source(id, {
-    schema: entry.schema,
-    schemaRef: { name: id, version: 1 },
-    key: entry.key,
-    partitionBy: literal("all"),
-    mode: "state",
-    stateKey: true,
-  });
-
-  return wrap(relationFrom(declaration), new Map([[id, { state, collection }]]));
+  return relation(
+    { kind: "source", sourceId: id, key: keyExpression(entry.key), stateKey: true },
+    new Map([[id, { state, collection }]]),
+  );
 }
 
 export const { count, sum, min, max } = aggregate;

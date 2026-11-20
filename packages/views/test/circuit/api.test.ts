@@ -15,7 +15,8 @@ import {
 import { AlarmSlot } from "../../../serve/src/cloudflare/alarm.ts";
 import { makeWakeups } from "../../../serve/src/cloudflare/wakeup.ts";
 import { eventually } from "../../../projection/test/support/eventually.ts";
-import { View, type TypedExpression } from "../../src/index.ts";
+import { PlanCheckFailed, View, type TypedExpression } from "../../src/index.ts";
+import { parameterReference } from "../../src/expression.ts";
 
 const Item = Schema.Struct({ id: Schema.String, value: Schema.Struct({ score: Schema.Finite }) });
 
@@ -138,6 +139,43 @@ const circuit = (name = "label", version = 1) =>
     ...definition,
     views: ({ minimum }) => ({ row: buildResult(name, version)(minimum) }),
   });
+
+it("rejects invalid joins, aggregates, top bounds and parameter references from View.from", () => {
+  const invalid = items
+    .join(details, { as: "", on: (item, right) => item.id.ne(right.id) })
+    .where((row) => row.value.score.gt(parameterReference<number>("other")))
+    .top({ by: () => [], limit: 0 })
+    .groupBy(() => ({}))
+    .aggregate(() => ({}))
+    .select(() => ({ id: View.literal("id"), value: View.literal({ score: 1 }) }));
+
+  const { cause } = Effect.runSync(
+    Effect.flip(
+      Effect.try(() =>
+        View.circuit({
+          id: "api-invalid",
+          params: Mirror.paramCodecs,
+          output: Mirror,
+          views: () => ({ row: invalid }),
+        }),
+      ),
+    ),
+  );
+
+  expect(cause).toBeInstanceOf(PlanCheckFailed);
+
+  if (!Schema.is(PlanCheckFailed)(cause)) throw new Error("Expected circuit plan issues");
+  expect(Array.map(cause.issues, (issue) => issue.code)).toEqual(
+    expect.arrayContaining([
+      "join-alias-conflict",
+      "unsupported-sql-plan",
+      "undeclared-parameter",
+      "invalid-top-limit",
+      "unstable-top-order",
+      "aggregate-shape-mismatch",
+    ]),
+  );
+});
 
 it.effect("resolves missing function arguments and binds decoded parameters per namespace", () =>
   Effect.gen(function* () {

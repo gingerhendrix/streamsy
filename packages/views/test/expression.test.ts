@@ -78,10 +78,10 @@ describe("expression construction", () => {
       operator: "key",
       operands: [x.row.id, x.row.count],
     });
-    expect(aggregate.countWhere(x.row.active)).toEqual({
+    expect(aggregate.sum(x.row.count)).toEqual({
       kind: "aggregate",
-      function: "count-where",
-      expression: x.row.active,
+      function: "sum",
+      expression: x.row.count,
     });
     expect(x.row.id.asc()).toEqual({ expression: x.row.id, direction: "ascending" });
     expect(Object.isFrozen(key)).toBe(true);

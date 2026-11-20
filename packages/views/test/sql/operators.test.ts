@@ -2,15 +2,17 @@ import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Exit, Record as Rec, Schema } from "effect";
 import { SqlClient, Statement } from "effect/sql";
-import { from, source as declareSource, view } from "../../src/relation.ts";
-import { literal, selectors } from "../../src/expression.ts";
-import { makeEngine, migrate, sqlPlanIssues, type StateChange } from "../../src/sql/engine.ts";
-import type { JsonObject, SqlRelationNode } from "../../src/ir/contracts.ts";
+import { Streamsy } from "@streamsy/core";
+import { View } from "../../src/index.ts";
+import { compilePlan } from "../../src/relation.ts";
+import { keyExpression } from "../../src/expression.ts";
+import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import type { JsonObject, RelationNode } from "../../src/ir/contracts.ts";
 import { compareOrdered, scalarKey } from "../../src/sql/encoding.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import { identity, materialize } from "./support.ts";
-import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
+import { plan, ref, shopPlans, source } from "./fixtures.ts";
 
 const up = (sourceId: string, key: string, value: JsonObject): StateChange => ({
   sourceId,
@@ -63,30 +65,31 @@ it.live(
   () => {
     const Item = Schema.Struct({ id: Schema.String, groupId: Schema.String, score: Schema.Finite });
 
-    const items = declareSource("items", {
-      schema: Item,
-      schemaRef: schema,
-      key: "id",
-      mode: "state",
-      partitionBy: literal("all"),
+    class Items extends Streamsy.state<Items>()("ViewsTest/Items", "items", {
+      params: {},
+      collections: { item: { schema: Item, key: "id" } },
+    }) {}
+
+    const items = View.from(Items, "item");
+
+    const selected = items
+      .where((row) => row.score.gt(0))
+      .select((row) => ({ id: row.id, groupId: row.groupId, score: row.score }));
+
+    const chosen = compilePlan("chosen", {
+      kind: "key",
+      input: selected.expression,
+      key: keyExpression("groupId"),
     });
 
-    const x = selectors<typeof Item.Type>();
-
-    const selected = view(
-      "chosen",
-      { schema: Item, schemaRef: schema, key: "groupId" },
-      from(items)
-        .where(x.row.score.gt(0))
-        .select({ id: x.row.id, groupId: x.row.groupId, score: x.row.score }),
-    );
+    const sourceId = JSON.stringify([Items.key, "item"]);
 
     return Effect.gen(function* () {
       yield* migrate();
-      const engine = yield* makeEngine({ chosen: selected.plan });
+      const engine = yield* makeEngine({ chosen });
 
       const first = yield* engine.process("p", [
-        up("items", "a", { id: "a", groupId: "g1", score: 2 }),
+        up(sourceId, "a", { id: "a", groupId: "g1", score: 2 }),
       ]);
 
       expect(first).toEqual([
@@ -94,7 +97,7 @@ it.live(
       ]);
 
       const move = yield* engine.process("p", [
-        up("items", "a", { id: "a", groupId: "g2", score: 2 }),
+        up(sourceId, "a", { id: "a", groupId: "g2", score: 2 }),
       ]);
 
       expect(move).toEqual([
@@ -102,7 +105,7 @@ it.live(
         { view: "chosen", kind: "upsert", key: "g2", value: { id: "a", groupId: "g2", score: 2 } },
       ]);
       expect(
-        yield* engine.process("p", [up("items", "a", { id: "a", groupId: "g2", score: -1 })]),
+        yield* engine.process("p", [up(sourceId, "a", { id: "a", groupId: "g2", score: -1 })]),
       ).toEqual([{ view: "chosen", kind: "delete", key: "g2" }]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
   },
@@ -114,9 +117,9 @@ it.live(
     const left = source("l"),
       right = source("r");
 
-    const joined: SqlRelationNode = {
+    const joined: RelationNode = {
       kind: "left-join",
-      schema,
+
       id: "join",
       left: "l",
       right: "r",
@@ -182,7 +185,7 @@ it.live(
         kind: "grouped-aggregate",
         id: "a",
         input: "items",
-        schema,
+
         groupBy: { group: ref("row", "group") },
         aggregates: {
           count: { kind: "aggregate", function: "count" },
@@ -226,18 +229,17 @@ it.live(
 );
 
 it.live("top fills vacancies, observes mixed directions and ties, and moves partitions", () => {
-  const top: SqlRelationNode = {
+  const top: RelationNode = {
     kind: "top-n",
     id: "top",
-    schema,
+
     input: "items",
     partitionBy: [ref("row", "group")],
     orderBy: [
       { expression: ref("row", "v"), direction: "descending" },
       { expression: ref("row", "id"), direction: "ascending" },
     ],
-    limit: { kind: "literal", value: 2 },
-    maximum: 2,
+    limit: 2,
   };
 
   const p = plan("top", [source("items"), top]);
@@ -334,69 +336,20 @@ it.live(
   },
 );
 
-it.live(
-  "checks unsupported plans, invalid top orders, cycles, facts, and input key mismatches",
-  () => {
-    const fact = source("facts");
-
-    if (fact.kind !== "source") throw new Error("source fixture");
-
-    const bad = plan("bad", [
-      { ...fact, mode: "facts" },
-      {
-        kind: "reduce-by-key",
-        id: "fold",
-        schema,
-        input: "facts",
-        key: ref("row", "id"),
-        reducer: schema,
-      },
-    ]);
-
+it.live("rejects incorrect source IDs and keys", () => {
+  return Effect.gen(function* () {
+    yield* migrate();
+    const engine = yield* makeEngine(shopPlans());
     expect(
-      Arr.join(
-        Arr.map(sqlPlanIssues(bad), (e) => e.message),
-        " ",
+      Exit.isFailure(
+        yield* Effect.exit(engine.process("p", [up("orders", "wrong", { orderId: "other" })])),
       ),
-    ).toContain("fact folds");
-
-    const badJoin = plan("badJoin", [
-      source("l"),
-      source("r"),
-      {
-        kind: "inner-join",
-        id: "j",
-        schema,
-        left: "l",
-        right: "r",
-        rightAlias: "right",
-        on: { kind: "literal", value: true },
-      },
-    ]);
-
-    expect(sqlPlanIssues(badJoin).length).toBeGreaterThan(0);
-
-    const cycle = plan("cycle", [
-      { kind: "filter", id: "f", input: "f", schema, predicate: { kind: "literal", value: true } },
-    ]);
-
-    expect(sqlPlanIssues(cycle).length).toBeGreaterThan(0);
-
-    return Effect.gen(function* () {
-      expect(Exit.isFailure(yield* Effect.exit(makeEngine({ bad })))).toBe(true);
-      yield* migrate();
-      const engine = yield* makeEngine(shopPlans());
-      expect(
-        Exit.isFailure(
-          yield* Effect.exit(engine.process("p", [up("orders", "wrong", { orderId: "other" })])),
-        ),
-      ).toBe(true);
-      expect(Exit.isFailure(yield* Effect.exit(engine.process("p", [del("unknown", "x")])))).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
-  },
-);
+    ).toBe(true);
+    expect(Exit.isFailure(yield* Effect.exit(engine.process("p", [del("unknown", "x")])))).toBe(
+      true,
+    );
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+});
 
 it("encodes numeric extremes, negative zero, strings and descending prefixes in portable order", () => {
   const values = [
@@ -426,10 +379,10 @@ it("encodes numeric extremes, negative zero, strings and descending prefixes in 
 it.live(
   "composes nonlinear operators over stored intermediates and shares their arrangements",
   () => {
-    const filtered: SqlRelationNode = {
+    const filtered: RelationNode = {
       kind: "filter",
       id: "positive",
-      schema,
+
       input: "orders",
       predicate: {
         kind: "binary",
@@ -439,10 +392,10 @@ it.live(
       },
     };
 
-    const projected: SqlRelationNode = {
+    const projected: RelationNode = {
       kind: "project",
       id: "p",
-      schema,
+
       input: "positive",
       fields: {
         orderId: ref("row", "orderId"),
@@ -451,10 +404,10 @@ it.live(
       },
     };
 
-    const joined: SqlRelationNode = {
+    const joined: RelationNode = {
       kind: "left-join",
       id: "j",
-      schema,
+
       left: "p",
       right: "customers",
       rightAlias: "customer",
@@ -466,10 +419,10 @@ it.live(
       },
     };
 
-    const grouped: SqlRelationNode = {
+    const grouped: RelationNode = {
       kind: "grouped-aggregate",
       id: "g",
-      schema,
+
       input: "j",
       groupBy: {
         tierId: {
@@ -485,17 +438,17 @@ it.live(
       },
     };
 
-    const best: SqlRelationNode = {
+    const best: RelationNode = {
       kind: "top-n",
       id: "t",
-      schema,
+
       input: "g",
       orderBy: [
         { expression: ref("row", "sum"), direction: "descending" },
         { expression: ref("row", "tierId"), direction: "ascending" },
       ],
-      maximum: 2,
-      limit: { kind: "literal", value: 2 },
+
+      limit: 2,
     };
 
     const prefix = [
@@ -561,13 +514,12 @@ it.live(
         kind: "top-n",
         id: "t",
         input: "items",
-        schema,
+
         orderBy: [
           { expression: ref("row", "text"), direction: "descending" },
           { expression: ref("row", "id"), direction: "ascending" },
         ],
-        limit: { kind: "literal", value: 3 },
-        maximum: 3,
+        limit: 3,
       },
     ]);
 
@@ -625,24 +577,24 @@ it.live(
   () => {
     const items = source("items");
 
-    const group: SqlRelationNode = {
+    const group: RelationNode = {
       kind: "grouped-aggregate",
       id: "g",
       input: "items",
-      schema,
+
       groupBy: { group: ref("row", "group") },
       aggregates: { minId: { kind: "aggregate", function: "min", expression: ref("row", "id") } },
     };
 
-    const top: SqlRelationNode = {
+    const top: RelationNode = {
       kind: "top-n",
       id: "t",
       input: "items",
-      schema,
+
       partitionBy: [ref("row", "group")],
       orderBy: [{ expression: ref("row", "id"), direction: "ascending" }],
-      maximum: 1,
-      limit: { kind: "literal", value: 1 },
+
+      limit: 1,
     };
 
     return Effect.gen(function* () {
@@ -722,7 +674,7 @@ it.live(
         {
           kind: "filter",
           id: "filtered",
-          schema,
+
           input: "items",
           predicate: {
             kind: "binary",
@@ -737,7 +689,7 @@ it.live(
         {
           kind: "grouped-aggregate",
           id: "extrema",
-          schema,
+
           input: "items",
           groupBy: { group: { kind: "literal", value: "all" } },
           aggregates: {
@@ -751,10 +703,10 @@ it.live(
         {
           kind: "top-n",
           id: "top",
-          schema,
+
           input: "items",
-          maximum: 2,
-          limit: { kind: "literal", value: 2 },
+
+          limit: 2,
           orderBy: [
             { expression: ref("row", "label"), direction: "ascending" },
             { expression: ref("row", "id"), direction: "ascending" },

@@ -1,6 +1,5 @@
-import type { Schema } from "effect";
+import type { Relation } from "./view.ts";
 import { fn, selectors, type TypedExpression } from "./expression.ts";
-import { from, parameter, source } from "./relation.ts";
 
 interface FixtureRow {
   readonly id: string;
@@ -31,20 +30,10 @@ void x.row.id.unwrap();
 // @ts-expect-error optional values must be unwrapped or defaulted before ordering
 x.row.assigneeId.asc();
 
-declare const fixtureSchema: Schema.Codec<FixtureRow>;
-
-const fixtureSource = source("fixture", {
-  schema: fixtureSchema,
-  schemaRef: { name: "FixtureRow", version: 1 },
-  partitionBy: x.row.id,
-  key: "id",
-  mode: "facts",
-});
+declare const fixtureRelation: Relation<FixtureRow>;
 
 // @ts-expect-error filters require boolean expressions
-from(fixtureSource).where(x.row.count);
-
-parameter("limit", fixtureSchema, { maximum: 10 });
+fixtureRelation.where((row) => row.count);
 
 const nested = selectors<{ readonly alias?: { readonly value: { readonly label?: string } } }>();
 
