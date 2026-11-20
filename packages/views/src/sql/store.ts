@@ -256,25 +256,6 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
   };
 }
 
-/** R1 had no ownership or sum-membership indexes. Preserve any open State snapshot. */
-export const legacyStore = (sql: SqlClient.SqlClient, namespace: string) => ({
-  accumulators: (node: string) =>
-    Effect.map(
-      sql<{
-        group_key: string;
-        value: string;
-      }>`SELECT group_key, value FROM streamsy_view_accumulators
-        WHERE namespace = ${namespace} AND node = ${node}`,
-      (rows) => new Map(Arr.map(rows, (row) => [row.group_key, decodeAcc(row.value)])),
-    ),
-  clearOperators: () =>
-    Effect.gen(function* () {
-      yield* sql`DELETE FROM streamsy_view_integrals WHERE namespace = ${namespace} AND relation <> '@snapshots'`;
-      yield* sql`DELETE FROM streamsy_view_arrangements WHERE namespace = ${namespace} AND arrangement NOT LIKE '@snapshot/%'`;
-      yield* sql`DELETE FROM streamsy_view_accumulators WHERE namespace = ${namespace}`;
-    }),
-});
-
 /** Circuit metadata is separate from the operator tables. */
 export const migrateCircuits = Effect.fn("ViewsSql.migrateCircuits")(function* (
   sql: SqlClient.SqlClient,

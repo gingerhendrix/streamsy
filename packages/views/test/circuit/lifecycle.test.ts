@@ -306,7 +306,7 @@ it.live("numeric wire keys, reset and snapshots across units follow State semant
   }).pipe(Effect.provide(numericHost));
 });
 
-it.live("filters a source integral across snapshots and resumes pre-R4 rows", () =>
+it.live("filters a source integral across snapshots", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* View.migrate(sql);
@@ -340,13 +340,10 @@ it.live("filters a source integral across snapshots and resumes pre-R4 rows", ()
     const integralKeys = store.rows("r0").pipe(Effect.map(Array.map((row) => row.key)));
     expect(yield* integralKeys).toEqual(["2", "3"]);
 
-    // R3 stored every source row with the same relation ID and plan hash.
-    yield* store.put("r0", [{ key: "1", row: { id: 1, n: 1 } }]);
     expect(
       yield* append([numericUpsert(1, 11), numericUpsert(2, 2), numericUpsert(3, 30)]),
     ).toEqual([1, 3]);
     expect(yield* integralKeys).toEqual(["1", "3"]);
-    yield* store.put("r0", [{ key: "2", row: { id: 2, n: 2 } }]);
     expect(yield* append([StreamAddress.snapshotStart(), numericUpsert(3, 31)])).toEqual([1, 3]);
     expect(yield* append([numericUpsert(4, 4), StreamAddress.snapshotEnd()])).toEqual([3]);
     expect(yield* integralKeys).toEqual(["3"]);

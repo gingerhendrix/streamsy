@@ -5,11 +5,10 @@ import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, SqlRelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
 import { accepts, aggregate, join, linear, top } from "./operators.ts";
-import { delta, difference, runtime, type Delta, type Deltas } from "./runtime.ts";
+import { delta, runtime, type Delta, type Deltas } from "./runtime.ts";
 import { checkData, dataFault, ViewDataFault } from "./data-fault.ts";
 import { rekey } from "./key-ownership.ts";
-import { legacyRelations } from "./reference.ts";
-import { legacyStore, storeFor, type Accumulator, type Entry, type Store } from "./store.ts";
+import { storeFor, type Store } from "./store.ts";
 
 export { ViewDataFault } from "./data-fault.ts";
 
@@ -146,8 +145,6 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
                   if (next !== undefined) retained = next;
                 }
 
-                // An old namespace can contain rejected rows. They contribute
-                // no filtered before image and are removed when touched.
                 const item = delta(d.key, previous, retained);
 
                 if (item) result.set(key, item);
@@ -195,16 +192,6 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
       return rt;
     });
 
-  const sumNodes = Arr.filter(
-    program.nodes,
-    (node) =>
-      node.kind === "grouped-aggregate" &&
-      Arr.some(Rec.values(node.aggregates), (a) => a.function === "sum"),
-  );
-
-  const needsLayout = program.checkedKeys.size > 0 || sumNodes.length > 0;
-  const layoutKey = "r2";
-
   const process = Effect.fn("ViewsSql.process")(function* (
     namespace: string,
     input: readonly StateChange[],
@@ -214,55 +201,11 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     const store = storeFor(sql, namespace);
 
     const run = Effect.gen(function* () {
-      let before: ReadonlyMap<string, readonly Entry[]> | undefined;
-      let changes = input;
-
-      if (needsLayout && !(yield* store.get("@layout", encodeRowKey(layoutKey)))) {
-        const sourceRows: Record<string, readonly Entry[]> = {};
-        const replay: StateChange[] = [];
-
-        for (const [sourceId, source] of sources) {
-          const rows = yield* store.rows(source.id);
-          sourceRows[sourceId] = rows;
-
-          for (const { key, row } of rows)
-            replay.push({ sourceId, kind: "upsert", key, value: row });
-        }
-
-        if (replay.length > 0) {
-          const legacy = legacyStore(sql, namespace);
-          const sums = new Map<string, ReadonlyMap<string, Accumulator>>();
-
-          for (const node of sumNodes) sums.set(node.id, yield* legacy.accumulators(node.id));
-          before = legacyRelations(program, sourceRows, sums, parameter);
-          yield* legacy.clearOperators();
-          changes = [...replay, ...input];
-        }
-
-        yield* store.put("@layout", [{ key: layoutKey, row: {} }]);
-      }
-
-      const rt = yield* evaluateUnit(store, changes, parameter);
+      const rt = yield* evaluateUnit(store, input, parameter);
       const output: OutputChange[] = [];
 
       for (const [view, relation] of Rec.toEntries(program.outputs)) {
-        let deltas = rt.changes.get(relation);
-
-        if (before) {
-          const current: Entry[] = [];
-
-          for (const d of deltas?.values() ?? [])
-            if (d.after !== undefined) current.push({ key: d.key, row: d.after });
-          const location = program.locations.get(relation);
-          deltas = difference(
-            before.get(relation) ?? [],
-            current,
-            dataFault({
-              view,
-              node: location?.node ?? relation,
-            }),
-          );
-        }
+        const deltas = rt.changes.get(relation);
 
         for (const d of deltas?.values() ?? [])
           output.push(

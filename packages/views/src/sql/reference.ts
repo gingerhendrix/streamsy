@@ -11,11 +11,10 @@ import type {
 } from "../ir/contracts.ts";
 import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
 import type { Evaluated, ExpressionScopes } from "../runtime/expression.ts";
-import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
+import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 
 import { dataFault } from "./data-fault.ts";
-import type { Program } from "./planner.ts";
-import type { Accumulator, Entry as StateRow } from "./store.ts";
+import type { Entry as StateRow } from "./store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
@@ -53,28 +52,9 @@ export function fullRecompute(
   };
 }
 
-/** Read the R1 before image from the stored inputs and the actual R1 sum results. */
-export function legacyRelations(
-  program: Program,
-  sources: FullRecomputeInput["sources"],
-  accumulators: ReadonlyMap<string, ReadonlyMap<string, Accumulator>>,
-  parameters: ExpressionScopes["parameter"],
-) {
-  return evaluateRelations(
-    program.nodes,
-    { sources, parameters },
-    {
-      location: (node) => program.locations.get(node) ?? { view: "*", node },
-      stateKeys: program.stateKeys,
-      accumulators,
-    },
-  ).relations;
-}
-
 interface EvaluationOptions {
   readonly location: (node: string) => { readonly view: string; readonly node: string };
   readonly stateKeys?: ReadonlySet<string>;
-  readonly accumulators?: ReadonlyMap<string, ReadonlyMap<string, Accumulator>>;
 }
 
 function evaluateRelations(
@@ -183,15 +163,7 @@ function evaluateRelations(
       }
 
       case "grouped-aggregate":
-        relations.set(
-          node.id,
-          recomputeAggregate(
-            node,
-            rows(relations, node.input),
-            parameters,
-            options.accumulators?.get(node.id),
-          ),
-        );
+        relations.set(node.id, recomputeAggregate(node, rows(relations, node.input), parameters));
         break;
       case "top-n": {
         const result = recomputeTop(node, rows(relations, node.input), parameters);
@@ -246,7 +218,6 @@ function recomputeAggregate(
   node: SqlGroupedAggregateNode,
   input: readonly StateRow[],
   parameters: NonNullable<ExpressionScopes["parameter"]>,
-  stored?: ReadonlyMap<string, Accumulator>,
 ): readonly StateRow[] {
   const groups = new Map<string, { key: RowKey; group: JsonObject; members: StateRow[] }>();
 
@@ -274,11 +245,6 @@ function recomputeAggregate(
       for (const [name, aggregate] of Rec.toEntries(node.aggregates)) {
         if (aggregate.function === "count") {
           row[name] = bucket.members.length;
-          continue;
-        }
-
-        if (aggregate.function === "sum" && stored !== undefined) {
-          row[name] = stored.get(canonicalJson(bucket.key))?.sums[name] ?? 0;
           continue;
         }
 

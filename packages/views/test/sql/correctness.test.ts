@@ -1,8 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Array, Effect, Option } from "effect";
+import { Array, Effect } from "effect";
 import { SqlClient } from "effect/sql";
-import { canonicalJson } from "../../src/runtime/key.ts";
 import { storeFor } from "../../src/sql/store.ts";
 import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
@@ -224,50 +223,6 @@ it.live(
         expect(changes[0]).toMatchObject({ value: { revenue: 0.1 } });
       }
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
-);
-
-it.live("rebuilds R1 owner state and corrects stored R1 totals from the input integrals", () =>
-  Effect.gen(function* () {
-    yield* migrate();
-    const totals = shopPlans().totals;
-
-    if (!totals) throw new Error("missing totals fixture");
-    const sql = yield* SqlClient.SqlClient;
-    const engine = yield* makeEngine({ byCustomer, totals });
-    const input = Array.findFirst(engine.program.nodes, (node) => node.kind === "source");
-
-    const aggregate = Array.findFirst(
-      engine.program.nodes,
-      (node) => node.kind === "grouped-aggregate",
-    );
-
-    if (Option.isNone(input) || Option.isNone(aggregate))
-      throw new Error("missing compiled fixture");
-    const b = order("o2", 0.2);
-    const store = storeFor(sql, "r1");
-    yield* store.put(input.value.id, [{ key: b.orderId, row: b }]);
-    yield* store.accumulatorPut(aggregate.value.id, canonicalJson(["c1"]), {
-      count: 1,
-      sums: { revenue: 0.20000000000000004 },
-    });
-
-    expect(
-      yield* engine.process("r1", [upsert(order("o1", 0.1))]).pipe(Effect.result),
-    ).toMatchObject({ _tag: "Failure", failure: { _tag: "ViewDataFault", key: "c1" } });
-    expect(yield* store.get("@layout", "s2:r2")).toBeUndefined();
-    expect(yield* engine.process("r1", [])).toEqual([
-      {
-        view: "totals",
-        key: ["c1"],
-        kind: "upsert",
-        value: { customerId: "c1", orders: 1, revenue: 0.2, largest: 0.2 },
-      },
-    ]);
-    expect(yield* engine.process("r1", [])).toEqual([]);
-    expect(
-      yield* engine.process("r1", [upsert(order("o1", 0.1))]).pipe(Effect.result),
-    ).toMatchObject({ _tag: "Failure", failure: { _tag: "ViewDataFault", view: "byCustomer" } });
-  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.live("reports source and aggregate data faults with the offending input key", () =>
