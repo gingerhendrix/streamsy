@@ -11,7 +11,8 @@ import { createOutput } from "../outputs.ts";
 import { TransactionGenerationOutputs } from "../per-generation.ts";
 import { detailsOf, load, remove, retire, settle, type Result } from "./internal.ts";
 
-import { withPrepare, withAccepted } from "./range.ts";
+import { inherit, withPrepare, withAccepted } from "./range.ts";
+import type { ProjectionKey } from "../checkpoint-store.ts";
 
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
@@ -133,3 +134,18 @@ export const transaction = withPrepare(
       }),
   }),
 ).pipe(withAccepted);
+
+/** Run additional removal work in the same transaction as checkpoint deletion. */
+export const transactionWithRemove = <R>(
+  afterRemove: (
+    key: ProjectionKey,
+    sql: SqlClient.SqlClient,
+  ) => Effect.Effect<void, ProjectionFault, R>,
+) =>
+  inherit(transaction, {
+    ...transaction,
+    remove: (key: ProjectionKey) =>
+      Transaction.use((tx) =>
+        tx.withTransaction(remove(key).pipe(Effect.andThen(() => afterRemove(key, tx.sql)))),
+      ),
+  });

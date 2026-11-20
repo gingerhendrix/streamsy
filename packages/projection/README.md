@@ -82,6 +82,10 @@ across producer outputs. Chain projections for sinks with different guarantees.
 outside the transaction. It runs at least once and passes its result to
 `process`. A retry can read new input and change `unit.key`.
 
+`Commit.transactionWithRemove((key, sql) => cleanup)` runs the cleanup Effect after
+checkpoint deletion inside the same transaction. Use the supplied transaction
+SQL client for cleanup so a failure rolls both operations back.
+
 `Commit.withCompensation(f)` calls `f(result, cause, unit)` after successful
 processing if the commit fails. It is also available as a `.pipe` combinator.
 For external delivery, use `Commit.atLeastOnce` with `unit.key` as the idempotency key,
