@@ -261,10 +261,7 @@ export const migrateCircuits = Effect.fn("ViewsSql.migrateCircuits")(function* (
   sql: SqlClient.SqlClient,
 ) {
   yield* sql`CREATE TABLE IF NOT EXISTS streamsy_view_circuits (
-    namespace TEXT PRIMARY KEY, projection_key TEXT NOT NULL,
-    generation INTEGER NOT NULL, plan_hash TEXT NOT NULL) WITHOUT ROWID`;
-  yield* sql`CREATE INDEX IF NOT EXISTS streamsy_view_circuits_key
-    ON streamsy_view_circuits (projection_key, generation)`;
+    namespace TEXT PRIMARY KEY, plan_hash TEXT NOT NULL) WITHOUT ROWID`;
 });
 
 export const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
@@ -278,11 +275,9 @@ export const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
   yield* sql`DELETE FROM streamsy_view_circuits WHERE namespace = ${namespace}`;
 });
 
-export const circuitState = (sql: SqlClient.SqlClient, projectionKey: string) => ({
-  generations: () => sql<{ namespace: string; generation: number; plan_hash: string }>`
-    SELECT namespace, generation, plan_hash FROM streamsy_view_circuits
-    WHERE projection_key = ${projectionKey}`,
-  save: (namespace: string, generation: number, hash: string) => sql`
-    INSERT INTO streamsy_view_circuits (namespace, projection_key, generation, plan_hash)
-    VALUES (${namespace}, ${projectionKey}, ${generation}, ${hash})`,
+export const circuitState = (sql: SqlClient.SqlClient, namespace: string) => ({
+  load: () => sql<{ plan_hash: string }>`
+    SELECT plan_hash FROM streamsy_view_circuits WHERE namespace = ${namespace}`,
+  save: (hash: string) => sql`
+    INSERT INTO streamsy_view_circuits (namespace, plan_hash) VALUES (${namespace}, ${hash})`,
 });

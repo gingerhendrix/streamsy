@@ -34,11 +34,12 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
   const orderRows = new Map<string, typeof Order.Type>();
   const customerRows = new Map<string, typeof Customer.Type>();
   const binding = circuit().at(params);
+  const outputParams = { ...params, generation: binding.generation };
   let offset: string | undefined;
   const units: { name: string; billing: Billing; outputChanges: number; txids: string[] }[] = [];
 
   const check = Effect.gen(function* () {
-    yield* Projection.run(Table.at(params));
+    yield* Projection.run(Table.at(outputParams));
     const sources: Record<string, { key: string; row: JsonObject }[]> = {};
     sources[JSON.stringify([Shop.key, "order"])] = Array.map([...orderRows], ([key, row]) => ({
       key,
@@ -57,7 +58,7 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
       });
 
       const expected = fullRecompute({ plan, sources });
-      const actual = (yield* Table.at(params).list(name)).rows;
+      const actual = (yield* Table.at(outputParams).list(name)).rows;
 
       const expectedRows = Array.sort(
         Array.map(expected.rows, ({ row }) => canonicalJson(row)),
@@ -83,7 +84,7 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
       if (result.units !== 1) throw new Error(`${name}: expected exactly one unit`);
 
       const batches = yield* output
-        .read(params, offset === undefined ? {} : { offset })
+        .read(outputParams, offset === undefined ? {} : { offset })
         .pipe(Stream.runCollect);
 
       const changes = Array.flatMap(batches, (batch) => batch.items);
@@ -164,7 +165,7 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
   );
   yield* run("100-changes");
   // No-op upserts advance the checkpoint but append nothing.
-  const before = yield* output.head(params);
+  const before = yield* output.head(outputParams);
   yield* input.append(
     params,
     DurableState.changes(
@@ -174,7 +175,7 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
     ),
   );
   const noop = yield* Projection.run(binding);
-  const after = yield* output.head(params);
+  const after = yield* output.head(outputParams);
 
   if (before.nextOffset !== after.nextOffset || noop.units !== 1)
     throw new Error("No-op output was appended");

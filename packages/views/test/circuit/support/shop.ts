@@ -1,5 +1,5 @@
 import { Streamsy } from "@streamsy/core";
-import { StateTable } from "@streamsy/projection";
+import { Projection, StateTable } from "@streamsy/projection";
 import { Schema } from "effect";
 import { View } from "../../../src/index.ts";
 
@@ -23,29 +23,42 @@ export class Shop extends Streamsy.state<Shop>()("ViewsTest/Shop", "shop/:shop",
   },
 }) {}
 
-export class Results extends Streamsy.state<Results>()("ViewsTest/Results", "results/:shop", {
-  params: { shop: Schema.String },
-  collections: {
-    goldOrder: {
-      schema: Schema.Struct({
-        orderId: Schema.String,
-        customerName: Schema.String,
-        total: Schema.Finite,
-      }),
-      key: "orderId",
+const resultsService = "ViewsTest/Results";
+
+export class Results extends Streamsy.state<Results>()(
+  resultsService,
+  "results/:shop/g/:generation",
+  {
+    params: { shop: Schema.String, generation: Schema.FiniteFromString },
+    collections: {
+      goldOrder: {
+        schema: Schema.Struct({
+          orderId: Schema.String,
+          customerName: Schema.String,
+          total: Schema.Finite,
+        }),
+        key: "orderId",
+      },
+      customerTotals: {
+        schema: Schema.Struct({
+          customerId: Schema.String,
+          orders: Schema.Finite,
+          revenue: Schema.Finite,
+          largest: Schema.Finite,
+        }),
+        key: "customerId",
+      },
+      topOrder: { schema: Order, key: "orderId" },
     },
-    customerTotals: {
-      schema: Schema.Struct({
-        customerId: Schema.String,
-        orders: Schema.Finite,
-        revenue: Schema.Finite,
-        largest: Schema.Finite,
-      }),
-      key: "customerId",
-    },
-    topOrder: { schema: Order, key: "orderId" },
   },
-}) {}
+) {}
+
+// The pinned reader resolves the same service at a fixed generation address.
+export const pinnedResults = (generation: number) =>
+  Streamsy.state<Results>()(resultsService, `results/:shop/g/${generation}`, {
+    params: Shop.paramCodecs,
+    collections: Results.collections,
+  });
 
 export const orders = View.from(Shop, "order");
 
@@ -75,19 +88,27 @@ export const topOrders = orders.top({
 
 export const views = { goldOrder: goldOrders, customerTotals, topOrder: topOrders };
 
+export const changedViews = { ...views, goldOrder: goldOrders.where((row) => row.total.gt(5)) };
+
 export const circuit = (generation = 1, changed = false, maxAffectedKeys?: number) =>
   View.circuit({
     id: "shop-views",
     params: { shop: Schema.String },
-    output: Results,
+    output: Projection.perGeneration(Results, "generation"),
     generation,
     maxAffectedKeys,
-    views: {
-      ...views,
-      goldOrder: changed ? goldOrders.where((row) => row.total.gt(100)) : goldOrders,
-    },
+    views: changed ? changedViews : views,
   });
 
 export const Table = StateTable.define(Results);
 
-export const group = Streamsy.group(Shop, Results);
+export class DownstreamRows extends Streamsy.state<DownstreamRows>()(
+  "ViewsTest/DownstreamRows",
+  "downstream/:shop/g/:generation",
+  {
+    params: Results.paramCodecs,
+    collections: { goldOrder: Results.collections.goldOrder },
+  },
+) {}
+
+export const group = Streamsy.group(Shop, Results, DownstreamRows);

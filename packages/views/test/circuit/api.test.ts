@@ -15,7 +15,13 @@ import {
 import { AlarmSlot } from "../../../serve/src/cloudflare/alarm.ts";
 import { makeWakeups } from "../../../serve/src/cloudflare/wakeup.ts";
 import { eventually } from "../../../projection/test/support/eventually.ts";
-import { PlanChanged, PlanCheckFailed, View, type TypedExpression } from "../../src/index.ts";
+import {
+  PlanChanged,
+  PlanCheckFailed,
+  View,
+  ViewFault,
+  type TypedExpression,
+} from "../../src/index.ts";
 import { parameterReference } from "../../src/expression.ts";
 
 const Item = Schema.Struct({ id: Schema.String, value: Schema.Struct({ score: Schema.Finite }) });
@@ -39,17 +45,21 @@ class Source extends Streamsy.state<Source>()("ViewsTest/ApiSource", "view-api/s
 
 class Results extends Streamsy.state<Results>()(
   "ViewsTest/ApiResults",
-  "view-api/results/:minimum",
+  "view-api/results/:minimum/g/:generation",
   {
-    params: { minimum: Schema.FiniteFromString },
+    params: { ...Source.paramCodecs, generation: Schema.FiniteFromString },
     collections: { row: { schema: Result, key: "id" } },
   },
 ) {}
 
-class Mirror extends Streamsy.state<Mirror>()("ViewsTest/ApiMirror", "view-api/mirror/:minimum", {
-  params: Results.paramCodecs,
-  collections: { row: { schema: Item, key: "id" } },
-}) {}
+class Mirror extends Streamsy.state<Mirror>()(
+  "ViewsTest/ApiMirror",
+  "view-api/mirror/:minimum/g/:generation",
+  {
+    params: Results.paramCodecs,
+    collections: { row: { schema: Item, key: "id" } },
+  },
+) {}
 
 const Table = StateTable.define(Results);
 
@@ -132,7 +142,11 @@ const buildResult = (name: string, version: number) => {
       }));
 };
 
-const definition = { id: "api-circuit", params: Results.paramCodecs, output: Results };
+const definition = {
+  id: "api-circuit",
+  params: Source.paramCodecs,
+  output: Projection.perGeneration(Results, "generation"),
+};
 
 const circuit = (name = "label", version = 1) =>
   View.circuit({
@@ -154,8 +168,8 @@ it("rejects invalid joins, aggregates, top bounds and parameter references from 
       Effect.try(() =>
         View.circuit({
           id: "api-invalid",
-          params: Mirror.paramCodecs,
-          output: Mirror,
+          params: Source.paramCodecs,
+          output: Projection.perGeneration(Mirror, "generation"),
           views: () => ({ row: invalid }),
         }),
       ),
@@ -184,26 +198,32 @@ it.effect("resolves missing function arguments and binds decoded parameters per 
 
     for (const minimum of [1, 3]) {
       yield* Projection.run(declaration.at({ minimum }));
-      yield* Projection.run(Table.at({ minimum }));
+      yield* Projection.run(Table.at({ minimum, generation: 1 }));
     }
 
     expect(
-      Array.map((yield* Table.at({ minimum: 1 }).list("row")).rows, ({ value }) => value),
+      Array.map(
+        (yield* Table.at({ minimum: 1, generation: 1 }).list("row")).rows,
+        ({ value }) => value,
+      ),
     ).toEqual([
       { id: "missing-alias", label: "no alias" },
       { id: "missing-leaf", label: "no label" },
       { id: "present", label: "original", original: "original" },
     ]);
     expect(
-      Array.map((yield* Table.at({ minimum: 3 }).list("row")).rows, ({ value }) => value),
+      Array.map(
+        (yield* Table.at({ minimum: 3, generation: 1 }).list("row")).rows,
+        ({ value }) => value,
+      ),
     ).toEqual([{ id: "present", label: "original", original: "original" }]);
     const sql = yield* SqlClient.SqlClient;
     expect(yield* sql`SELECT DISTINCT plan_hash FROM streamsy_view_circuits`).toHaveLength(1);
 
     yield* append([DurableState.remove("details", "present")]);
     yield* Projection.run(declaration.at({ minimum: 1 }));
-    yield* Projection.run(Table.at({ minimum: 1 }));
-    expect((yield* Table.at({ minimum: 1 }).get("row", "present")).value).toEqual({
+    yield* Projection.run(Table.at({ minimum: 1, generation: 1 }));
+    expect((yield* Table.at({ minimum: 1, generation: 1 }).get("row", "present")).value).toEqual({
       id: "present",
       label: "no alias",
     });
@@ -225,7 +245,7 @@ it.effect("stores the same plan hash for equivalent output and outputs declarati
     const multiple = View.circuit({
       id: definition.id,
       params: definition.params,
-      outputs: { output: Results },
+      outputs: { output: Projection.perGeneration(Results, "generation") },
       views: ({ minimum }) => ({ output: { row: buildResult("label", 1)(minimum) } }),
     });
 
@@ -243,7 +263,7 @@ it.effect("stores the same plan hash for equivalent output and outputs declarati
 const namedParameterCircuit = (name: "minimum" | "other") =>
   View.circuit({
     ...definition,
-    params: { ...Results.paramCodecs, other: Schema.FiniteFromString },
+    params: { ...Source.paramCodecs, other: Schema.FiniteFromString },
     views: (params) => ({ row: buildResult("label", 1)(params[name]) }),
   });
 
@@ -269,8 +289,11 @@ it.effect(
 
       const declaration = View.circuit({
         id: "api-multi",
-        params: Results.paramCodecs,
-        outputs: { selected: Results, original: Mirror },
+        params: Source.paramCodecs,
+        outputs: {
+          selected: Projection.perGeneration(Results, "generation"),
+          original: Projection.perGeneration(Mirror, "generation"),
+        },
         views: ({ minimum }) => ({
           selected: { row: buildResult("label", 1)(minimum) },
           original: { row: items },
@@ -280,72 +303,112 @@ it.effect(
 
       const params = { minimum: 1 };
       expect((yield* Projection.run(declaration.at(params))).wakeAt).toEqual(Option.some(100));
-      yield* Projection.run(Table.at(params));
-      yield* Projection.run(MirrorTable.at(params));
-      expect((yield* Table.at(params).list("row")).rows).toHaveLength(3);
-      expect((yield* MirrorTable.at(params).list("row")).rows).toHaveLength(4);
+      yield* Projection.run(Table.at({ ...params, generation: 1 }));
+      yield* Projection.run(MirrorTable.at({ ...params, generation: 1 }));
+      expect((yield* Table.at({ ...params, generation: 1 }).list("row")).rows).toHaveLength(3);
+      expect((yield* MirrorTable.at({ ...params, generation: 1 }).list("row")).rows).toHaveLength(
+        4,
+      );
       yield* TestClock.adjust(100);
       const wake = yield* Projection.run(declaration.at(params));
       expect(wake).toMatchObject({ units: 1, items: 0, wakeAt: Option.none() });
       expect((yield* Projection.run(declaration.at(params))).units).toBe(0);
 
       const mirror = yield* Mirror;
-      const tail = (yield* mirror.head(params)).nextOffset;
+      const tail = (yield* mirror.head({ ...params, generation: 1 })).nextOffset;
       const checkpoint = yield* Projection.read(declaration.at(params));
-      yield* (yield* Results).append(params, [], { close: true });
+      yield* (yield* Results).append({ ...params, generation: 1 }, [], { close: true });
       yield* append([DurableState.upsert("item", { id: "new", value: { score: 5 } })]);
       yield* Projection.run(declaration.at(params)).pipe(Effect.flip);
-      expect((yield* mirror.head(params)).nextOffset).toBe(tail);
+      expect((yield* mirror.head({ ...params, generation: 1 })).nextOffset).toBe(tail);
       expect(yield* Projection.read(declaration.at(params))).toEqual(checkpoint);
     }).pipe(Effect.provide(host)),
 );
 
-it.live("creates every output on the first unit and recreates a missing output on append", () =>
-  Effect.gen(function* () {
-    yield* seed;
-    const params = bindings[0]!;
+it.live(
+  "creates empty outputs on the first unit and fails if a later append finds one missing",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const params = bindings[0]!;
+      const outputParams = { ...params, generation: 1 };
 
-    const binding = View.circuit({
-      id: "api-empty-output",
-      params: Results.paramCodecs,
-      outputs: { selected: Results, original: Mirror },
-      views: ({ minimum }) => ({
-        selected: { row: buildResult("empty", 1)(minimum).where((row) => row.id.eq("new")) },
-        original: { row: items },
-      }),
-    }).at(params);
+      const binding = View.circuit({
+        id: "api-empty-output",
+        params: Source.paramCodecs,
+        outputs: {
+          selected: Projection.perGeneration(Results, "generation"),
+          original: Projection.perGeneration(Mirror, "generation"),
+        },
+        views: ({ minimum }) => ({
+          selected: { row: buildResult("empty", 1)(minimum).where((row) => row.id.eq("new")) },
+          original: { row: items },
+        }),
+      }).at(params);
 
-    yield* Projection.run(binding);
-    const selected = yield* Results;
-    const original = yield* Mirror;
-    expect((yield* selected.head(params)).nextOffset).toBe(ZERO_OFFSET);
-    yield* original.remove(params);
-    yield* append([DurableState.upsert("item", { id: "new", value: { score: 5 } })]);
-    expect((yield* Projection.run(binding)).units).toBe(1);
-    yield* Projection.run(Table.at(params));
-    yield* Projection.run(MirrorTable.at(params));
-    expect((yield* Table.at(params).get("row", "new")).value?.id).toBe("new");
-    expect((yield* MirrorTable.at(params).get("row", "new")).value?.id).toBe("new");
-  }).pipe(Effect.provide(host)),
+      yield* Projection.run(binding);
+      const selected = yield* Results;
+      const original = yield* Mirror;
+      expect((yield* selected.head(outputParams)).nextOffset).toBe(ZERO_OFFSET);
+      const checkpoint = yield* Projection.read(binding);
+      yield* original.remove(outputParams);
+      yield* append([DurableState.upsert("item", { id: "new", value: { score: 5 } })]);
+
+      expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
+        phase: "process",
+        reason: "invalid-output",
+      });
+      expect(yield* Projection.read(binding)).toEqual(checkpoint);
+      expect((yield* selected.head(outputParams)).nextOffset).toBe(ZERO_OFFSET);
+      expect(yield* original.head(outputParams).pipe(Effect.flip)).toMatchObject({
+        _tag: "StreamNotFound",
+      });
+    }).pipe(Effect.provide(host)),
 );
 
+it("rejects unwrapped State classes in both output forms", () => {
+  const single = { ...definition, output: Mirror, views: { row: items } };
+
+  const multiple = {
+    id: "unwrapped-multi",
+    params: definition.params,
+    outputs: { original: Mirror },
+    views: { original: { row: items } },
+  };
+
+  // @ts-expect-error an unwrapped output is invalid
+  expect(() => View.circuit(single)).toThrow(ViewFault);
+  // @ts-expect-error each output must be wrapped
+  expect(() => View.circuit(multiple)).toThrow(ViewFault);
+});
+
 it("rejects partial and duplicate output coverage at declaration time", () => {
-  expect(() => View.circuit({ ...definition, output: Source, views: { item: items } })).toThrow(
-    "Missing view for output collection",
-  );
+  expect(() =>
+    View.circuit({
+      ...definition,
+      output: Projection.perGeneration(Results, "generation"),
+      views: {},
+    }),
+  ).toThrow("Missing view for output collection");
   expect(() =>
     View.circuit({
       id: "partial",
-      params: Results.paramCodecs,
-      outputs: { a: Mirror, b: Results },
+      params: Source.paramCodecs,
+      outputs: {
+        a: Projection.perGeneration(Mirror, "generation"),
+        b: Projection.perGeneration(Results, "generation"),
+      },
       views: { a: { row: items }, b: {} },
     }),
   ).toThrow("Missing view for output collection");
   expect(() =>
     View.circuit({
       id: "duplicate",
-      params: Results.paramCodecs,
-      outputs: { a: Mirror, b: Mirror },
+      params: Source.paramCodecs,
+      outputs: {
+        a: Projection.perGeneration(Mirror, "generation"),
+        b: Projection.perGeneration(Mirror, "generation"),
+      },
       views: { a: { row: items }, b: { row: items } },
     }),
   ).toThrow("Duplicate output State class");
@@ -446,7 +509,7 @@ for (const alarm of [false, true]) {
         if (fault === "fan-out") {
           const output = yield* Results;
 
-          expect(yield* output.head({ minimum }).pipe(Effect.flip)).toMatchObject({
+          expect(yield* output.head({ minimum, generation: 1 }).pipe(Effect.flip)).toMatchObject({
             _tag: "StreamNotFound",
           });
         }

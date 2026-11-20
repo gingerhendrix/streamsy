@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
-import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Streamsy } from "@streamsy/core";
+import { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
+import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
 import {
   D2,
   filter,
@@ -13,8 +14,9 @@ import {
   type KeyValue,
   type MultiSet,
 } from "@tanstack/db-ivm";
-import { Array as Arr, Effect, Record as Rec, Schema } from "effect";
-import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { Array as Arr, Effect, Layer, Record as Rec, Schema } from "effect";
+import { SqlClient } from "effect/sql";
+import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";
@@ -37,8 +39,8 @@ const Customer = Schema.Struct({
   tier: Schema.optionalKey(Schema.String),
 });
 
-class Orders extends Streamsy.state<Orders>()("Conformance/Orders", "orders", {
-  params: {},
+class Orders extends Streamsy.state<Orders>()("Conformance/Orders", "orders/:seed", {
+  params: { seed: Schema.FiniteFromString },
   collections: { row: { schema: Order, key: "id" } },
 }) {}
 
@@ -46,6 +48,21 @@ class Customers extends Streamsy.state<Customers>()("Conformance/Customers", "cu
   params: {},
   collections: { row: { schema: Customer, key: "id" } },
 }) {}
+
+class TopOrders extends Streamsy.state<TopOrders>()(
+  "Conformance/TopOrders",
+  "top-orders/:seed/g/:generation",
+  {
+    params: { ...Orders.paramCodecs, generation: Schema.FiniteFromString },
+    collections: Orders.collections,
+  },
+) {}
+
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Orders, TopOrders), { client: { filename: ":memory:" } }),
+  ),
+);
 
 type Order = typeof Order.Type;
 
@@ -73,6 +90,20 @@ function seeded(seed: number) {
   };
 }
 
+function eligibleOrders(minimum: number, requireMemo: boolean) {
+  const positive = orderRelation.where((row) => row.amount.gt(minimum));
+
+  return requireMemo ? positive.where((row) => row.memo.isPresent()) : positive;
+}
+
+function topByRegion(eligible: typeof orderRelation, descending: boolean, limit: number) {
+  return eligible.top({
+    partitionBy: (row) => row.region,
+    by: (row) => [descending ? row.amount.desc() : row.amount.asc(), row.id.asc()],
+    limit,
+  });
+}
+
 function plansFor(
   minimum: number,
   requireMemo: boolean,
@@ -80,8 +111,7 @@ function plansFor(
   descending: boolean,
   limit: number,
 ) {
-  const positive = orderRelation.where((row) => row.amount.gt(minimum));
-  const eligible = requireMemo ? positive.where((row) => row.memo.isPresent()) : positive;
+  const eligible = eligibleOrders(minimum, requireMemo);
 
   const project = eligible.select((row) => ({
     id: row.id,
@@ -108,11 +138,7 @@ function plansFor(
       highest: View.max(row.amount),
     }));
 
-  const top = eligible.top({
-    partitionBy: (row) => row.region,
-    by: (row) => [descending ? row.amount.desc() : row.amount.asc(), row.id.asc()],
-    limit,
-  });
+  const top = topByRegion(eligible, descending, limit);
 
   return {
     selected: compilePlan("selected", {
@@ -234,10 +260,12 @@ function tanstack(
 }
 
 it.live(
-  "matches both oracles for seeded View.from plans and multi-change units",
+  "matches both oracles for seeded View.from plans and replays generation changes",
   () =>
     Effect.gen(function* () {
-      yield* migrate();
+      yield* View.migrate(yield* SqlClient.SqlClient);
+      const inputStream = yield* Orders;
+      const outputStream = yield* TopOrders;
 
       for (let seed = 1; seed <= 48; seed++) {
         const random = seeded(seed);
@@ -252,6 +280,38 @@ it.live(
         const orders = new Map<string, Order>();
         const customers = new Map<string, Customer>();
         const actual = new Map<string, string>();
+        const params = { seed };
+
+        const appendOrders = (
+          entries: Arr.NonEmptyReadonlyArray<DurableState.Entry<typeof Orders.collections>>,
+        ) => inputStream.append(params, DurableState.changes(Orders.at(params), {}, entries));
+
+        const lifecycleRandom = seeded(seed + 48);
+        let generation = 1;
+        let cutoff = minimum;
+
+        const build = () => {
+          const top = topByRegion(eligibleOrders(cutoff, requireMemo), descending, limit);
+
+          return {
+            plan: compilePlan("top", {
+              kind: "key",
+              input: top.expression,
+              key: keyExpression(TopOrders.collections.row.key),
+            }),
+            binding: View.circuit({
+              id: "seeded-top",
+              params: Orders.paramCodecs,
+              generation,
+              output: Projection.perGeneration(TopOrders, "generation"),
+              views: { row: top },
+            }).at(params),
+          };
+        };
+
+        let serving = build();
+        yield* inputStream.create(params);
+        yield* appendOrders([StreamAddress.reset()]);
 
         for (let unit = 0; unit < 30; unit++) {
           const input: StateChange[] = [];
@@ -326,8 +386,34 @@ it.live(
           const emitted = Arr.map(changes, (change) => identity(change.view, change.key));
           expect(emitted).toHaveLength(changed.length);
           expect(new Set(emitted)).toEqual(new Set(changed));
+
+          if (Arr.isReadonlyArrayNonEmpty(orderChanges))
+            yield* appendOrders(
+              Arr.map(orderChanges, ([row, weight]) =>
+                weight === 1 ? DurableState.upsert("row", row) : DurableState.remove("row", row.id),
+              ),
+            );
+
+          if (lifecycleRandom(8) === 0) {
+            generation++;
+            cutoff += lifecycleRandom(2) === 0 ? -0.125 : 0.125;
+            serving = build();
+          }
+
+          yield* Projection.run(serving.binding);
+
+          const materialized = DurableState.materialize(
+            DurableState.materialized(TopOrders),
+            (yield* outputStream.collect({ ...params, generation })).items,
+          );
+
+          const recomputed = fullRecompute({ plan: serving.plan, sources });
+          expect(
+            materialized.rows.row,
+            `circuit seed=${seed} unit=${unit} generation=${generation}`,
+          ).toEqual(new Map(Arr.map(recomputed.rows, ({ key, row }) => [key, row])));
         }
       }
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+    }).pipe(Effect.provide(host)),
   120_000,
 );

@@ -11,13 +11,19 @@ Projection.attach(declaration, { durable: true });
 
 void Projection.forget(declaration.at({ shop: "a" }));
 
+void Projection.retire(declaration, { shop: "a" }, { generation: 1 });
+
 // @ts-expect-error a binding requires the declared params
 void declaration.at({});
 
 // @ts-expect-error unknown input collection
 void View.from(Shop, "missing");
 
-const config = { id: "bad", params: Results.paramCodecs, output: Results };
+const config = {
+  id: "bad",
+  params: Shop.paramCodecs,
+  output: Projection.perGeneration(Results, "generation"),
+};
 
 const wrongRow = { ...config, views: { goldOrder: orders } };
 
@@ -36,14 +42,21 @@ const wrongKey = { ...config, views: { topOrder: missingKey } };
 // @ts-expect-error the output key is required by its row schema
 View.circuit(wrongKey);
 
+const conflictingGeneration = { ...config, params: Results.paramCodecs, views };
+
+// @ts-expect-error the generation-bound output parameter is not a circuit parameter
+View.circuit(conflictingGeneration);
+
+const missingShop = { ...config, params: {}, views: { topOrder: orders } };
+
 // @ts-expect-error State inputs and output require a matching shop parameter
-View.circuit({ id: "bad", params: {}, output: Results, views: { topOrder: orders } });
+View.circuit(missingShop);
 
 View.circuit({
   id: "bad",
   params: { shop: Schema.NumberFromString },
   // @ts-expect-error route parameter codecs must have the same decoded type
-  output: Results,
+  output: Projection.perGeneration(Results, "generation"),
   // @ts-expect-error input route parameter codecs must also agree
   views: { topOrder: orders },
 });
@@ -51,7 +64,7 @@ View.circuit({
 const retry = View.circuit({
   id: "with-retry",
   params: { shop: Schema.String },
-  output: Results,
+  output: Projection.perGeneration(Results, "generation"),
   views,
   retry: { maxAttempts: 3, onExhausted: () => Effect.fail("reported") },
 });

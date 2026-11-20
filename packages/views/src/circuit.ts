@@ -35,7 +35,9 @@ import type { JsonValue, RelationPlan } from "./ir/contracts.ts";
 
 type Views = Readonly<Record<string, Pick<Relation<unknown>, "expression" | "inputs" | "rowType">>>;
 
-type OutputMap = Readonly<Record<string, Input>>;
+type Output = Projection.PerGeneration<Input, string>;
+
+type OutputMap = Readonly<Record<string, Output>>;
 
 type ViewMap = Readonly<Record<string, Views>>;
 
@@ -49,9 +51,12 @@ type ViewInputs<V> = V extends Views ? InputOf<V[keyof V]> : never;
 
 type InputsOf<V extends ViewMap> = Readonly<Record<string, ViewInputs<V[keyof V]>>>;
 
-type CollectionsOf<O extends Input> = O["collections"];
+type OutputState<O extends Output> =
+  O extends Projection.PerGeneration<infer S, string> ? S : never;
 
-type Fits<V extends Views, O extends Input> = {
+type CollectionsOf<O extends Output> = OutputState<O>["collections"];
+
+type Fits<V extends Views, O extends Output> = {
   readonly [K in keyof V]: K extends keyof CollectionsOf<O>
     ? V[K] extends { readonly rowType?: infer Row }
       ? [Row] extends [CollectionsOf<O>[K]["schema"]["Type"]]
@@ -61,17 +66,26 @@ type Fits<V extends Views, O extends Input> = {
     : never;
 };
 
-type InvalidParams<C extends StreamRoute.ParamCodecs, I extends Input> = I extends Input
-  ? {
-      [K in keyof I["paramCodecs"]]: K extends keyof C
-        ? [StreamRoute.Params<I["paramCodecs"]>[K]] extends [StreamRoute.Params<C>[K]]
-          ? [StreamRoute.Params<C>[K]] extends [StreamRoute.Params<I["paramCodecs"]>[K]]
-            ? never
-            : K
-          : K
-        : K;
-    }[keyof I["paramCodecs"]]
-  : never;
+type InvalidStateParams<
+  C extends StreamRoute.ParamCodecs,
+  I extends Input,
+  Exempt extends string = never,
+> = {
+  [K in Exclude<keyof I["paramCodecs"], Exempt>]: K extends keyof C
+    ? [StreamRoute.Params<I["paramCodecs"]>[K]] extends [StreamRoute.Params<C>[K]]
+      ? [StreamRoute.Params<C>[K]] extends [StreamRoute.Params<I["paramCodecs"]>[K]]
+        ? never
+        : K
+      : K
+    : K;
+}[Exclude<keyof I["paramCodecs"], Exempt>];
+
+type InvalidParams<C extends StreamRoute.ParamCodecs, I extends Input | Output> =
+  I extends Projection.PerGeneration<infer S extends Input, infer N>
+    ? Extract<N, keyof C> | InvalidStateParams<C, S, N>
+    : I extends Input
+      ? InvalidStateParams<C, I>
+      : never;
 
 type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
   readonly [K in keyof V]: V[K]["inputs"] extends ReadonlyMap<
@@ -111,7 +125,7 @@ type Common<C extends StreamRoute.ParamCodecs, V extends ViewMap, O extends Outp
 type SingleDefinition<
   C extends StreamRoute.ParamCodecs,
   V extends Views,
-  O extends Input,
+  O extends Output,
   HE,
   HR,
 > = Common<C, { output: V }, { output: O }, HE, HR> & {
@@ -165,7 +179,7 @@ export class ViewFault extends Schema.TaggedError<ViewFault, { readonly brand: u
 ) {}
 
 /** Same projection binding and generation, independent of the unit's ranges. */
-function identity(key: ProjectionKey) {
+function namespaceOf(key: ProjectionKey) {
   const params = Record.fromEntries(
     Array.map(Array.sort(Record.keys(key.params), Order.String), (name) => [
       name,
@@ -175,7 +189,7 @@ function identity(key: ProjectionKey) {
 
   const projectionKey = JSON.stringify([key.id, key.version, params]);
 
-  return { projectionKey, namespace: JSON.stringify([projectionKey, key.generation]) };
+  return JSON.stringify([projectionKey, key.generation]);
 }
 
 /** Create operator tables at host startup, like StateTable.migrate(sql). */
@@ -193,38 +207,25 @@ const guard = Effect.fn("View.guard")(function* (
   key: ProjectionKey,
   hash: string,
 ) {
-  const { projectionKey, namespace } = identity(key);
-  const state = circuitState(sql, projectionKey);
-  const generations = yield* state.generations();
-  let firstUnit = true;
+  const namespace = namespaceOf(key);
+  const state = circuitState(sql, namespace);
+  const [previous] = yield* state.load();
 
-  for (const previous of generations) {
-    if (previous.generation > key.generation)
-      return yield* new ViewFault({ message: "A newer circuit generation has already run" });
+  if (previous === undefined) yield* state.save(hash);
+  else if (previous.plan_hash !== hash)
+    return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
 
-    if (previous.namespace === namespace) {
-      if (previous.plan_hash !== hash)
-        return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
-      firstUnit = false;
-    }
-  }
-
-  for (const previous of generations)
-    if (previous.generation < key.generation) yield* clearNamespace(sql, previous.namespace);
-
-  if (firstUnit) yield* state.save(namespace, key.generation, hash);
-
-  return { namespace, firstUnit };
+  return namespace;
 });
 
-const commit = Commit.transactionWithRemove((key, sql) =>
-  clearNamespace(sql, identity(key).namespace).pipe(
+const commit = Commit.transactionWithCleanup((key, sql) =>
+  clearNamespace(sql, namespaceOf(key)).pipe(
     Effect.mapError(
       (cause) =>
         new ProjectionFault({
           phase: "checkpoint",
           reason: "storage-failure",
-          message: "Cannot forget circuit state",
+          message: "Cannot clear circuit state",
           cause,
         }),
     ),
@@ -242,7 +243,11 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
     batch: Slices<CircuitBinding<V, O>["inputs"]>,
     unit: Unit,
     encoded?: string,
-  ) => Effect.Effect<void | WakeAt, CircuitError, SqlClient.SqlClient | O[keyof O]["Identifier"]>;
+  ) => Effect.Effect<
+    void | WakeAt,
+    CircuitError,
+    SqlClient.SqlClient | OutputState<O[keyof O]>["Identifier"]
+  >;
 }
 
 export interface CircuitDeclaration<
@@ -257,7 +262,7 @@ export interface CircuitDeclaration<
 export function circuit<
   C extends StreamRoute.ParamCodecs,
   const V extends Views,
-  O extends Input,
+  O extends Output,
   HE = never,
   HR = never,
 >(
@@ -276,7 +281,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
   definition: Common<C, ViewMap, OutputMap, HE, HR> &
     (
       | {
-          readonly output: Input;
+          readonly output: Output;
           readonly views: WithParameters<C, Views>;
           readonly outputs?: never;
         }
@@ -313,10 +318,20 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
 
   const owned = new Set<string>();
 
-  for (const route of Array.sort(Record.keys(routedOutputs), Order.String)) {
-    const state = routedOutputs[route];
+  const checkParams = (state: Input, generationParam?: string) => {
+    for (const name of Record.keys(state.paramCodecs))
+      if (name !== generationParam && !Record.has(definition.params, name))
+        throw new RangeError(`Missing circuit parameter ${name}`);
+  };
 
-    if (state === undefined) throw new RangeError(`Missing output State class for ${route}`);
+  for (const route of Array.sort(Record.keys(routedOutputs), Order.String)) {
+    const output = routedOutputs[route];
+
+    if (output === undefined || !Projection.isPerGeneration(output))
+      throw new ViewFault({ message: `Circuit output ${route} requires Projection.perGeneration` });
+
+    const { route: state, param } = Projection.generationBinding(output);
+    checkParams(state, param);
 
     if (owned.has(state.key)) throw new RangeError(`Duplicate output State class ${state.key}`);
     owned.add(state.key);
@@ -360,11 +375,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
 
   for (const { state } of sources.values()) inputs[state.key] = state;
 
-  for (const state of [...Record.values(inputs), ...Record.values(routedOutputs)]) {
-    for (const name of Record.keys(state.paramCodecs))
-      if (!Record.has(definition.params, name))
-        throw new RangeError(`Missing circuit parameter ${name}`);
-  }
+  for (const state of Record.values(inputs)) checkParams(state);
 
   const engine = Effect.runSync(makeEngine(plans, true, definition.maxAffectedKeys));
   const hash = circuitPlanHash(plans);
@@ -409,7 +420,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         for (const [name, codec] of Record.toEntries(definition.params))
           boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
 
-        const { namespace, firstUnit } = yield* guard(
+        const namespace = yield* guard(
           sql,
           {
             id: unit.projectionId,
@@ -482,7 +493,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         for (const [route, output] of Record.toEntries(outputs)) {
           const entries = entriesByRoute.get(route) ?? [];
 
-          if (!firstUnit && entries.length === 0) continue;
+          if (!Array.isReadonlyArrayNonEmpty(entries)) continue;
 
           const service: Effect.Effect<
             Effect.Success<typeof output.stream>,
@@ -491,23 +502,22 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           > = output.stream;
 
           const { wire } = yield* service;
-          const create = () => wire.create(output.id, { contentType: output.contentType });
-
-          // The guard row, every output create, and the checkpoint commit together.
-          if (firstUnit) yield* create();
-
-          if (Array.isReadonlyArrayNonEmpty(entries)) {
-            const events = DurableState.changes(output, {}, entries);
-
-            const append = Streams.append(output, events).pipe(
-              Effect.provideService(StreamsWriter, wire),
-            );
-            // An owner can still delete a previously created stream explicitly.
-
-            yield* append.pipe(
-              Effect.catchTag("StreamNotFound", () => Effect.andThen(create(), append)),
-            );
-          }
+          yield* Streams.append(output, DurableState.changes(output, {}, entries)).pipe(
+            Effect.provideService(StreamsWriter, wire),
+            Effect.mapError(
+              (cause) =>
+                new ProjectionFault({
+                  phase: "process",
+                  reason: isStreamsFault(cause)
+                    ? "storage-failure"
+                    : Predicate.isTagged(cause, "StreamBusy")
+                      ? "output-busy"
+                      : "invalid-output",
+                  message: `Cannot append circuit output ${output.id}`,
+                  cause,
+                }),
+            ),
+          );
         }
 
         return definition.wakeAt?.(unit);
@@ -523,23 +533,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           SchemaError: (cause) => new ViewFault({ message: cause.message }),
           SqlEngineFault: (cause) => new ViewFault({ message: "Circuit operator failed", cause }),
         }),
-        Effect.mapError((cause) =>
-          Schema.is(PlanChanged)(cause) ||
-          Schema.is(ViewFault)(cause) ||
-          Schema.is(ViewDataFault)(cause) ||
-          Schema.is(ProjectionFault)(cause)
-            ? cause
-            : new ProjectionFault({
-                phase: "process",
-                reason: isStreamsFault(cause)
-                  ? "storage-failure"
-                  : Predicate.isTagged(cause, "StreamBusy")
-                    ? "output-busy"
-                    : "invalid-output",
-                message: "Cannot append circuit output",
-                cause,
-              }),
-        ),
       ),
   });
 }
