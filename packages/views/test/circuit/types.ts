@@ -11,8 +11,6 @@ Projection.attach(declaration, { durable: true });
 
 void Projection.forget(declaration.at({ shop: "a" }));
 
-void View.forget(declaration.at({ shop: "a" }));
-
 // @ts-expect-error a binding requires the declared params
 void declaration.at({});
 

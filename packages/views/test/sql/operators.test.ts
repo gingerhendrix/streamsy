@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Array as Arr, Effect, Exit, Record as Rec, Schema } from "effect";
+import { Array as Arr, Effect, Exit, Order, Record as Rec, Schema } from "effect";
 import { SqlClient, Statement } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
 import { View } from "../../src/index.ts";
@@ -8,7 +8,7 @@ import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import type { JsonObject, RelationNode } from "../../src/ir/contracts.ts";
-import { compareOrdered, scalarKey } from "../../src/sql/encoding.ts";
+import { scalarKey } from "../../src/sql/encoding.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import { identity, materialize } from "./support.ts";
@@ -363,14 +363,12 @@ it("encodes numeric extremes, negative zero, strings and descending prefixes in 
     Number.MAX_VALUE,
   ];
 
-  for (let i = 0; i < values.length - 1; i++) {
-    expect(compareOrdered(values[i] ?? 0, values[i + 1] ?? 0)).toBeLessThanOrEqual(0);
-  }
-
+  const encoded = Arr.map(values, scalarKey);
+  expect(Arr.sort(encoded, Order.String)).toEqual(encoded);
   expect(scalarKey(-0)).toBe(scalarKey(0));
-  expect(compareOrdered("a", "aa")).toBe(-1);
-  expect(compareOrdered("A", "a")).toBe(-1);
-  expect(compareOrdered("é", "😀")).toBe(-1);
+
+  const strings = Arr.map(["A", "a", "aa", "é", "😀"], scalarKey);
+  expect(Arr.sort(strings, Order.String)).toEqual(strings);
   expect(() => scalarKey(null)).toThrow();
   expect(encodeRowKey(["a", "bc"])).not.toBe(encodeRowKey(["ab", "c"]));
   expect(Rec.keys(shopPlans()).length).toBe(4);

@@ -120,13 +120,13 @@ The circuit uses `Commit.transactionWithRemove` to delete operator state in the 
 
 ## Plan identity, generations and forget
 
-Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `View.PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codecs are not executable code in the plan hash; a codec change also requires a new generation.
+Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codecs are not executable code in the plan hash; a codec change also requires a new generation.
 
 Raise `generation` to rebuild from retained input history. On the first successful unit of the new generation, the circuit removes older operator namespaces for the same id, version and params. A later unit from an older generation fails while the newer metadata exists. Old projection checkpoint records are left to Streamsy. Stop old runners before starting the replacement.
 
 A rebuild appends to the existing output stream. Delete or reset the outputs first when the new plan can remove previously produced keys. This follows the normal projection lifecycle; creating a declaration alone does not touch SQL or streams.
 
-`Projection.forget(bound)` removes its checkpoint and every operator row of its namespace in one owner transaction. `View.forget` is the same function. Stop all runners for that binding first. Forget does not remove output streams or their `StateTable` rows. A subsequent run starts from zero input offsets with empty operator state. Use a new generation for code changes rather than forgetting a running binding.
+`Projection.forget(bound)` removes its checkpoint and every operator row of its namespace in one owner transaction. Stop all runners for that binding first. Forget does not remove output streams or their `StateTable` rows. A subsequent run starts from zero input offsets with empty operator state. Use a new generation for code changes rather than forgetting a running binding.
 
 ## Ordering and limits
 
@@ -140,6 +140,6 @@ Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's di
 
 Unsupported operators and features include `avg`, `distinct`, fact folds, closure, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Retained State streams are the source of truth for rebuilding SQL state.
 
-## Lower-level API and migration from 0.4
+## Package exports
 
 The package root exports the `View` namespace, fault classes and types. Internal compiler and SQL modules are available to the package's own tests.

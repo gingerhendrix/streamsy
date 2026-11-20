@@ -1,27 +1,8 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
-import {
-  evaluate,
-  isMissing,
-  type Evaluated,
-  type ExpressionScopes,
-} from "../runtime/expression.ts";
+import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import type { Entry } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */
-/** SQL-tier strings use UTF-16 code-unit order, independent of host locale. */
-export function compareOrdered(left: Evaluated, right: Evaluated): number {
-  if (isMissing(left)) return isMissing(right) ? 0 : 1;
-
-  if (isMissing(right)) return -1;
-
-  if (typeof left !== typeof right) throw new TypeError("order requires scalars of one type");
-
-  const a = scalarKey(left),
-    b = scalarKey(right);
-
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 /** Self-delimiting hex keys preserve scalar order under SQLite BINARY collation. */
 export function scalarKey(value: JsonValue): string {
   if (typeof value === "number" && Number.isFinite(value)) {

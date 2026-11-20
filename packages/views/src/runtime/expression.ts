@@ -1,10 +1,4 @@
-import {
-  Invoke,
-  isJsonObject,
-  type Expression,
-  type JsonObject,
-  type JsonValue,
-} from "../ir/contracts.ts";
+import { Invoke, isJsonObject, type Expression, type JsonValue } from "../ir/contracts.ts";
 import { Array as Arr, Predicate, Record as Rec, Schema } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 
@@ -220,18 +214,10 @@ function equal(left: JsonValue, right: JsonValue): boolean {
   );
 }
 
-export function compareValues(left: Evaluated, right: Evaluated): number {
-  if (left === Missing) return right === Missing ? 0 : 1;
-
-  if (right === Missing) return -1;
-
-  return compareScalar(left, right);
-}
-
-function compareScalar(left: JsonValue, right: JsonValue, expression?: Expression): number {
+function compareScalar(left: JsonValue, right: JsonValue, expression: Expression): number {
   if (typeof left === "number" && typeof right === "number") {
     if (!Number.isFinite(left) || !Number.isFinite(right))
-      throw new ExpressionFault(expression ?? literalNull, "comparison requires finite numbers");
+      throw new ExpressionFault(expression, "comparison requires finite numbers");
 
     return left - right;
   }
@@ -240,16 +226,5 @@ function compareScalar(left: JsonValue, right: JsonValue, expression?: Expressio
     return left < right ? -1 : left > right ? 1 : 0;
 
   if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
-  throw new ExpressionFault(
-    expression ?? literalNull,
-    "values are not comparable scalars of one type",
-  );
-}
-
-const literalNull: Expression = { kind: "literal", value: null };
-
-export function requireObject(value: JsonValue, context: string): JsonObject {
-  if (!isJsonObject(value)) throw new TypeError(`${context} requires a JSON object row`);
-
-  return value;
+  throw new ExpressionFault(expression, "values are not comparable scalars of one type");
 }

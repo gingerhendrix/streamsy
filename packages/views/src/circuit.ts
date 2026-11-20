@@ -231,9 +231,6 @@ const commit = Commit.transactionWithRemove((key, sql) =>
   ),
 );
 
-/** Alias for Projection.forget; circuit commits also remove operator state. */
-export const forget = Projection.forget;
-
 export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends ProjectionKey {
   readonly inputs: { readonly [name: string]: ReturnType<InputsOf<V>[string]["at"]> };
   readonly state: undefined;

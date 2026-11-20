@@ -10,7 +10,7 @@ import {
   StateTable,
   Transaction,
 } from "@streamsy/projection";
-import { View } from "../../src/index.ts";
+import { PlanChanged, View, ViewFault } from "../../src/index.ts";
 import { storeFor } from "../../src/sql/store.ts";
 import { host } from "./support/host.ts";
 import { Shop, Results, Table, circuit, views } from "./support/shop.ts";
@@ -72,7 +72,7 @@ it.live("a changed plan faults without changing SQL, output or checkpoint", () =
     const head = yield* (yield* Results).head(params);
     yield* update;
     const fault = yield* Projection.run(circuit(1, true).at(params)).pipe(Effect.flip);
-    expect(fault).toBeInstanceOf(View.PlanChanged);
+    expect(fault).toBeInstanceOf(PlanChanged);
     expect(yield* state).toEqual(before);
     expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
     expect((yield* (yield* Results).head(params)).nextOffset).toBe(head.nextOffset);
@@ -142,7 +142,7 @@ it.live("new generations rebuild and remove the old operator namespace", () => {
     expect((yield* Table.at(params).get("customerTotals", "c1")).value?.revenue).toBe(10);
     yield* update;
     const fault = yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
-    expect(fault).toBeInstanceOf(View.ViewFault);
+    expect(fault).toBeInstanceOf(ViewFault);
   }).pipe(Effect.provide(host));
 });
 
@@ -174,7 +174,7 @@ it.live("forget rolls back its checkpoint deletion when state cleanup fails", ()
     const checkpoint = yield* Projection.read(circuit().at(params));
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TRIGGER fail_cleanup BEFORE DELETE ON streamsy_view_circuits BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END`;
-    yield* View.forget(circuit().at(params)).pipe(Effect.flip);
+    yield* Projection.forget(circuit().at(params)).pipe(Effect.flip);
     expect(yield* state).toEqual(before);
     expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
   }).pipe(Effect.provide(host));

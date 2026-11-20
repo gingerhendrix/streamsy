@@ -187,8 +187,6 @@ export { field, fn, literal } from "./expression.ts";
 
 export const { key } = selectors<never>();
 
-export { circuit, forget, migrate, PlanChanged, ViewFault } from "./circuit.ts";
-
-export { ViewDataFault as DataFault } from "./sql/data-fault.ts";
+export { circuit, migrate } from "./circuit.ts";
 
 export type { CircuitDeclaration, CircuitBinding } from "./circuit.ts";

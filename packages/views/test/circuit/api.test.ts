@@ -15,7 +15,7 @@ import {
 import { AlarmSlot } from "../../../serve/src/cloudflare/alarm.ts";
 import { makeWakeups } from "../../../serve/src/cloudflare/wakeup.ts";
 import { eventually } from "../../../projection/test/support/eventually.ts";
-import { PlanCheckFailed, View, type TypedExpression } from "../../src/index.ts";
+import { PlanChanged, PlanCheckFailed, View, type TypedExpression } from "../../src/index.ts";
 import { parameterReference } from "../../src/expression.ts";
 
 const Item = Schema.Struct({ id: Schema.String, value: Schema.Struct({ score: Schema.Finite }) });
@@ -210,10 +210,10 @@ it.effect("resolves missing function arguments and binds decoded parameters per 
 
     for (const changed of [circuit("new-name"), circuit("label", 2)]) {
       const fault = yield* Projection.run(changed.at({ minimum: 3 })).pipe(Effect.flip);
-      expect(fault).toBeInstanceOf(View.PlanChanged);
+      expect(fault).toBeInstanceOf(PlanChanged);
       expect(fault).toMatchObject({ stored: expect.any(String), requested: expect.any(String) });
 
-      if (Schema.is(View.PlanChanged)(fault)) expect(fault.stored).not.toBe(fault.requested);
+      if (Schema.is(PlanChanged)(fault)) expect(fault.stored).not.toBe(fault.requested);
     }
   }).pipe(Effect.provide(host)),
 );
@@ -234,7 +234,7 @@ it.effect("parameter reference names change the plan hash", () =>
     yield* append([DurableState.remove("details", "present")]);
     expect(
       yield* Projection.run(namedParameterCircuit("other").at(params)).pipe(Effect.flip),
-    ).toBeInstanceOf(View.PlanChanged);
+    ).toBeInstanceOf(PlanChanged);
   }).pipe(Effect.provide(host)),
 );
 
