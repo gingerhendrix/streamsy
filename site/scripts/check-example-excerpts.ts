@@ -45,6 +45,25 @@ export const pageExamples = new Map<string, readonly [string, ...Array<string>]>
       "examples/issue-tracker-demo-contract",
     ],
   ],
+  [
+    "durable-response/index",
+    [
+      "examples/durable-response",
+      "examples/durable-response-aisdk",
+      "examples/durable-response-tanstack",
+    ],
+  ],
+  [
+    "durable-response/effect",
+    [
+      "examples/durable-response",
+      "examples/durable-response-contract",
+      "examples/durable-response-atom",
+      "examples/durable-response-foldkit",
+    ],
+  ],
+  ["durable-response/ai-sdk", ["examples/durable-response-aisdk"]],
+  ["durable-response/tanstack-ai", ["examples/durable-response-tanstack"]],
   ["bugsy", ["examples/bugsy"]],
   ["memory-server", ["examples/memory-server"]],
   ["command-stream", ["examples/command-stream"]],
