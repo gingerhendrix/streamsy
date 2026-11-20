@@ -15,6 +15,10 @@ export interface Arrangement {
 export interface Program {
   readonly nodes: readonly SqlRelationNode[];
   readonly outputs: Readonly<Record<string, string>>;
+  readonly pushedFilters: ReadonlyMap<
+    string,
+    readonly Extract<SqlRelationNode, { kind: "filter" }>[]
+  >;
   readonly arrangements: readonly Arrangement[];
   readonly stored: ReadonlySet<string>;
   readonly locations: ReadonlyMap<string, { readonly view: string; readonly node: string }>;
@@ -202,6 +206,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
   const arrangements: Arrangement[] = [];
   const stored = new Set<string>();
   const checkedKeys = new Set<string>();
+  const pushedFilters = new Map<string, Extract<SqlRelationNode, { kind: "filter" }>[]>();
   // Only record expressions that reproduce a relation's existing key from its row.
   const keyFields = new Map<string, { expression: Expression; stateKey: boolean }>();
 
@@ -229,9 +234,20 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
   for (const node of nodes) {
     if (node.kind === "source") {
       stored.add(node.id);
+      pushedFilters.set(node.id, []);
 
       if (Arr.every(scopes(node.key), (scope) => scope === "row"))
         keyFields.set(node.id, { expression: node.key, stateKey: node.stateKey === true });
+    }
+
+    // If anything can observe the unfiltered source, keep the full integral.
+    // Otherwise the source only needs the union of its direct filters.
+    for (const input of dependencies(node)) {
+      const filters = pushedFilters.get(input);
+
+      if (filters === undefined) continue;
+      if (node.kind === "filter") filters.push(node);
+      else pushedFilters.delete(input);
     }
 
     if (node.kind === "filter" || node.kind === "top-n") {
@@ -315,9 +331,12 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     }
   }
 
+  for (const output of Rec.values(outputs)) pushedFilters.delete(output);
+
   return {
     nodes,
     outputs,
+    pushedFilters,
     arrangements,
     stored,
     locations,

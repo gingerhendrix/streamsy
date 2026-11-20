@@ -5,6 +5,7 @@ import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/co
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
 import { View } from "../../src/index.ts";
+import { storeFor } from "../../src/sql/store.ts";
 import { host } from "./support/host.ts";
 import { Shop, Results, Table, circuit, views } from "./support/shop.ts";
 
@@ -251,6 +252,62 @@ it.live("numeric wire keys, reset and snapshots across units follow State semant
     expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
   }).pipe(Effect.provide(local));
 });
+
+it.live("filters a source integral across snapshots and resumes pre-R4 rows", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* StateTable.migrate(sql);
+    const input = yield* Numeric;
+    yield* input.create({});
+    const binding = View.circuit({
+      id: "filtered-numeric",
+      params: {},
+      output: NumericResult,
+      views: { row: View.from(Numeric, "row").where((row) => row.n.gt(10)) },
+    }).at({});
+
+    const append = (
+      entries: Array.NonEmptyReadonlyArray<DurableState.Entry<typeof Numeric.collections>>,
+    ) =>
+      Effect.gen(function* () {
+        yield* input.append({}, DurableState.changes(Numeric.at({}), {}, entries));
+        yield* Projection.run(binding);
+        yield* Projection.run(NumericTable.at({}));
+
+        return Array.map((yield* NumericTable.at({}).list("row")).rows, ({ value }) => value.id);
+      });
+    const upsert = (id: number, n: number) => DurableState.upsert("row", { id, n });
+
+    expect(yield* append([upsert(1, 1), upsert(2, 20), upsert(3, 30)])).toEqual([2, 3]);
+    const metadata = (yield* state).circuits[0]!;
+    const store = storeFor(sql, metadata.namespace);
+    const integralKeys = store.rows("r0").pipe(Effect.map(Array.map((row) => row.key)));
+    expect(yield* integralKeys).toEqual(["2", "3"]);
+
+    // R3 stored every source row with the same relation ID and plan hash.
+    yield* store.put("r0", [{ key: "1", row: { id: 1, n: 1 } }]);
+    expect(yield* append([upsert(1, 11), upsert(2, 2), upsert(3, 30)])).toEqual([1, 3]);
+    expect(yield* integralKeys).toEqual(["1", "3"]);
+    yield* store.put("r0", [{ key: "2", row: { id: 2, n: 2 } }]);
+    expect(yield* append([StreamAddress.snapshotStart(), upsert(3, 31)])).toEqual([1, 3]);
+    expect(yield* append([upsert(4, 4), StreamAddress.snapshotEnd()])).toEqual([3]);
+    expect(yield* integralKeys).toEqual(["3"]);
+    expect(yield* append([StreamAddress.reset(), upsert(5, 50), upsert(6, 6)])).toEqual([5]);
+    expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
+    expect(yield* integralKeys).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+        Layer.provideMerge(
+          BunStorage.layer(Streamsy.group(Numeric, NumericResult), {
+            client: { filename: ":memory:" },
+          }),
+        ),
+      ),
+    ),
+  ),
+);
 
 it.live("an attached circuit advances through the normal Projection registry", () => {
   const migrate = Layer.effectDiscard(

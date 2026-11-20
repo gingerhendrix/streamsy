@@ -21,23 +21,33 @@ import type { Accumulator, Entry, Store } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening -- Mutable aggregate fields and sums use the IR's open dictionary contract; Expression results are checked at the operator boundary. */
 
+export function accepts(
+  node: Extract<SqlRelationNode, { kind: "filter" }>,
+  key: RowKey,
+  row: JsonObject,
+  fault: DataFault,
+  parameter: ExpressionScopes["parameter"],
+): boolean {
+  return checkData(fault, key, () => {
+    const accepted = evaluate(node.predicate, { row, key, parameter });
+
+    if (typeof accepted !== "boolean") throw fault(key, "filter predicate must be Boolean");
+
+    return accepted;
+  });
+}
+
 export function linear(
   node: Extract<SqlRelationNode, { kind: "filter" | "project" }>,
   input: Deltas,
   fault: DataFault,
   parameter: ExpressionScopes["parameter"],
 ): Deltas {
-  const map = (entry: Entry): Entry | undefined =>
-    checkData(fault, entry.key, () => {
-      if (node.kind === "filter") {
-        const accepted = evaluate(node.predicate, { row: entry.row, key: entry.key, parameter });
+  const map = (entry: Entry): Entry | undefined => {
+    if (node.kind === "filter")
+      return accepts(node, entry.key, entry.row, fault, parameter) ? entry : undefined;
 
-        if (typeof accepted !== "boolean")
-          throw fault(entry.key, "filter predicate must be Boolean");
-
-        return accepted ? entry : undefined;
-      }
-
+    return checkData(fault, entry.key, () => {
       const row: Record<string, JsonValue> = {};
 
       for (const [name, e] of Rec.toEntries(node.fields)) {
@@ -48,6 +58,7 @@ export function linear(
 
       return { key: entry.key, row };
     });
+  };
 
   const before: Entry[] = [],
     after: Entry[] = [];

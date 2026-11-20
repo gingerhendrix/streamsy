@@ -4,7 +4,7 @@ import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, SqlRelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
-import { aggregate, join, linear, top } from "./operators.ts";
+import { accepts, aggregate, join, linear, top } from "./operators.ts";
 import { delta, difference, runtime, type Delta, type Deltas } from "./runtime.ts";
 import { checkData, dataFault, ViewDataFault } from "./data-fault.ts";
 import { rekey } from "./key-ownership.ts";
@@ -69,6 +69,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     Effect.gen(function* () {
       const rt = runtime(program, store, parameter);
       const normalized = new Map<string, Map<string, Omit<Delta, "before">>>();
+      const filtered = new Map<string, Deltas>();
 
       for (const c of input) {
         const source = sources.get(c.sourceId);
@@ -103,12 +104,40 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           case "source": {
             const result = new Map<string, Delta>();
             const pending = normalized.get(node.id);
+            const filters = Arr.map(program.pushedFilters.get(node.id) ?? [], (node) => {
+              const changes = new Map<string, Delta>();
+              filtered.set(node.id, changes);
+
+              return { node, changes, fault: rt.fault(node.id) };
+            });
 
             if (pending) {
               const before = yield* store.getMany(node.id, [...pending.keys()]);
 
               for (const [key, d] of pending) {
-                const item = delta(d.key, before.get(key)?.row, d.after);
+                const previous = before.get(key)?.row;
+                let retained = filters.length === 0 ? d.after : undefined;
+
+                for (const filter of filters) {
+                  const old =
+                    previous !== undefined &&
+                    accepts(filter.node, d.key, previous, filter.fault, parameter)
+                      ? previous
+                      : undefined;
+                  const next =
+                    d.after !== undefined &&
+                    accepts(filter.node, d.key, d.after, filter.fault, parameter)
+                      ? d.after
+                      : undefined;
+                  const change = delta(d.key, old, next);
+
+                  if (change) filter.changes.set(key, change);
+                  if (next !== undefined) retained = next;
+                }
+
+                // An old namespace can contain rejected rows. They contribute
+                // no filtered before image and are removed when touched.
+                const item = delta(d.key, previous, retained);
 
                 if (item) result.set(key, item);
               }
@@ -120,12 +149,9 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
 
           case "filter":
           case "project":
-            changes = linear(
-              node,
-              rt.changes.get(node.input) ?? new Map(),
-              rt.fault(node.id),
-              parameter,
-            );
+            changes =
+              filtered.get(node.id) ??
+              linear(node, rt.changes.get(node.input) ?? new Map(), rt.fault(node.id), parameter);
             break;
           case "key":
             changes = yield* rekey(
