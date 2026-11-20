@@ -3,7 +3,7 @@ import { SqlClient } from "effect/sql";
 import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { make } from "./model.ts";
+import { make, type RetireRequest } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
 import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
@@ -14,28 +14,30 @@ import { detailsOf, load, remove, retire, settle, type Result } from "./internal
 import { inherit, withPrepare, withAccepted } from "./range.ts";
 import type { ProjectionKey } from "../checkpoint-store.ts";
 
+const retireInTransaction = (request: RetireRequest) =>
+  Effect.gen(function* () {
+    const tx = yield* Transaction;
+    const store = yield* CheckpointStore;
+
+    if (ownerOf(store.load) !== tx.owner)
+      return yield* new ProjectionFault({
+        phase: "checkpoint",
+        reason: "unsupported-composition",
+        message: `The checkpoint store for ${request.key.id} does not share the transaction owner`,
+      });
+
+    return yield* tx.withTransaction(
+      retire(request).pipe(Effect.provideService(CurrentOwner, tx.owner)),
+    );
+  });
+
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
     name: "transaction",
     guarantee: "exactly-once",
     load,
     remove,
-    retire: (request) =>
-      Effect.gen(function* () {
-        const tx = yield* Transaction;
-        const store = yield* CheckpointStore;
-
-        if (ownerOf(store.load) !== tx.owner)
-          return yield* new ProjectionFault({
-            phase: "checkpoint",
-            reason: "unsupported-composition",
-            message: `The checkpoint store for ${request.key.id} does not share the transaction owner`,
-          });
-
-        return yield* tx.withTransaction(
-          retire(request).pipe(Effect.provideService(CurrentOwner, tx.owner)),
-        );
-      }),
+    retire: retireInTransaction,
     apply: (pending) =>
       Effect.gen(function* () {
         const tx = yield* Transaction;
@@ -147,5 +149,20 @@ export const transactionWithRemove = <R>(
     remove: (key: ProjectionKey) =>
       Transaction.use((tx) =>
         tx.withTransaction(remove(key).pipe(Effect.andThen(() => afterRemove(key, tx.sql)))),
+      ),
+  });
+
+/** Clean up binding state in the owner transaction on both forget and retire. */
+export const transactionWithCleanup = (
+  cleanup: (key: ProjectionKey, sql: SqlClient.SqlClient) => Effect.Effect<void, ProjectionFault>,
+) =>
+  inherit(transaction, {
+    ...transactionWithRemove(cleanup),
+    retire: (request: RetireRequest) =>
+      Transaction.use((tx) =>
+        retireInTransaction({
+          ...request,
+          cleanup: request.cleanup.pipe(Effect.andThen(() => cleanup(request.key, tx.sql))),
+        }),
       ),
   });
