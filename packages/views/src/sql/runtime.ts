@@ -266,7 +266,7 @@ export function runtime(
       yield* store.remove(relation, deletes);
       yield* store.put(relation, puts);
 
-      for (const a of program.arrangements) {
+      for (const a of program.arrangements.values()) {
         if (a.relation !== relation) continue;
 
         const old: IndexEntry[] = [],

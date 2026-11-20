@@ -1,5 +1,5 @@
 import type { JsonValue, RowKey, RowKeyPart } from "../ir/contracts.ts";
-import { Array as Arr, Record as Rec } from "effect";
+import { Array as Arr, Predicate, Record as Rec } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- The canonical key codec is the runtime boundary that validates discriminated JSON scalar representations. */
 
@@ -36,17 +36,57 @@ function isPart(value: JsonValue): value is RowKeyPart {
   );
 }
 
-/** Canonical JSON identity used for expression values, partitions, and rows. */
-export function canonicalJson(value: JsonValue): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+/* oxlint-enable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion */
 
-  if (Arr.isArray<typeof value>(value)) return `[${Arr.join(Arr.map(value, canonicalJson), ",")}]`;
-
-  const entries = Rec.toEntries(value);
-  entries.sort(([left], [right]) => left.localeCompare(right));
-
-  return `{${Arr.join(
-    Arr.map(entries, ([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`),
-    ",",
-  )}}`;
+/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters -- Canonical encoding is the runtime parser and validation boundary for values presented as plans. */
+/** Canonical JSON identity for plans, arrangements, expression values and rows. */
+export function canonicalJson(value: unknown): string {
+  return encode(value, new Set<object>(), "$");
 }
+
+function encode(value: unknown, ancestors: Set<object>, path: string): string {
+  if (value === null) return "null";
+
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError(`${path} contains a non-finite number`);
+
+    return JSON.stringify(value);
+  }
+
+  if (typeof value !== "object") throw new TypeError(`${path} contains non-JSON ${typeof value}`);
+
+  if (ancestors.has(value)) throw new TypeError(`${path} contains a cycle`);
+  ancestors.add(value);
+
+  try {
+    if (Arr.isArray(value)) {
+      return `[${Arr.join(
+        Arr.map(value, (child, index) => encode(child, ancestors, `${path}[${index}]`)),
+        ",",
+      )}]`;
+    }
+
+    if (
+      !Predicate.isObject(value) ||
+      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+    ) {
+      throw new TypeError(`${path} contains a non-plain object`);
+    }
+
+    const entries = Rec.toEntries(value);
+    entries.sort(([left], [right]) => left.localeCompare(right));
+
+    return `{${Arr.join(
+      Arr.map(
+        entries,
+        ([key, child]) => `${JSON.stringify(key)}:${encode(child, ancestors, `${path}.${key}`)}`,
+      ),
+      ",",
+    )}}`;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+/* oxlint-enable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters */

@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Record as Rec, Schema, Option } from "effect";
+import { Array as Arr, Effect, Record as Rec } from "effect";
 import { collectPlanIssues, PlanCheckFailed } from "../check.ts";
 import { canonicalJson } from "../runtime/key.ts";
 import type { Expression, SortTerm, RelationNode, RelationPlan } from "../ir/contracts.ts";
@@ -16,7 +16,7 @@ export interface Program {
   readonly nodes: readonly RelationNode[];
   readonly outputs: Readonly<Record<string, string>>;
   readonly pushedFilters: ReadonlyMap<string, readonly Extract<RelationNode, { kind: "filter" }>[]>;
-  readonly arrangements: readonly Arrangement[];
+  readonly arrangements: ReadonlyMap<string, Arrangement>;
   readonly stored: ReadonlySet<string>;
   readonly locations: ReadonlyMap<string, { readonly view: string; readonly node: string }>;
   readonly checkedKeys: ReadonlySet<string>;
@@ -109,7 +109,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       if (node.kind !== "source") continue;
       const { id: _id, ...definition } = node;
-      const signature = signatureOf(definition);
+      const signature = canonicalJson(definition);
       const previous = sourceDefinitions.get(node.sourceId);
 
       if (previous !== undefined && previous !== signature)
@@ -151,7 +151,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       const { id: _id, ...definition } = mapped;
       const stateKey = stateOutputKeys && node.kind === "key" && node.id === plan.output;
-      const signature = signatureOf({ definition, stateKey });
+      const signature = canonicalJson({ definition, stateKey });
       let id = signatures.get(signature);
 
       if (id === undefined) {
@@ -169,7 +169,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     outputs[name] = aliases.get(plan.output) ?? "";
   }
 
-  const arrangements: Arrangement[] = [];
+  const arrangements = new Map<string, Arrangement>();
   const stored = new Set<string>();
   const checkedKeys = new Set<string>();
   const pushedFilters = new Map<string, Extract<RelationNode, { kind: "filter" }>[]>();
@@ -184,17 +184,17 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     optional = false,
   ) => {
     stored.add(relation);
-    const signature = signatureOf({ relation, key, order });
+    const signature = canonicalJson({ relation, key, order });
 
-    for (const [index, a] of arrangements.entries()) {
-      if (signatureOf({ relation: a.relation, key: a.key, order: a.order }) !== signature) continue;
-      // A required consumer (top) makes a shared index required; extrema alone skip absent operands.
-      arrangements[index] = { ...a, optional: a.optional && optional };
+    const existing = arrangements.get(signature);
 
-      return;
-    }
-
-    arrangements.push({ id: `a${arrangements.length}`, node, relation, key, order, optional });
+    // A required consumer (top) makes a shared index required; extrema alone skip absent operands.
+    arrangements.set(
+      signature,
+      existing === undefined
+        ? { id: `a${arrangements.size}`, node, relation, key, order, optional }
+        : { ...existing, optional: existing.optional && optional },
+    );
   };
 
   for (const node of nodes) {
@@ -228,7 +228,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       if (key)
         for (const [field, expression] of Rec.toEntries(node.fields))
-          if (signatureOf(expression) === signatureOf(key.expression)) {
+          if (canonicalJson(expression) === canonicalJson(key.expression)) {
             keyFields.set(node.id, {
               expression: { kind: "reference", scope: "row", path: [field] },
               stateKey: key.stateKey,
@@ -243,7 +243,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       const sameKey =
         inputKey?.stateKey === stateKey &&
-        signatureOf(inputKey.expression) === signatureOf(node.key);
+        canonicalJson(inputKey.expression) === canonicalJson(node.key);
 
       const identity =
         !stateKey &&
@@ -318,22 +318,11 @@ export function findArrangement(
   key: readonly Expression[],
   order: readonly SortTerm[],
 ): Arrangement {
-  const signature = signatureOf({ relation, key, order });
+  const signature = canonicalJson({ relation, key, order });
 
-  const found = Option.getOrUndefined(
-    Arr.findFirst(
-      program.arrangements,
-      (a) => signatureOf({ relation: a.relation, key: a.key, order: a.order }) === signature,
-    ),
-  );
+  const found = program.arrangements.get(signature);
 
   if (!found) throw new TypeError("missing planned arrangement");
 
   return found;
-}
-
-/** Validate the JSON-only IR before canonicalizing interface-shaped values. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the JSON validation boundary for interface-shaped plan data.
-export function signatureOf(value: unknown): string {
-  return canonicalJson(Schema.decodeUnknownSync(Schema.Json)(value));
 }

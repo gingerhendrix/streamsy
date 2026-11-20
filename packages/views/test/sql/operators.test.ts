@@ -299,7 +299,7 @@ it.live(
     return Effect.gen(function* () {
       yield* migrate();
       const engine = yield* makeEngine({ ...plans, anotherTotals: totals });
-      const extrema = Arr.filter(engine.program.arrangements, (a) => a.optional);
+      const extrema = Arr.filter(engine.program.arrangements.values(), (a) => a.optional);
       expect(extrema.length).toBe(1); // min/max and two aggregate consumers share one index
       expect(Arr.filter(engine.program.nodes, (n) => n.kind === "inner-join").length).toBe(1);
       expect(engine.program.stored.size).toBe(3); // sources and joined input to a sum
@@ -605,7 +605,7 @@ it.live(
         top: plan("t", [items, top]),
       });
 
-      expect(engine.program.arrangements.length).toBe(1);
+      expect(engine.program.arrangements.size).toBe(1);
 
       const result = yield* engine.process("p", [
         up("items", "b", { id: "b", group: "g" }),

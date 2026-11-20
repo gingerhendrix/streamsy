@@ -361,7 +361,7 @@ function sortRows(input: readonly StateRow[]): readonly StateRow[] {
 }
 
 export function normalizeResult(result: FullRecomputeResult): string {
-  return canonicalJson({ rows: sortRows(result.rows), ordered: result.ordered } as never);
+  return canonicalJson({ rows: sortRows(result.rows), ordered: result.ordered });
 }
 
 /** Independent scalar comparator: deliberately does not import the SQL key codec. */
