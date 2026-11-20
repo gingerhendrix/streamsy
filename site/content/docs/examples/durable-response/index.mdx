@@ -5,12 +5,12 @@ description: Run four local durable-response demos backed by SQLite across Effec
 
 Each demo records a scripted response in a Streamsy stream backed by SQLite. Open the same response in two tabs to follow one generation. Press **Stop** in either tab to abort the generation and record the stopped state for every reader.
 
-| Demo | Browser URL | API port | Reload behavior | Stop on orphan open log |
-| --- | --- | --- | --- | --- |
-| [Effect Atom](/docs/examples/durable-response/effect) | `http://localhost:1341` | `1340` | Resumes from saved offsets | Closes the log |
-| [Foldkit](/docs/examples/durable-response/effect) | `http://localhost:1342` | `1340` | Resumes from saved offsets | Closes the log |
-| [AI SDK](/docs/examples/durable-response/ai-sdk) | `http://localhost:1344` | `1343` | Full replay from log | Returns HTTP `409` |
-| [TanStack AI](/docs/examples/durable-response/tanstack-ai) | `http://localhost:1346` | `1345` | Full raw replay on reload | Returns HTTP `409` |
+| Demo                                                       | Browser URL             | API port | Reload behavior            | Stop on orphan open log |
+| ---------------------------------------------------------- | ----------------------- | -------- | -------------------------- | ----------------------- |
+| [Effect Atom](/docs/examples/durable-response/effect)      | `http://localhost:1341` | `1340`   | Resumes from saved offsets | Closes the log          |
+| [Foldkit](/docs/examples/durable-response/effect)          | `http://localhost:1342` | `1340`   | Resumes from saved offsets | Closes the log          |
+| [AI SDK](/docs/examples/durable-response/ai-sdk)           | `http://localhost:1344` | `1343`   | Full replay from log       | Returns HTTP `409`      |
+| [TanStack AI](/docs/examples/durable-response/tanstack-ai) | `http://localhost:1346` | `1345`   | Full raw replay on reload  | Returns HTTP `409`      |
 
 An orphan log is an open response log with no running generation, for example after an API restart.
 
