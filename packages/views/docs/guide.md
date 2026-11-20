@@ -120,7 +120,7 @@ The circuit uses `Commit.transactionWithRemove` to delete operator state in the 
 
 ## Plan identity, generations and forget
 
-Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codecs are not executable code in the plan hash; a codec change also requires a new generation.
+Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codec changes also require a new generation. Until the first release, raise `generation` when the operator-state layout or plan naming changes.
 
 Raise `generation` to rebuild from retained input history. On the first successful unit of the new generation, the circuit removes older operator namespaces for the same id, version and params. A later unit from an older generation fails while the newer metadata exists. Old projection checkpoint records are left to Streamsy. Stop old runners before starting the replacement.
 
@@ -134,7 +134,7 @@ String expressions compare lexicographically by UTF-16 code units, without local
 
 Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
 
-A source used only by direct `where` filters keeps rows that pass at least one of those filters. Another consumer of the unfiltered source keeps its full integral. Existing namespaces resume with their current checkpoint and plan hash. Older rows outside the filters are removed when touched or cleared by a State reset. A fresh namespace gets the storage savings from its first unit.
+A source used only by direct `where` filters keeps rows that pass at least one of those filters. Another consumer of the unfiltered source keeps its full integral.
 
 Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's distinct changed relation keys, including intermediate results. Joins also check the number of candidate keys before building large joined results. The unit rolls back on overflow and attached runners stop the binding with a `ViewDataFault` that names a key. The limit governs fan-out, so an operator may still read unchanged rows, for example when recomputing a fractional sum. The limit can be changed without changing the plan hash.
 
