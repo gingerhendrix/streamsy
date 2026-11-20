@@ -343,7 +343,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         key: keyExpression(collection.key),
       } as const;
 
-      const planName = singleOutput === undefined ? JSON.stringify([route, name]) : name;
+      const planName = JSON.stringify([route, name]);
       plans[planName] = orderPlanFields(compilePlan(planName, expression, parameters));
       targets.set(planName, { route, collection: name });
 

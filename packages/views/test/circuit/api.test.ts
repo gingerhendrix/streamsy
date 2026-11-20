@@ -218,6 +218,27 @@ it.effect("resolves missing function arguments and binds decoded parameters per 
   }).pipe(Effect.provide(host)),
 );
 
+it.effect("stores the same plan hash for equivalent output and outputs declarations", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const multiple = View.circuit({
+      id: definition.id,
+      params: definition.params,
+      outputs: { output: Results },
+      views: ({ minimum }) => ({ output: { row: buildResult("label", 1)(minimum) } }),
+    });
+
+    yield* Projection.run(circuit().at({ minimum: 1 }));
+    yield* Projection.run(multiple.at({ minimum: 3 }));
+
+    const sql = yield* SqlClient.SqlClient;
+    const stored = yield* sql<{ plan_hash: string }>`SELECT plan_hash FROM streamsy_view_circuits`;
+    expect(stored).toHaveLength(2);
+    expect(stored[0]?.plan_hash).toMatch(/^[0-9a-f]{8}$/);
+    expect(stored[0]?.plan_hash).toBe(stored[1]?.plan_hash);
+  }).pipe(Effect.provide(host)),
+);
+
 const namedParameterCircuit = (name: "minimum" | "other") =>
   View.circuit({
     ...definition,
