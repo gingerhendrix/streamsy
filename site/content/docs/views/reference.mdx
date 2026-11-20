@@ -1,0 +1,312 @@
+---
+title: Reference
+description: Root exports, the View namespace, Relation operators, expression methods, fault classes, and exported types in @streamsy/views.
+---
+
+```ts no-twoslash
+import { PlanChanged, PlanCheckFailed, View, ViewDataFault, ViewFault } from "@streamsy/views";
+import type {
+  BooleanExpression,
+  CircuitBinding,
+  CircuitDeclaration,
+  CircuitError,
+  Input,
+  ParameterExpressions,
+  Reference,
+  Relation,
+  State,
+  TypedAggregateExpression,
+  TypedExpression,
+} from "@streamsy/views";
+```
+
+`@streamsy/views` is a private workspace package. All public APIs are exported from the package root.
+
+## Root exports
+
+| Export                     | Kind                         | Purpose                                                                                              |
+| -------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `View`                     | Namespace                    | Relation builders, aggregates, expressions, `circuit`, and `migrate`                                 |
+| `PlanChanged`              | Class (`Schema.TaggedError`) | Non-retryable fault (`_tag: "ViewPlanChanged"`) when a namespace's plan hash changes                 |
+| `ViewFault`                | Class (`Schema.TaggedError`) | Operational or setup fault (`_tag: "ViewFault"`)                                                     |
+| `ViewDataFault`            | Class (`Schema.TaggedError`) | Non-retryable row-level or `maxAffectedKeys` fault (`_tag: "ViewDataFault"`)                         |
+| `PlanCheckFailed`          | Class (`Schema.TaggedError`) | Compile-time plan check error (`_tag: "PlanCheckFailed"`) with `issues`                              |
+| `CircuitDeclaration`       | Type                         | Projection `Declaration` returned by `View.circuit`                                                  |
+| `CircuitBinding`           | Type                         | Bound projection returned by `declaration.at(params)`                                                |
+| `CircuitError`             | Type                         | Union `PlanChanged \| ViewFault \| ViewDataFault \| ProjectionFault`                                 |
+| `ParameterExpressions`     | Type                         | Map of JSON-valued binding parameters to `TypedExpression` values                                    |
+| `State`                    | Type                         | Structural contract of a `Streamsy.state` class                                                      |
+| `Input`                    | Type                         | Existential input State class boundary used in `Relation` and `View.circuit`                         |
+| `Relation`                 | Type                         | Typed relation handle returned by `View.from` and relation operators                                 |
+| `TypedExpression`          | Type                         | Typed expression node with fluent comparison, boolean, numeric, sort, optional, and field operations |
+| `Reference`                | Type                         | Alias for `TypedExpression<T>` passed to operator callbacks                                          |
+| `BooleanExpression`        | Type                         | Alias for `TypedExpression<boolean>`                                                                 |
+| `TypedAggregateExpression` | Type                         | Typed aggregate expression returned by `View.count`, `View.sum`, `View.min`, and `View.max`          |
+
+## `View` namespace
+
+`View` exports these values and types:
+
+| Member                    | Kind     | Purpose                                                                                  |
+| ------------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `View.from`               | Function | Start a `Relation` from a `Streamsy.state` class and collection name                     |
+| `View.circuit`            | Function | Compile views and generation-addressed outputs into a `CircuitDeclaration`               |
+| `View.migrate`            | Function | Create the five Views SQLite tables on a `SqlClient`                                     |
+| `View.count`              | Function | Count rows in a `groupBy` group                                                          |
+| `View.sum`                | Function | Sum a numeric expression in a `groupBy` group                                            |
+| `View.min`                | Function | Minimum ordered (`number \| string`) expression in a `groupBy` group                     |
+| `View.max`                | Function | Maximum ordered (`number \| string`) expression in a `groupBy` group                     |
+| `View.field`              | Function | Select a field whose name overlaps an expression method or member                        |
+| `View.fn`                 | Function | Declare a named, versioned, pure synchronous expression function                         |
+| `View.literal`            | Function | Wrap a JSON value as a `TypedExpression`                                                 |
+| `View.key`                | Function | Build a composite key expression from scalar (`boolean \| number \| string`) expressions |
+| `View.State`              | Type     | Same as root `State`                                                                     |
+| `View.Input`              | Type     | Same as root `Input`                                                                     |
+| `View.Relation`           | Type     | Same as root `Relation`                                                                  |
+| `View.CircuitDeclaration` | Type     | Same as root `CircuitDeclaration`                                                        |
+| `View.CircuitBinding`     | Type     | Same as root `CircuitBinding`                                                            |
+
+### `View.from`
+
+```ts no-twoslash
+declare function from<
+  Codecs extends StreamRoute.ParamCodecs,
+  C extends StreamAddress.Collections,
+  R,
+  K extends keyof C & string,
+>(state: State<Codecs, C, R>, collection: K): Relation<C[K]["schema"]["Type"], State<Codecs, C, R>>;
+```
+
+Creates a source relation for `collection` on `state`. Throws `RangeError` if `collection` is not declared on `state`.
+
+### `View.circuit`
+
+```ts no-twoslash
+// Single output form
+declare function circuit<
+  C extends StreamRoute.ParamCodecs,
+  const V extends Views,
+  O extends Projection.PerGeneration<Input, string>,
+  HE = never,
+  HR = never,
+>(definition: {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly retry?: CircuitDeclaration<C, { output: V }, { output: O }, HE, HR>["retry"];
+  readonly maxAffectedKeys?: number;
+  readonly wakeAt?: (unit: Unit<StreamRoute.Params<NoInfer<C>>>) => void | WakeAt;
+  readonly output: O;
+  readonly views: V | ((params: ParameterExpressions<NoInfer<C>>) => V);
+}): CircuitDeclaration<C, { output: V }, { output: O }, HE, HR>;
+
+// Multiple outputs form
+declare function circuit<
+  C extends StreamRoute.ParamCodecs,
+  const V extends ViewMap,
+  const O extends Readonly<Record<string, Projection.PerGeneration<Input, string>>>,
+  HE = never,
+  HR = never,
+>(definition: {
+  readonly id: string;
+  readonly version?: number;
+  readonly generation?: number;
+  readonly params: C;
+  readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
+  readonly maxAffectedKeys?: number;
+  readonly wakeAt?: (unit: Unit<StreamRoute.Params<NoInfer<C>>>) => void | WakeAt;
+  readonly outputs: O;
+  readonly views: V | ((params: ParameterExpressions<NoInfer<C>>) => V);
+}): CircuitDeclaration<C, V, O, HE, HR>;
+```
+
+Compiles the declared views and returns a [`Declaration`](/docs/reference/projection/declarations#declaration) backed by `Projection.process` and a transactional cleanup commit.
+
+Declaration-time checks:
+
+- Throws `ViewFault` if any output is not wrapped in `Projection.perGeneration`.
+- Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, or an invalid `maxAffectedKeys`.
+- Fails with `PlanCheckFailed` if the compiled plan fails static validation.
+
+### `View.migrate`
+
+```ts no-twoslash
+declare const migrate: (
+  sql: SqlClient.SqlClient,
+) => Effect.Effect<void, ViewFault | SqlError.SqlError>;
+```
+
+Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. Fails with `ViewFault` on non-SQLite dialects.
+
+### Aggregates
+
+```ts no-twoslash
+declare const count: () => TypedAggregateExpression<number>;
+declare const sum: (expression: TypedExpression<number>) => TypedAggregateExpression<number>;
+declare const min: <T extends number | string>(
+  expression: TypedExpression<T>,
+) => TypedAggregateExpression<T>;
+declare const max: <T extends number | string>(
+  expression: TypedExpression<T>,
+) => TypedAggregateExpression<T>;
+```
+
+Used inside `relation.groupBy(fields).aggregate(aggregates)`.
+
+### Expression helpers
+
+```ts no-twoslash
+declare function field<T, K extends keyof Exclude<T, undefined> & string>(
+  expression: TypedExpression<T>,
+  name: K,
+): TypedExpression<Exclude<T, undefined>[K] | Extract<T, undefined>>;
+
+declare function fn<
+  Args extends readonly (JsonValue | undefined)[],
+  Result extends JsonValue | undefined,
+>(
+  name: string,
+  version: number,
+  implementation: (...args: Args) => Result,
+): (
+  ...operands: { readonly [K in keyof Args]: TypedExpression<Args[K]> }
+) => TypedExpression<Result>;
+
+declare const literal: <T extends JsonValue>(value: T) => TypedExpression<T>;
+
+declare const key: (
+  ...parts: readonly (
+    TypedExpression<boolean> | TypedExpression<number> | TypedExpression<string>
+  )[]
+) => TypedExpression<readonly (boolean | number | string)[]>;
+```
+
+`View.fn` throws `RangeError` if `name` is blank or `version` is not a positive safe integer.
+
+## `Relation`
+
+```ts no-twoslash
+interface Relation<Row, Inputs extends Input = Input> {
+  readonly rowType?: Row;
+  readonly expression: RelationExpression<Row>;
+  readonly inputs: ReadonlyMap<string, { readonly state: Inputs; readonly collection: string }>;
+  readonly where: (predicate: (row: Reference<Row>) => BooleanExpression) => Relation<Row, Inputs>;
+  readonly select: <F extends Readonly<Record<string, Expression>>>(
+    fields: (row: Reference<Row>) => F,
+  ) => Relation<Selected<F>, Inputs>;
+  readonly join: <Right, Other extends Input, Alias extends string>(
+    other: Relation<Right, Other>,
+    spec: {
+      readonly as: Alias;
+      readonly on: (left: Reference<Row>, right: Reference<Right>) => BooleanExpression;
+    },
+  ) => Relation<Row & Record<Alias, Right>, Inputs | Other>;
+  readonly leftJoin: <Right, Other extends Input, Alias extends string>(
+    other: Relation<Right, Other>,
+    spec: {
+      readonly as: Alias;
+      readonly on: (left: Reference<Row>, right: Reference<Right>) => BooleanExpression;
+    },
+  ) => Relation<Row & Partial<Record<Alias, Right>>, Inputs | Other>;
+  readonly groupBy: <F extends Readonly<Record<string, Expression>>>(
+    fields: (row: Reference<Row>) => F,
+  ) => {
+    readonly aggregate: <A extends Readonly<Record<string, TypedAggregateExpression<unknown>>>>(
+      aggregates: (row: Reference<Row>) => A,
+    ) => Relation<Selected<F> & { readonly [K in keyof A]: AggregateValue<A[K]> }, Inputs>;
+  };
+  readonly top: (spec: {
+    readonly partitionBy?: (row: Reference<Row>) => Expression | readonly Expression[];
+    readonly by: (row: Reference<Row>) => readonly SortTerm[];
+    readonly limit: number;
+  }) => Relation<Row, Inputs>;
+}
+```
+
+## `TypedExpression` operations
+
+Methods available on `TypedExpression<T>` depend on `T`:
+
+| Group         | Condition on `T`                              | Methods                                                                                                             |
+| ------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Common        | All types                                     | `eq(right)`, `ne(right)`, `in(...values)`                                                                           |
+| Ordered       | `Exclude<T, undefined>` is `number \| string` | `gt(right)`, `gte(right)`, `lt(right)`, `lte(right)`                                                                |
+| Sort          | Non-optional `number \| string`               | `asc()`, `desc()`                                                                                                   |
+| Boolean       | `Exclude<T, undefined>` is `boolean`          | `and(...right)`, `or(...right)`, `not()`                                                                            |
+| Number        | `Exclude<T, undefined>` is `number`           | `add(right)`                                                                                                        |
+| Optional      | `undefined` is assignable to `T`              | `isPresent()`, `unwrap()`, `orElse(fallback)`                                                                       |
+| Object fields | `Exclude<T, undefined>` is an object          | Property access `expr.prop` for each field, propagating optionality; use `View.field` when a name overlaps a method |
+
+## Faults
+
+### `PlanChanged`
+
+```ts no-twoslash
+interface PlanChanged {
+  readonly _tag: "ViewPlanChanged";
+  readonly namespace: string;
+  readonly stored: string;
+  readonly requested: string;
+  readonly [NonRetryable]: true;
+}
+```
+
+### `ViewDataFault`
+
+```ts no-twoslash
+interface ViewDataFault {
+  readonly _tag: "ViewDataFault";
+  readonly view: string;
+  readonly node: string;
+  readonly key: string | number | boolean | readonly (string | number | boolean)[] | null;
+  readonly reason: string;
+  readonly [NonRetryable]: true;
+}
+```
+
+### `ViewFault`
+
+```ts no-twoslash
+interface ViewFault {
+  readonly _tag: "ViewFault";
+  readonly message: string;
+  readonly cause?: unknown;
+}
+```
+
+### `PlanCheckFailed`
+
+```ts no-twoslash
+interface PlanCheckFailed {
+  readonly _tag: "PlanCheckFailed";
+  readonly issues: ReadonlyArray<{
+    readonly code:
+      | "invalid-expression-scope"
+      | "non-boolean-predicate"
+      | "join-alias-conflict"
+      | "join-condition-not-boolean"
+      | "aggregate-shape-mismatch"
+      | "undeclared-parameter"
+      | "invalid-top-limit"
+      | "unstable-top-order"
+      | "unsupported-sql-plan";
+    readonly view: string;
+    readonly nodeId?: string;
+    readonly path: string;
+    readonly message: string;
+  }>;
+}
+```
+
+## Types
+
+### `CircuitError`
+
+```ts no-twoslash
+type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
+```
+
+### `CircuitBinding` and `CircuitDeclaration`
+
+`CircuitDeclaration<C, V, O, HE, HR>` extends `@streamsy/projection`'s `Declaration<C, CircuitBinding<V, O>, HE, HR>`. Calling `declaration.at(params)` returns a `CircuitBinding<V, O>` that `Projection.pass`, `Projection.run`, `Projection.follow`, and `Projection.forget` accept. `Projection.attach`, `ProjectionWakeup.attach`, and `Projection.retire` accept the `CircuitDeclaration`.

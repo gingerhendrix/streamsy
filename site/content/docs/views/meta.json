@@ -1,0 +1,4 @@
+{
+  "title": "Views",
+  "pages": ["index", "declare-and-run", "lifecycle", "ordering-and-limits", "reference"]
+}

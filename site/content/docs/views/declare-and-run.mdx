@@ -1,0 +1,281 @@
+---
+title: Declare and run a circuit
+description: Build relations with View.from, wrap outputs in Projection.perGeneration, migrate SQLite tables, and run on Bun or a Durable Object.
+---
+
+A Views circuit reads one or more `Streamsy.state` collections, compiles their relational operators into SQLite operator tables, and writes generation-addressed `Streamsy.state` outputs. `@streamsy/views` is private and supports SQLite only.
+
+## Declare input and output State classes
+
+Declare your input and output streams with `Streamsy.state`. Every output State route used by a circuit needs a numeric generation parameter in its path so each generation writes to its own stream address.
+
+```ts title="examples/views-shop/src/streams.ts"
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+
+const Order = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+});
+
+export class Orders extends Streamsy.state<Orders>()("ViewsShop/Orders", "shop/:shopId/orders", {
+  params: { shopId: Schema.String },
+  collections: { order: { schema: Order, key: "orderId" } },
+}) {}
+
+export class ShopViews extends Streamsy.state<ShopViews>()(
+  "ViewsShop/Views",
+  "shop/:shopId/views/g/:generation",
+  {
+    params: { shopId: Schema.String, generation: Schema.FiniteFromString },
+    collections: {
+      customerTotals: {
+        schema: Schema.Struct({
+          customerId: Schema.String,
+          orders: Schema.Finite,
+          revenue: Schema.Finite,
+        }),
+        key: "customerId",
+      },
+      topOrder: { schema: Order, key: "orderId" },
+    },
+  },
+) {}
+```
+
+`View.from` derives the row type, schema, and key directly from the State class. You do not redeclare sources or schemas for circuits.
+
+## Build relations
+
+Start every relation with `View.from(StateClass, "collection")`. Chain operators using typed expression callbacks.
+
+### Joins, filters, projections, and functions
+
+Use `join`, `leftJoin`, `where`, and `select` to combine and shape rows across collections:
+
+```ts no-twoslash
+import { View } from "@streamsy/views";
+import { Shop } from "./shop.ts";
+
+const orders = View.from(Shop, "order");
+const customers = View.from(Shop, "customer");
+
+const goldOrders = orders
+  .join(customers, {
+    as: "customer",
+    on: (order, customer) => order.customerId.eq(customer.customerId),
+  })
+  .where((row) => row.customer.tier.eq("gold"))
+  .select((row) => ({
+    orderId: row.orderId,
+    customerName: row.customer.name,
+    total: row.total,
+  }));
+
+const displayName = View.fn(
+  "customer-display-name",
+  1,
+  (name: string | undefined) => name ?? "Guest",
+);
+
+const orderLabels = orders
+  .leftJoin(customers, {
+    as: "customer",
+    on: (order, customer) => order.customerId.eq(customer.customerId),
+  })
+  .select((row) => ({
+    orderId: row.orderId,
+    customerName: displayName(row.customer.name),
+  }));
+```
+
+Rules for expressions and joins:
+
+- A join condition must test equality between a left-only expression and a right-only expression.
+- A `leftJoin` alias can be absent. Nested references such as `row.customer.name` stay optional through every field, and `select` omits absent fields from the output row.
+- Use `isPresent()` to test presence, `orElse(fallback)` to provide a default, and `unwrap()` to fail the unit with `ViewDataFault` if a value is absent.
+- Use `View.field(row.value, "path")` when a row field name overlaps an expression method or member.
+- `View.fn(name, version, implementation)` registers a pure, synchronous function for `select` or `where`. It must be deterministic and leave its inputs unchanged. Its name and positive integer version are part of the plan hash, so raise `version` whenever the implementation changes. Absent optional arguments arrive as `undefined`; present values keep their value, including `null`. Returning `undefined` omits a selected field. A function used in `where` must return a boolean.
+
+### Grouped aggregates and bounded top
+
+Use `groupBy(...).aggregate(...)` with `View.count`, `View.sum`, `View.min`, and `View.max`. Use `top` with an optional `partitionBy`, an explicit `by` sort order, and a positive integer `limit`.
+
+```ts title="examples/views-shop/src/streams.ts"
+export const shopCircuit = (generation: number, minimumTotal?: number) => {
+  const orders = View.from(Orders, "order");
+
+  const selected =
+    minimumTotal === undefined ? orders : orders.where((row) => row.total.gte(minimumTotal));
+
+  return View.circuit({
+    id: "views-shop",
+    params: Orders.paramCodecs,
+    generation,
+    output: Projection.perGeneration(ShopViews, "generation"),
+    views: {
+      customerTotals: selected
+        .groupBy((row) => ({ customerId: row.customerId }))
+        .aggregate((row) => ({ orders: View.count(), revenue: View.sum(row.total) })),
+      topOrder: selected.top({
+        partitionBy: (row) => row.customerId,
+        by: (row) => [row.total.desc(), row.orderId.asc()],
+        limit: 1,
+      }),
+    },
+  });
+};
+```
+
+Include a final ascending stable key term in `top` (such as `row.orderId.asc()`). `top` maintains a keyed collection rather than a ranked list; see [Ordering and limits](/docs/views/ordering-and-limits#string-extrema-and-top-ordering).
+
+## Declare a circuit
+
+`View.circuit` accepts either a single wrapped output under `output` or a record of wrapped outputs under `outputs`:
+
+- Every output route must be wrapped with `Projection.perGeneration(StateClass, param)`. Passing an unwrapped output throws `ViewFault` at declaration time.
+- Each collection on an output State class must have exactly one view. Missing collections, unknown collection names, and duplicate output State classes throw `RangeError`.
+- With `outputs`, group `views` under the same route names as `outputs`.
+- Input route parameters and all non-generation output route parameters must match circuit `params` with identical decoded types. Projection supplies the wrapped generation parameter from the circuit's `generation`.
+- Pass `views: (params) => ({ ... })` to reference decoded JSON-valued binding parameters in expressions, such as `row.workspace.eq(params.workspace)`. Parameter names are part of the plan hash, and each binding evaluates with its own values and SQL namespace.
+- `version` and `generation` both default to `1`.
+- Optional `retry` accepts the standard projection [binding retry policy](/docs/reference/projection/runners#binding-retry).
+- Optional `maxAffectedKeys` caps distinct changed relation keys per unit. See [Bounding fan-out with maxAffectedKeys](/docs/views/ordering-and-limits#bounding-fan-out-with-maxaffectedkeys).
+- Optional `wakeAt: (unit) => Projection.wakeAt(deadline)` records a wake deadline with the unit; returning `void` clears it.
+
+`View.circuit` returns a projection declaration with `.at(params)` and `.parse(id)`, like other [projection declarations](/docs/projections/define).
+
+## Migrate tables
+
+Call `View.migrate(sql)` once at host startup before running or attaching any circuit.
+
+`View.migrate` creates five SQLite tables with `CREATE TABLE IF NOT EXISTS`:
+
+- `streamsy_view_integrals`
+- `streamsy_view_arrangements`
+- `streamsy_view_accumulators`
+- `streamsy_view_key_owners`
+- `streamsy_view_circuits`
+
+It fails with `ViewFault` when called on a non-SQLite `SqlClient`. Call `StateTable.migrate(sql)` at startup too if readers index the circuit's output streams with `StateTable`.
+
+## Run on Bun SQLite
+
+Build one host layer with `BunStorage.layer`, `CheckpointStore.layer`, and `Transaction.layer`. Run `View.migrate(sql)` before running the bound circuit.
+
+```ts title="examples/views-shop/src/app.ts"
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Orders, ShopViews), { client: { filename: ":memory:" } }),
+  ),
+);
+
+export const smoke = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* View.migrate(sql);
+
+  const params = { shopId: "main" };
+  const input = yield* Orders;
+  const output = yield* ShopViews;
+  yield* input.create(params);
+  // ...
+  const initial = shopCircuit(1).at(params);
+  // ...
+  yield* Projection.run(initial);
+  // ...
+}).pipe(Effect.provide(host));
+```
+
+In the first unit's transaction, `Commit.transaction` creates each wrapped output stream and checks that it starts empty and open. Every declared output must live on the same SQL storage owner as `Transaction.layer`. Input streams use normal projection stream services and do not need an input `StateTable`.
+
+For a long-lived Bun process, migrate once at startup and attach the circuit (and any output `StateTable`) with `Projection.attach`:
+
+```ts no-twoslash
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { View } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+const shopViews = shopCircuit(1);
+const ShopViewsTable = StateTable.define(ShopViews);
+
+const storage = BunStorage.layer(Streamsy.group(Orders, ShopViews), {
+  client: { filename: "./shop.sqlite" },
+});
+
+const migrate = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* StateTable.migrate(sql);
+  }),
+);
+
+export const host = Layer.mergeAll(
+  Projection.attach(shopViews, { durable: true }),
+  Projection.attach(ShopViewsTable, { durable: true }),
+).pipe(
+  Layer.provideMerge(migrate),
+  Layer.provideMerge(Projection.Registry.layer),
+  Layer.provideMerge(Layer.mergeAll(CheckpointStore.layer, Transaction.layer)),
+  Layer.provideMerge(storage),
+);
+```
+
+Follow the [one-writer rule](/docs/projections/checkpoints#one-writer): do not call `Projection.run` or `Projection.follow` on a binding that is already attached. Use `registry.awaitOffset` for read-your-writes; see [Observe attached runners](/docs/projections/run#observe-attached-runners).
+
+## Run on a Durable Object
+
+On Cloudflare Durable Objects, provide `DurableObjectStorage.layer` with the object's full `state.storage` handle, alongside `CheckpointStore.layer` and `Transaction.layer`. Run `View.migrate(sql)` during object layer initialization, then run bound circuits with `Projection.run` or attach them through `ProjectionWakeup.attach`.
+
+```ts no-twoslash
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Streamsy } from "@streamsy/core";
+import {
+  CheckpointStore,
+  Projection,
+  ProjectionWakeup,
+  StateTable,
+  Transaction,
+} from "@streamsy/projection";
+import { StreamsyObject } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { View } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+const shopViews = shopCircuit(1);
+const ShopViewsTable = StateTable.define(ShopViews);
+
+export class ShopObject extends StreamsyObject.make({
+  app: Layer.empty,
+  layer: (state) => {
+    const storage = DurableObjectStorage.layer(Streamsy.group(Orders, ShopViews), {
+      client: { storage: state.storage },
+    });
+    const migrate = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* View.migrate(sql);
+        yield* StateTable.migrate(sql);
+      }),
+    );
+
+    return Layer.mergeAll(
+      migrate,
+      CheckpointStore.layer,
+      Transaction.layer,
+      Projection.Registry.layer,
+    ).pipe(Layer.provideMerge(storage));
+  },
+  wakeups: [ProjectionWakeup.attach(shopViews), ProjectionWakeup.attach(ShopViewsTable)],
+}) {}
+```
+
+Views uses the same runtime and SQLite tables on Bun and Durable Objects. For Cloudflare stream placement, configure `Placement.byRoute` without the generation parameter in the placement key so every generation of a binding stays on the same Durable Object as its checkpoint. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs) and [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).

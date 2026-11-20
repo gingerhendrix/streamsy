@@ -1,0 +1,67 @@
+---
+title: Ordering and limits
+description: Unit ordering, UTF-16 string comparisons, maxAffectedKeys, permanent faults, pre-release storage rules, and current scope limits.
+---
+
+This page describes the ordering guarantees, safety limits, fault classes, and current boundaries of `@streamsy/views`.
+
+## Unit ordering and State semantics
+
+Each circuit unit reads one page per input stream after its checkpoint offset, in input declaration order:
+
+- Within a single input stream, items apply in stream order. Append order across distinct input streams is not preserved.
+- Multiple changes to the same input key within one unit coalesce against the circuit's stored source integral.
+- Deletes do not require `old_value`.
+- A `reset` control retracts every stored row of that source.
+- A `snapshot-start` control preserves previously visible rows until `snapshot-end`, then retracts unseen keys. Snapshot bookkeeping persists across units. Both `reset` and snapshot controls can visit an entire relation.
+- Numeric State keys use their string wire representation, while numeric row fields keep their numeric type.
+- Output messages are absolute upserts and deletes without `old_value`. Every change emitted by a unit carries `headers: { txid: unit.key }`. Each unit appends at most one change per output collection and key pair; unchanged rows emit nothing.
+
+A source consumed only by direct `where` filters keeps rows that match at least one of those filters. If any consumer reads the unfiltered source, the circuit keeps its full integral.
+
+## String, extrema, and top ordering
+
+String comparisons (`eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`), `View.min`, `View.max`, and `top` orderings use **lexicographic UTF-16 code-unit ordering**. Views performs no locale collation, case folding, or Unicode normalization.
+
+Rules for `top`:
+
+- `limit` must be a finite positive integer.
+- `by` must end with a final ascending stable key term, such as `row.orderId.asc()`.
+- `top` produces a keyed State collection, not an ordered result list. `StateTable.list` returns rows ordered by their wire keys, not by the `top` sort order.
+
+## Bounding fan-out with maxAffectedKeys
+
+Set the optional `maxAffectedKeys` option on `View.circuit` to a positive safe integer to cap the distinct affected relation keys processed in one unit, including intermediate relation keys. Joins also check candidate key counts before building large joined results.
+
+- Passing a value that is not a positive safe integer throws `RangeError` at declaration time.
+- When a unit exceeds the limit, the SQL transaction rolls back completely. Operator tables, output streams, and the checkpoint remain at their pre-unit state.
+- The unit fails with a permanent `ViewDataFault` identifying the offending key.
+- `maxAffectedKeys` is not part of the plan hash. You can raise or adjust it and retry without raising `generation`.
+- The limit bounds changed keys rather than unchanged rows read by an operator (for example, recomputing a fractional sum still reads the group's rows).
+
+## Permanent faults and error handling
+
+A circuit unit can fail with a `CircuitError` (`PlanChanged | ViewFault | ViewDataFault | ProjectionFault`), and declaration time can throw `ViewFault`, `PlanCheckFailed`, or `RangeError`.
+
+| Fault             | `_tag`              | Retryable                    | When it happens                                                                                                                                                                                                                                                      |
+| ----------------- | ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PlanChanged`     | `"ViewPlanChanged"` | No (`[NonRetryable] = true`) | The declared plan hash differs from the hash stored in `streamsy_view_circuits` for the binding's namespace. Exposes `namespace`, `stored`, and `requested`. Commits nothing                                                                                         |
+| `ViewDataFault`   | `"ViewDataFault"`   | No (`[NonRetryable] = true`) | Row-boundary or limit error during evaluation, such as exceeding `maxAffectedKeys`, an input key disagreeing with its key expression, `unwrap()` on an absent value, or an invalid predicate value. Exposes `view`, `node`, `key`, and `reason`. Rolls back the unit |
+| `ViewFault`       | `"ViewFault"`       | Depends on context           | Setup or operational failure: `View.migrate` on a non-SQLite dialect, an unwrapped output passed to `View.circuit`, schema encode/decode error, or an internal engine error. Exposes `message` and optional `cause`                                                  |
+| `PlanCheckFailed` | `"PlanCheckFailed"` | No (compile time)            | Invalid compiled plan IR during declaration. Exposes `issues`, each with `code`, `view`, optional `nodeId`, `path`, and `message`                                                                                                                                    |
+| `ProjectionFault` | `"ProjectionFault"` | By reason                    | Storage, checkpoint, output, identity, or retirement faults from `@streamsy/projection`. See [`ProjectionFault`](/docs/reference/projection/faults)                                                                                                                  |
+
+Under `Projection.attach` and `ProjectionWakeup.attach`, non-retryable faults (`PlanChanged`, `ViewDataFault`, and non-retryable `ProjectionFault` reasons such as `identity-mismatch`, `invalid-output`, or `retired-generation`) stop only the affected binding and record the failure in `Projection.Registry`. Other bindings continue running.
+
+## Pre-release storage and naming rule
+
+`@streamsy/views` is private and pre-release. Until the first public release, any change to operator-state table layout or internal plan naming requires raising `generation` so affected bindings rebuild into fresh namespaces and output streams.
+
+## Current limits
+
+- **SQLite only.** Operator tables require Bun SQLite, Durable Object SQLite, or another SQLite `SqlClient`. `View.migrate` fails on Postgres and MySQL with `ViewFault`.
+- **SQL bind limit.** The SQLite store computes index keys in JavaScript and binds at most 100 parameters per statement, fitting Cloudflare Durable Object SQLite limits.
+- **JSON object rows.** Input collection values must be JSON objects, and collection codecs must require no Effect services.
+- **Equi-joins only.** Join conditions must test equality between a left-only expression and a right-only expression.
+- **Separate binding namespaces.** Circuit parameters bind separate namespaces with independent SQL state. Dynamic parameters-as-data across bindings are not supported.
+- **Unsupported features.** `avg`, `distinct`, fact folds, closure, the memory tier, frontier rows, and `old_value` on emitted upserts are not supported.

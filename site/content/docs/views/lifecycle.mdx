@@ -1,0 +1,195 @@
+---
+title: Lifecycle and rebuilds
+description: Rebuild a circuit with generations, run old and new circuits side by side, roll back, forget or retire old generations, and cascade to downstream circuits.
+---
+
+Views builds its lifecycle directly on `@streamsy/projection` generations and retirement. Because every circuit output must use `Projection.perGeneration`, each generation owns its own SQL operator namespace and its own output stream addresses.
+
+Retain your input State stream history so circuits can rebuild from the start when plans change.
+
+## Plan identity and namespaces
+
+Each binding's operator state lives in a namespace built from `(id, version, encoded params, generation)`. The first unit in a namespace writes the circuit's canonical plan hash to `streamsy_view_circuits`.
+
+On every subsequent unit in that namespace, the circuit compares the declared plan hash with the stored hash:
+
+- If they differ, the unit fails before committing with `PlanChanged` (`_tag: "ViewPlanChanged"`). No operator rows, output appends, or checkpoint offsets change.
+- Attached runners treat `PlanChanged` as non-retryable and stop only the affected binding.
+- Reordering view keys or object properties preserves the hash. Changing `maxAffectedKeys` also preserves the hash.
+- Collection codec changes are not reflected in the plan hash; raise `generation` when a codec changes.
+
+## Scenario 1: edit in place with a raised generation
+
+To replace a circuit plan in one deploy, edit the views and raise `generation` on the same declaration.
+
+```ts title="examples/views-shop/src/app.ts"
+// The new plan excludes orders below 25 and replays into a fresh stream.
+const rebuilt = shopCircuit(2, 25);
+yield * Projection.run(rebuilt.at(params));
+```
+
+Because the output is wrapped with `Projection.perGeneration`, generation 2 writes to a new stream address (for example `shop/main/views/g/2`) while generation 1's stream (`shop/main/views/g/1`) stays untouched. Keys dropped by the new filter simply never appear in generation 2's stream.
+
+Keep these behaviors in mind for an in-place edit:
+
+- **Rebuilds do not start on attach.** Raising `generation` does not automatically replay existing bindings when the process starts. An attached binding starts rebuilding only when its input receives a new write or when the host calls `registry.schedule(circuit.at(params))`.
+- **New addresses start missing.** Until generation 2 commits its first unit (or the host calls `Projection.createOutputs(bound)`), readers requesting the generation 2 stream get `StreamNotFound`.
+- **Readers see partial output while rebuilding.** If readers move to generation 2 immediately at deploy, they observe a growing stream until generation 2 catches up.
+- **Pinned readers stay consistent.** A reader or `StateTable` still pinned to generation 1 sees no changes from the rebuild. Its rows stay consistent and stale until it switches to generation 2.
+
+## Scenario 2: run old and new side by side
+
+When readers must stay on a live, complete stream while the new plan rebuilds and is verified, run both generations side by side across three deploys.
+
+Use **two distinct circuit ids and two distinct generation numbers**:
+
+```ts no-twoslash
+import { Layer, Schema } from "effect";
+import { Projection } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+import { Orders, ShopViews } from "./streams.ts";
+
+const orders = View.from(Orders, "order");
+
+const totalsFor = (source: typeof orders) =>
+  source
+    .groupBy((row) => ({ customerId: row.customerId }))
+    .aggregate((row) => ({ orders: View.count(), revenue: View.sum(row.total) }));
+
+const topFor = (source: typeof orders) =>
+  source.top({
+    partitionBy: (row) => row.customerId,
+    by: (row) => [row.total.desc(), row.orderId.asc()],
+    limit: 1,
+  });
+
+export const shopViewsV1 = View.circuit({
+  id: "views-shop",
+  generation: 1,
+  params: { shopId: Schema.String },
+  output: Projection.perGeneration(ShopViews, "generation"),
+  views: { customerTotals: totalsFor(orders), topOrder: topFor(orders) },
+});
+
+const filtered = orders.where((row) => row.total.gte(25));
+
+export const shopViewsV2 = View.circuit({
+  id: "views-shop-2",
+  generation: 2,
+  params: { shopId: Schema.String },
+  output: Projection.perGeneration(ShopViews, "generation"),
+  views: { customerTotals: totalsFor(filtered), topOrder: topFor(filtered) },
+});
+
+// Deploy 1: attach both while readers stay on generation 1.
+export const overlap = Layer.mergeAll(
+  Projection.attach(shopViewsV1, { durable: true }),
+  Projection.attach(shopViewsV2, { durable: true }),
+);
+```
+
+Why both the `id` and `generation` must differ:
+
+- **Distinct `id`**: `Projection.Registry` rejects two attachments with the same id, and pending marks and backoff are keyed by id and params. Separate ids prevent a bug or backoff in the new circuit from stalling the serving circuit.
+- **Distinct `generation`**: the generation number selects the `Projection.perGeneration` output stream address. Two ids with the same generation target the same stream, and the second writer fails with non-retryable `invalid-output`.
+
+Run the cutover in three deploys:
+
+1. **Deploy 1 (build side by side).** Add `shopViewsV2` beside `shopViewsV1` and attach both. Schedule or run `shopViewsV2` bindings so they catch up from input history. Keep readers pinned to generation 1.
+2. **Deploy 2 (switch readers).** Point readers and any output `StateTable` bindings to generation 2. Stop attaching `shopViewsV1`, but keep its declaration in code until retirement finishes.
+3. **Retire and Deploy 3 (clean up).** After old runners have stopped and drained, retire each binding of `shopViewsV1` with `Projection.retire` (and clear any old `StateTable` cache). Then deploy the code change that removes `shopViewsV1`.
+
+Remote and browser readers that stay open on generation 1 keep reading a consistent, stale stream until you retire it. Retiring with `streams: "close"` lets open readers reach the stream end and observe the close; retiring with `streams: "remove"` causes subsequent reads to fail with a missing stream.
+
+## Roll back before retirement
+
+Before you retire an older generation, its checkpoint record, SQL operator namespace, and output streams stay intact.
+
+To roll back:
+
+1. Stop runners for the new generation.
+2. Resume runners for the older generation.
+
+The older generation continues from its saved checkpoint and writes to its own stream address without touching the newer generation's stream.
+
+Because old and new operator state and output streams coexist until retirement, storage roughly doubles while two generations remain active. Retire superseded generations once you no longer need rollback.
+
+## Forget versus retire
+
+Stop and drain all runners for a binding before calling either `Projection.forget` or `Projection.retire`. A runner that was already running or pinned before retirement can still append to an open stream.
+
+| Operation                                            | Checkpoint                           | Views SQL namespace              | Output streams                              | Later run of same generation                                              |
+| ---------------------------------------------------- | ------------------------------------ | -------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| `Projection.forget(bound)`                           | Deleted (preserves a tombstone)      | Cleared in the owner transaction | Kept                                        | Fails with non-retryable `invalid-output` if the output stream holds data |
+| `Projection.retire(circuit, params, { generation })` | Replaced with a retirement tombstone | Cleared in the owner transaction | Removed (or closed with `streams: "close"`) | Fails at `load` with non-retryable `retired-generation`                   |
+
+### Forget
+
+`Projection.forget(bound)` deletes the binding's checkpoint and clears its SQL operator namespace in one owner transaction, while keeping the output streams. If cleanup fails, the transaction rolls back and the checkpoint stays unchanged.
+
+Because generation-addressed outputs must start empty and open on a binding's first unit, forgetting a binding and re-running the same generation against a populated output stream fails with non-retryable `invalid-output`. Raise `generation` to replay into fresh streams. See [Forget](/docs/projections/checkpoints#forget).
+
+### Retire
+
+`Projection.retire(declaration, params, { generation })` retires one binding of an older generation in a single SQL transaction on the checkpoint owner:
+
+```ts title="examples/views-shop/src/app.ts"
+// Each run above has finished, so generation 1 has no active runner.
+const retirement = yield * Projection.retire(rebuilt, params, { generation: initial.generation });
+
+const missing =
+  yield * output.head({ ...params, generation: initial.generation }).pipe(Effect.flip);
+
+const refused = yield * Projection.run(initial).pipe(Effect.flip);
+```
+
+In that transaction, retirement writes the checkpoint tombstone, deletes all rows for that namespace from all five Views SQL tables, and removes (or closes, with `streams: "close"`) every exclusively owned wrapped output stream. If any step fails, the entire transaction rolls back, including the tombstone.
+
+- Repeating `Projection.retire` succeeds and reports `record: "already-retired"`.
+- In scenario 2, pass the old declaration (`shopViewsV1`) so retirement targets the old circuit's id and route templates.
+- Retirement operates on one binding at a time, so callers supply the binding `params`.
+- If a `StateTable` indexed the retired stream, stop its runner and clear its cached rows separately with `StateTable.clear(table)`. See [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows) and [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
+
+## Cascade to downstream circuits
+
+When a downstream circuit reads an upstream circuit's generation-addressed output stream, pin the upstream generation in the input State route used by the downstream circuit.
+
+Because a projection checkpoint records each input's stream id, repinning a downstream circuit to upstream generation 2 while keeping the downstream circuit at generation 1 fails at `load` with `identity-mismatch`. Raise the downstream circuit's `generation` at the same time so it replays from the start of the new upstream stream into its own new output stream:
+
+```ts no-twoslash
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+import { Orders, ShopViews } from "./streams.ts";
+
+const pinnedShopViews = (generation: number) =>
+  Streamsy.state<ShopViews>()("ViewsShop/Views", `shop/:shopId/views/g/${generation}`, {
+    params: Orders.paramCodecs,
+    collections: ShopViews.collections,
+  });
+
+class HighValueTotals extends Streamsy.state<HighValueTotals>()(
+  "ViewsShop/HighValueTotals",
+  "shop/:shopId/high-value/g/:generation",
+  {
+    params: { shopId: Schema.String, generation: Schema.FiniteFromString },
+    collections: { customerTotals: ShopViews.collections.customerTotals },
+  },
+) {}
+
+export const downstreamCircuit = (upstreamGeneration: number, generation: number) =>
+  View.circuit({
+    id: "high-value-totals",
+    generation,
+    params: Orders.paramCodecs,
+    output: Projection.perGeneration(HighValueTotals, "generation"),
+    views: {
+      customerTotals: View.from(pinnedShopViews(upstreamGeneration), "customerTotals").where(
+        (row) => row.revenue.gte(100),
+      ),
+    },
+  });
+```
+
+When upstream moves from generation 1 to generation 2, move downstream from `downstreamCircuit(1, 1)` to `downstreamCircuit(2, 2)`.
