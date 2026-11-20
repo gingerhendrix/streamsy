@@ -1,0 +1,35 @@
+---
+title: AI SDK
+description: Run the durable-response demo using AI SDK useChat with full replay and persisted Stop.
+---
+
+The AI SDK demo (`examples/durable-response-aisdk`) pairs native `useChat` (`resume: true`) and the published durable transport with a local SQLite-backed API. Reloading a response URL performs a full replay of the recorded log.
+
+Complete the root setup in [Durable response examples](/docs/examples/durable-response) before starting the servers.
+
+## Start the servers
+
+Start the API and UI dev servers in separate terminals from the repository root.
+
+Terminal 1 (API on port `1343`):
+
+```bash
+bun run --cwd examples/durable-response-aisdk dev:api
+```
+
+Terminal 2 (UI on `http://localhost:1344`):
+
+```bash
+bun run --cwd examples/durable-response-aisdk dev
+```
+
+## Read the response again
+
+Follow [Replay and stop a response](/docs/examples/durable-response#replay-and-stop-a-response). The React UI sets `resume: true` in `useChat`. On reload, the durable transport reads the log from the beginning and reconstructs the message without a second model call.
+
+**Stop** writes a terminal update for other readers. Repeating Stop on a finished response is a successful no-op. If the API has restarted and the response log is open without a running generation, Stop returns HTTP `409`.
+
+## Source paths
+
+- API and scripted model: `examples/durable-response-aisdk/src/index.ts`, `examples/durable-response-aisdk/src/server.ts`, `examples/durable-response-aisdk/src/model.ts`
+- UI and contract: `examples/durable-response-aisdk/src/App.tsx`, `examples/durable-response-aisdk/src/contract.ts`

@@ -1,0 +1,55 @@
+---
+title: Durable response examples
+description: Run four local durable-response demos backed by SQLite across Effect Atom, Foldkit, AI SDK, and TanStack AI.
+---
+
+Each demo records a scripted response in a Streamsy stream backed by SQLite. Open the same response in two tabs to follow one generation. Press **Stop** in either tab to abort the generation and record the stopped state for every reader.
+
+| Demo | Browser URL | API port | Reload behavior | Stop on orphan open log |
+| --- | --- | --- | --- | --- |
+| [Effect Atom](/docs/examples/durable-response/effect) | `http://localhost:1341` | `1340` | Resumes from saved offsets | Closes the log |
+| [Foldkit](/docs/examples/durable-response/effect) | `http://localhost:1342` | `1340` | Resumes from saved offsets | Closes the log |
+| [AI SDK](/docs/examples/durable-response/ai-sdk) | `http://localhost:1344` | `1343` | Full replay from log | Returns HTTP `409` |
+| [TanStack AI](/docs/examples/durable-response/tanstack-ai) | `http://localhost:1346` | `1345` | Full raw replay on reload | Returns HTTP `409` |
+
+An orphan log is an open response log with no running generation, for example after an API restart.
+
+## Setup
+
+Install dependencies and build workspace packages once from the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+```
+
+Start each demo API and UI dev server in separate terminals from the repository root. Follow the page for the stack you want to run:
+
+- [Effect Atom and Foldkit](/docs/examples/durable-response/effect)
+- [AI SDK](/docs/examples/durable-response/ai-sdk)
+- [TanStack AI](/docs/examples/durable-response/tanstack-ai)
+
+## Replay and stop a response
+
+1. Open the demo URL and click **Start response**. The page opens `/r/<id>` for the new response.
+2. Open that response URL in a second tab while the text is still streaming. Both tabs read the same response. Check that **Model calls** stays at 1.
+3. Press **Stop** in either tab while the response is still streaming. Both tabs stop receiving text and show the stopped state.
+4. Reload the response URL. The recorded text and stopped state remain, and **Model calls** stays at 1. In the AI SDK and TanStack AI demos, **Provider interruptions** shows the recorded interruption count for this API process.
+5. To start a different response, click **New response**, then submit the prompt. Reloading `/r/<id>` does not start a new generation.
+
+If the scripted response finishes before you can press **Stop**, start another response or increase `DURABLE_RESPONSE_PACE_MS` when you start the API.
+
+## Storage and configuration
+
+Each API entry point (`examples/durable-response/src/index.ts`, `examples/durable-response-aisdk/src/index.ts`, and `examples/durable-response-tanstack/src/index.ts`) reads three environment variables:
+
+- `PORT`: HTTP port for the API (`1340` for Effect, `1343` for AI SDK, `1345` for TanStack AI).
+- `DURABLE_RESPONSE_DB`: SQLite file path. Each API defaults to `.data/responses.sqlite` inside its own package directory and creates parent directories automatically.
+- `DURABLE_RESPONSE_PACE_MS`: Delay in milliseconds between scripted chunks (must be nonnegative; defaults to `250` for Effect and AI SDK, and `40` for TanStack AI).
+
+## Known limits
+
+- These are unauthenticated, loopback, single-process demos backed by scripted models.
+- SQLite preserves recorded output, not active provider execution after a process crash or restart.
+- Abort controllers and stats counters are process-local in memory and reset when an API process restarts.
+- The demos do not exercise real providers, tool calls, or approvals.

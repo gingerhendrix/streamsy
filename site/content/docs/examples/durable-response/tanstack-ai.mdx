@@ -1,0 +1,37 @@
+---
+title: TanStack AI
+description: Run the TanStack AI demo and replay the recorded response and Stop events.
+---
+
+The TanStack AI demo (`examples/durable-response-tanstack`) runs a local TanStack AI client against a SQLite-backed durable stream API. It uses raw replay with snapshots disabled and an explicit application Stop convention.
+
+Complete the root setup in [Durable response examples](/docs/examples/durable-response) before starting the servers.
+
+## Start the servers
+
+Start the API and UI dev servers in separate terminals from the repository root.
+
+Terminal 1 (API on port `1345`):
+
+```bash
+bun run --cwd examples/durable-response-tanstack dev:api
+```
+
+Terminal 2 (UI on `http://localhost:1346`):
+
+```bash
+bun run --cwd examples/durable-response-tanstack dev
+```
+
+## Replay the raw events
+
+Follow [Replay and stop a response](/docs/examples/durable-response#replay-and-stop-a-response). Each page mount opens a fresh connection with `emitSnapshotOnSubscribe: false` and replays the full event log. The patched `@durable-streams/tanstack-ai-transport@0.0.10` uses `jsonStream()` in this mode. It honors a supplied starting offset, but the demo does not receive an advancing checkpoint to save for reload. The patch leaves snapshot mode unchanged, including its observed completion race.
+
+## Record Stop for other readers
+
+The server appends an application `CUSTOM` event with stop metadata and a cancelled `RUN_FINISHED` event. Aborting the generation alone would leave other readers without that stopped state. Repeating Stop on a finished response is a successful no-op. If the log is still open after an API restart and has no active generation, Stop returns HTTP `409`.
+
+## Source paths
+
+- API and fake adapter: `examples/durable-response-tanstack/src/index.ts`, `examples/durable-response-tanstack/src/server.ts`, `examples/durable-response-tanstack/src/model.ts`
+- UI, connection, and contract: `examples/durable-response-tanstack/src/App.tsx`, `examples/durable-response-tanstack/src/connection.ts`, `examples/durable-response-tanstack/src/contract.ts`

@@ -1,0 +1,45 @@
+---
+title: Effect Atom and Foldkit
+description: Run the shared Effect durable-response API with the Effect Atom and Foldkit UIs.
+---
+
+The Effect Atom (`examples/durable-response-atom`) and Foldkit (`examples/durable-response-foldkit`) demos share one Effect API (`examples/durable-response`) and one contract package (`examples/durable-response-contract`). Both UIs resume from saved stream offsets instead of replaying from the beginning on reload.
+
+Complete the root setup in [Durable response examples](/docs/examples/durable-response) before starting the servers.
+
+## Start the servers
+
+Start one API server and one or both UI dev servers in separate terminals from the repository root.
+
+Terminal 1 (shared API on port `1340`):
+
+```bash
+bun run --cwd examples/durable-response dev
+```
+
+Terminal 2 (Effect Atom UI on `http://localhost:1341`):
+
+```bash
+bun run --cwd examples/durable-response-atom dev
+```
+
+Terminal 3 (optional Foldkit UI on `http://localhost:1342`):
+
+```bash
+bun run --cwd examples/durable-response-foldkit dev
+```
+
+## Resume from an offset
+
+Follow [Replay and stop a response](/docs/examples/durable-response#replay-and-stop-a-response). To pause just one reader, click **Drop connection** in that tab. The other tab keeps receiving text. Click **Reconnect** while the response is still open. **Resumed at** shows the offset the reader used to reconnect.
+
+Both UIs store the folded text and its offset together in `sessionStorage`. When you reload a tab with a saved snapshot, the reader starts at that offset. Without a saved snapshot, the reader starts at the beginning.
+
+**Stop** interrupts the generation for every reader. If an API restart left the log open without an active generation, **Stop** can close that log.
+
+## Source paths
+
+- `examples/durable-response/src/generations.ts` owns generation and Stop.
+- `examples/durable-response-contract/resume.ts` reads and saves snapshots.
+- `examples/durable-response-atom/src/state.ts` starts the Effect Atom reader.
+- `examples/durable-response-foldkit/src/subscription.ts` starts the Foldkit reader.
