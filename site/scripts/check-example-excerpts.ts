@@ -15,8 +15,7 @@ const examplePages = fileURLToPath(new URL("../content/docs/examples/", import.m
  * The first folder is the page's own example. A fence title is a path relative to
  * it. A title that starts with the name of another listed folder, for example
  * `issue-tracker-demo-contract/api.ts`, quotes that folder. `index` lists the
- * examples and quotes no example. Every other page in `content/docs/examples` needs an
- * entry.
+ * examples and quotes no example. Every page that quotes local files needs an entry.
  */
 export const pageExamples = new Map<string, readonly [string, ...Array<string>]>([
   ["hackernews-newest-stream", ["examples/hackernews-newest-stream"]],
@@ -251,7 +250,8 @@ export const checkExampleExcerpts = async (): Promise<void> => {
   );
 
   for (const page of pages) {
-    if (page === "index") continue;
+    // Doom quotes the separate streamsy-doom repository, not this checkout.
+    if (page === "index" || page === "doom") continue;
     const folders = pageExamples.get(page);
 
     if (folders === undefined) {
