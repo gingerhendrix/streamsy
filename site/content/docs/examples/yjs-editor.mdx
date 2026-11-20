@@ -5,15 +5,49 @@ description: A collaborative ProseMirror editor on Streamsy and Cloudflare Durab
 
 Open the [live Yjs editor](https://yjs-editor.streamsy.dev), choose **Create room**, then use **Copy room link** to open that room in a second browser window. Text, selections, cursors, and display names sync as you edit. Rooms are public. Anyone with the link can edit, so keep private data out. Keep editing until a snapshot is built, then open the same link in a third window. It fetches one compacted snapshot and catches up with the updates after it. Each room also links to its raw update stream under `/v1/stream`, which you can inspect directly with `curl`.
 
-The full example lives in [`examples/yjs-editor`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor), paired with Streamsy's private fork of the Durable Streams Yjs browser client in [`packages/y-durable-streams`](https://github.com/gingerhendrix/streamsy/tree/main/packages/y-durable-streams).
-
 ## Two windows editing, then a third joining
 
 ![Concept diagram. Peer A posts each Yjs update to the document's .updates stream, and peer B follows that stream with long-polling. Both peers exchange presence through an awareness stream with a one-hour TTL, followed with server-sent events. A compaction fold follows .updates and merges the document into a snapshot after every mebibyte of new updates. A new peer loads the snapshot, then reads only the tail of .updates after it.](/docs/examples/yjs-editor-concept.svg)
 
 Each document uses four kinds of Streamsy stream under `/v1/stream/yjs/:service/docs/:docPath/`: `.updates`, `.snapshots/<offset>_snapshot`, `.awareness/<name>`, and `.awareness-index`.
 
-**Windows one and two sync through `.updates` and `.awareness`.** Each browser runs ProseMirror with `y-prosemirror` and `YjsProvider` from `@streamsy/y-durable-streams`. Local edits produce binary Yjs CRDT updates, which the provider `POST`s to `/v1/yjs/:service/docs/:docPath`. The server appends them to `.updates` as lib0 length-prefixed frames; a producer batch can carry several frames. The other window follows `.updates` with long-polling (`live=true`) and applies each update as it arrives. Because Yjs updates commute, the server never resolves edit conflicts on write.
+**Windows one and two sync through `.updates` and `.awareness`.** Each browser creates a `Y.Doc`, attaches an `Awareness` instance, and binds both to ProseMirror via `y-prosemirror` and `YjsProvider` from `@streamsy/y-durable-streams`. `connect()` starts syncing the room. The view allows edits only while the provider is connected. Snippet titles are relative to `examples/yjs-editor`, except those starting with `y-durable-streams/`, which refer to the provider package. `// ...` marks omitted lines.
+
+```ts title="src/main.ts"
+const doc = new Y.Doc();
+const awareness = new Awareness(doc);
+awareness.setLocalStateField("user", { name: name.value, color });
+
+const provider = new YjsProvider({
+  doc,
+  awareness,
+  baseUrl: `${location.origin}/v1/yjs/editor`,
+  docId: roomId,
+  connect: false,
+});
+
+const view = new EditorView(element("#editor"), {
+  state: EditorState.create({
+    schema,
+    plugins: [
+      ySyncPlugin(doc.getXmlFragment("prosemirror")),
+      yCursorPlugin(awareness),
+      yUndoPlugin(),
+      keymap({ "Mod-z": undo, "Mod-y": redo, "Mod-Shift-z": redo }),
+      keymap(baseKeymap),
+    ],
+  }),
+  // ...
+  editable: () => provider.connected,
+  // ...
+});
+// ...
+provider.on("status", renderStatus);
+provider.on("error", renderError);
+void provider.connect();
+```
+
+Local edits produce binary Yjs CRDT updates, which the provider `POST`s to `/v1/yjs/:service/docs/:docPath`. The server appends them to `.updates` as lib0 length-prefixed frames; a producer batch can carry several frames. The other window follows `.updates` with long-polling (`live=true`) and applies each update as it arrives. Because Yjs updates commute, the server never resolves edit conflicts on write.
 
 Cursors, selections, and names travel separately as lib0-framed updates on `.awareness/<name>`, followed over SSE (`live=true`). Awareness streams carry `Stream-TTL: 3600`: an idle stream expires after an hour, and the next `POST` recreates it idempotently. Joining windows do not replay old cursors. Named awareness streams are listed in `.awareness-index` as `{ name, createdAt }` JSON entries so deleting a document removes its updates, snapshot, awareness streams, and fold checkpoint in one transaction.
 
@@ -25,26 +59,142 @@ Compaction does not prune `.updates`. Update history remains intact for lagging 
 
 Snapshot creation and snapshot discovery are intentionally decoupled.
 
-**Background folding runs on an alarm.** [`worker/compaction.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/compaction.ts) defines `compaction`, a `@streamsy/projection` fold (`Projection.fold`) over `Updates`. Its `FoldState` keeps only three small values: total folded `bytes`, `pending` bytes since the last snapshot, and the latest `snapshot` offset. When a write commits to `.updates`, a commit hook records a durable pending mark in the same SQLite transaction, and the Durable Object alarm runs the fold off the write request path through `ProjectionWakeup.attach(compaction)`.
+**Background folding runs on an alarm.** `compaction` is a `@streamsy/projection` fold (`Projection.fold`) over `Updates`. Its `FoldState` keeps only three small values: total folded `bytes`, `pending` bytes since the last snapshot, and the latest `snapshot` offset. When a write commits to `.updates`, a commit hook records a durable pending mark in the same SQLite transaction, and the Durable Object alarm runs the fold off the write request path through `ProjectionWakeup.attach(compaction)`:
 
-When the alarm runs under `Commit.transaction` and `pending` reaches `COMPACTION_THRESHOLD` (code default `1024 * 1024`, or 1 MiB), `publishSnapshot` loads the prior snapshot into a `Y.Doc`, side-reads `.updates` to the log's tail, writes the merged bytes in 1 MiB `SNAPSHOT_CHUNK` messages, removes the previous snapshot, and commits the new snapshot and fold state together. Updates already covered by `state.snapshot` still add to `bytes` but not `pending`, preventing repeated merges across a backlog. Compaction failures leave the committed update intact. The fold is configured for up to five attempts with backoff.
+```ts title="worker/compaction.ts"
+const FoldState = Schema.Struct({
+  bytes: Schema.Finite,
+  pending: Schema.Finite,
+  snapshot: Schema.optionalKey(Schema.String),
+});
+// ...
+export const compaction = Projection.fold({
+  id: "yjs-compaction",
+  // Version 2 keeps the snapshot offset in the state instead of an `.index` stream.
+  version: 2,
+  params: { document: Schema.String },
+  inputs: { updates: Updates },
+  state: { schema: FoldState, initial: { bytes: 0, pending: 0 } },
+  commit: Commit.transaction,
+  retry: { maxAttempts: 5 },
+  fold: (state, { item, offset }, unit) =>
+    Effect.gen(function* () {
+      const bytes = state.bytes + item.length;
 
-**Discovery reads the checkpoint at request time.** `GET ?offset=snapshot` in [`worker/document.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/document.ts) does no Yjs merging; it reads `snapshot` straight from the fold checkpoint and returns the `307`.
+      // The last snapshot read to the log's tail, so it already covers this update.
+      if (
+        state.snapshot !== undefined &&
+        offset !== undefined &&
+        compare(offset, state.snapshot) <= 0
+      )
+        return { ...state, bytes };
+      const pending = state.pending + item.length;
 
-**Why the browser client was forked.** Upstream `@durable-streams/y-durable-streams` 0.2.9 probes `?offset=snapshot` with `redirect: "manual"` and inspects the `Location` header. Browsers return an opaque response (status `0`, no readable headers) for manual redirects, so browser clients silently fell back to replaying `.updates` from `-1`. `@streamsy/y-durable-streams` follows the redirect instead and extracts the offset from the final URL without changing the wire protocol.
+      if (pending < (yield* CompactionThreshold)) return { ...state, bytes, pending };
 
-## Deployment and implementation entry points
+      return {
+        bytes,
+        pending: 0,
+        snapshot: yield* publishSnapshot(unit.params.document, state.snapshot),
+      };
+    }),
+});
+```
 
-On Cloudflare, [`alchemy.run.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/alchemy.run.ts) deploys one Worker, static assets, and a SQLite Durable Object namespace (`DocumentObject`). Each document ID (`yjs/<service>/docs/<path>`) maps to its own `DocumentObject`, keeping the streams and fold checkpoint together so compaction and document deletion stay transactional.
+When the alarm runs under `Commit.transaction` and `pending` reaches `COMPACTION_THRESHOLD` (code default `1024 * 1024`, or 1 MiB), `publishSnapshot` loads the prior snapshot into a `Y.Doc`, side-reads `.updates` to the log's tail, writes the merged bytes in 1 MiB `SNAPSHOT_CHUNK` messages, removes the previous snapshot, and commits the new snapshot and fold state together. Updates already covered by `state.snapshot` still add to `bytes` but not `pending`, preventing repeated merges across a backlog. Compaction failures leave the committed update intact, and the fold allows up to five attempts with backoff.
+
+**Discovery reads the checkpoint at request time.** `GET ?offset=snapshot` does no Yjs merging; it reads `snapshot` straight from the fold checkpoint and returns the `307`:
+
+```ts title="worker/document.ts"
+const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL, id: string) {
+  yield* requireDocument(id);
+
+  // A pending snapshot is not in the fold state yet, so discovery returns the previous one.
+  const { state } = yield* Projection.read(compaction.at({ document: id }));
+
+  url.searchParams.set("offset", state.snapshot ? `${state.snapshot}_snapshot` : "-1");
+
+  return HttpServerResponse.empty({
+    status: 307,
+    headers: {
+      location: `${url.pathname}${url.search}`,
+      "cache-control": "private, max-age=5",
+    },
+  });
+});
+```
+
+**Why the browser client was forked.** Upstream `@durable-streams/y-durable-streams` 0.2.9 probes `?offset=snapshot` with `redirect: "manual"` and inspects the `Location` header. Browsers return an opaque response (status `0`, no readable headers) for manual redirects, so browser clients silently fell back to replaying `.updates` from `-1`. `@streamsy/y-durable-streams` follows the redirect instead, extracts the offset from the final URL, applies the snapshot body if one exists, and resumes from `stream-next-offset` without changing the wire protocol:
+
+```ts title="y-durable-streams/src/yjs-provider.ts"
+private async discoverSnapshot(ctx: ConnectionContext, attempt = 1): Promise<void> {
+  const url = `${this.docUrl()}?offset=snapshot`;
+
+  const response = await fetch(url, {
+    method: `GET`,
+    // SAFETY: upstream cast. Function-valued HeadersRecord entries are not resolved on raw fetch calls (known upstream limit, see README).
+    headers: this.headers as Record<string, string>,
+    signal: ctx.controller.signal,
+  });
+
+  // `response.url` is empty only for a Response that fetch did not produce.
+  const offset = new URL(response.url || url).searchParams.get(`offset`);
+
+  if (offset?.endsWith(`_snapshot`)) {
+    // ...
+    const data = new Uint8Array(await response.arrayBuffer());
+    if (data.length > 0) {
+      Y.applyUpdate(this.doc, data, `server`);
+    }
+
+    ctx.startOffset = response.headers.get(`stream-next-offset`) ?? `-1`;
+    return;
+  }
+
+  // No snapshot. The redirect target is a log read, which the updates stream
+  // repeats, so do not download it here.
+  await YjsProvider.discardBody(response);
+
+  // Start from the offset the server named. Without a redirect, start from the beginning.
+  ctx.startOffset = offset !== null && offset !== `snapshot` ? offset : `-1`;
+}
+```
+
+## Deployment and Durable Object wiring
+
+On Cloudflare, the Alchemy stack deploys one Worker, static assets, and a SQLite Durable Object namespace (`DocumentObject`). Each document ID (`yjs/<service>/docs/<path>`) maps to its own `DocumentObject`, keeping the streams and fold checkpoint together so compaction and document deletion stay transactional.
 
 ![Architecture diagram. The browser runs the ProseMirror editor and the YjsProvider from @streamsy/y-durable-streams, and links the raw update stream. A Cloudflare Worker sends /v1/yjs document requests to the DocumentObject named after the document, and /v1/stream reads through router(placement). In the object, the Yjs routes forward to the .updates and .awareness streams and read the compaction fold's state for snapshot discovery and the size budget. Http.routes serves all four streams read-only. The object's alarm runs the compaction fold, which keeps a checkpoint of byte counts and the snapshot offset and publishes a .snapshots stream stored as 1 MiB messages.](/docs/examples/yjs-editor-architecture.svg)
 
-Six files explain the backend:
+All four stream definitions (`Updates`, `Snapshots`, `Awareness`, and `AwarenessIndex`) share one placement owner so every stream of a document lands in the same Durable Object. The Worker forwards `/v1/yjs/...` requests to that `DocumentObject` by document ID, sends `/v1/stream/...` reads through Streamsy's `router` using this `placement`, and falls back to `env.ASSETS` for the editor app:
 
-- [`worker/index.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/index.ts) routes `/v1/yjs/...` requests through `parseDocumentRoute` and `documentId` to the document's `DocumentObject`, forwards `/v1/stream/...` through Streamsy's `router`, and falls back to `env.ASSETS`.
-- [`worker/streams.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/streams.ts) and [`worker/placement.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/placement.ts) declare `Updates`, `Snapshots`, `Awareness`, and `AwarenessIndex` and bind all four to the document owner with `Placement.byRoute`.
-- [`worker/document.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/document.ts) and [`worker/awareness.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/awareness.ts) wire the Yjs routes onto Streamsy's `Http.app` stream protocol, stripping non-producer headers such as `Stream-Closed` on append so a disconnecting peer cannot close the shared document.
-- [`worker/objects.ts`](https://github.com/gingerhendrix/streamsy/tree/main/examples/yjs-editor/worker/objects.ts) assembles `DocumentObject` around `StreamsyObject`, `ProjectionWakeup.attach(compaction)`, and read-only `Http.routes`.
+```ts title="worker/placement.ts"
+export const placement = Placement.byRoute([
+  rule({ stream: Updates, owner: ({ document }) => document }),
+  rule({ stream: Snapshots, owner: ({ document }) => document }),
+  rule({ stream: Awareness, owner: ({ document }) => document }),
+  rule({ stream: AwarenessIndex, owner: ({ document }) => document }),
+]);
+```
+
+Inside each `DocumentObject`, `StreamsyObject.make` mounts the raw backing streams read-only under `/v1/stream` alongside the `/v1/yjs/*` protocol routes, attaches the `compaction` fold to the object's alarm wakeup, and provides Durable Object storage plus `COMPACTION_THRESHOLD`. When the Yjs routes forward `POST` appends onto Streamsy's `Http.app`, they copy only producer headers and strip headers such as `Stream-Closed` so a disconnecting peer cannot close the shared document:
+
+```ts title="worker/objects.ts"
+export class DocumentObject extends StreamsyObject.make({
+  app: Layer.merge(Http.routes(streams, { prefix: "/v1/stream", access: "read" }), yjsRoutes),
+  wakeups: [ProjectionWakeup.attach(compaction)],
+  layer: (state: DurableObjectState, env: Env) =>
+    Layer.merge(storage(state), CompactionThreshold.layer).pipe(
+      Layer.provideMerge(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            COMPACTION_THRESHOLD: env.COMPACTION_THRESHOLD || undefined,
+          }),
+        ),
+      ),
+    ),
+}) {}
+```
 
 ## Limits and upstream differences
 
