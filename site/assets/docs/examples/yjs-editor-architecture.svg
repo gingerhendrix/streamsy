@@ -41,7 +41,7 @@
 
   <rect class="node" x="330" y="116" width="260" height="56" rx="14"/>
   <text class="node-title" x="460" y="140" text-anchor="middle">YjsProvider</text>
-  <text class="node-subtitle" x="460" y="158" text-anchor="middle">YjsProvider</text>
+  <text class="node-subtitle" x="460" y="158" text-anchor="middle">Syncs updates and presence</text>
 
   <rect class="node" x="624" y="116" width="260" height="56" rx="14"/>
   <text class="node-title" x="754" y="140" text-anchor="middle">Raw stream link</text>
