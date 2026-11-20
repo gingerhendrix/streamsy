@@ -1,6 +1,7 @@
 import { test, expect } from "@effect/vitest";
 import { Miniflare } from "miniflare";
 import { Array, Schema } from "effect";
+import baseline from "../../bench/baseline.json";
 
 const Result = Schema.Struct({
   units: Schema.Array(
@@ -58,6 +59,9 @@ test("same spike C circuit on local workerd with billable SQL rows per unit", as
       expect(unit.billing.rowsRead).toBeGreaterThan(0);
       expect(unit.billing.rowsWritten).toBeGreaterThan(0);
       expect(unit.txids).toHaveLength(1);
+
+      if (unit.name === "single-order")
+        expect(unit.billing.rowsWritten).toBe(baseline.workerd.singleOrder.rowsWritten);
     }
 
     await Bun.write(`${scratch}/billing.json`, JSON.stringify(result, null, 2));

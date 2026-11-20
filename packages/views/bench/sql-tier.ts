@@ -1,7 +1,7 @@
-/** Run from the repository root: bun packages/views/bench/sql-tier.ts 10000 <scratch-folder>
+/** Run from the repository root: bun run --cwd packages/views bench:sql 10000 <scratch-folder>
  * File-backed WAL, 1,000 input changes per load unit, four shared views.
- * Timings include the Effect SQL transaction and output creation; materializing the
- * emitted changes in the benchmark's consumer Map happens outside the timing.
+ * Timings include the Effect SQL transaction and generating output changes.
+ * The consumer Map applies changes outside the timed window.
  */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
@@ -30,11 +30,11 @@ const count = Number(process.argv[2] ?? 10_000);
 const scratch = process.argv[3];
 
 if (!scratch || !Number.isInteger(count) || count < 10 || count % 10)
-  throw new Error("usage: bun sql-tier.ts <orders divisible by 10> <scratch-folder>");
+  throw new Error("usage: bun run bench:sql <orders divisible by 10> <scratch-folder>");
 
 const customerCount = count / 10;
 
-const database = join(scratch, `views-slice1-${count}-${Date.now()}.sqlite`);
+const database = join(scratch, `views-sql-${count}-${Date.now()}.sqlite`);
 
 const order = (i: number): Order => ({
   orderId: `o-${i}`,
