@@ -476,8 +476,25 @@ export function define<
     },
   );
 
-  return { ...declaration, inputs: { state }, parse: state.parse };
+  return Object.assign(declaration, { inputs: { state }, parse: state.parse });
 }
+
+const clearIndex = (sql: SqlClient.SqlClient, id: string) =>
+  clearRows(sql, id).pipe(
+    Effect.andThen(sql`DELETE FROM streamsy_state_heads WHERE stream_id = ${id}`),
+    Effect.catchTag("SqlError", sqlFault(id)),
+    Effect.asVoid,
+  );
+
+/** Delete cached rows and their applied offset, even if the State stream has been removed. */
+export const clear = Effect.fn("StateTable.clear")(function* <
+  C extends StreamAddress.Collections,
+  R,
+>(table: Bound<C, R>) {
+  const tx = yield* Transaction;
+
+  yield* tx.withTransaction(clearIndex(tx.sql, table.inputs.state.id));
+});
 
 /** Discard the index and replay the State stream atomically, retaining the binding checkpoint. */
 export const rebuild = Effect.fn("StateTable.rebuild")(function* <
@@ -487,13 +504,7 @@ export const rebuild = Effect.fn("StateTable.rebuild")(function* <
   const tx = yield* Transaction;
   const id = table.inputs.state.id;
 
-  yield* tx.withTransaction(
-    clearRows(tx.sql, id).pipe(
-      Effect.andThen(tx.sql`DELETE FROM streamsy_state_heads WHERE stream_id = ${id}`),
-      Effect.catchTag("SqlError", sqlFault(id)),
-      Effect.andThen(table.sync()),
-    ),
-  );
+  yield* tx.withTransaction(clearIndex(tx.sql, id).pipe(Effect.andThen(table.sync())));
 });
 
 /** Append a reset to the State stream. The next table run applies it. */

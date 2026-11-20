@@ -1,4 +1,4 @@
-import { acceptedOutput, acceptedResult, acceptedKey } from "./accepted.ts";
+import { acceptedOutput, acceptedResult } from "./accepted.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord and Range are Schema.Struct plain data records. */
 import { Array, Clock, Effect, Option, Record } from "effect";
 import {
@@ -31,6 +31,8 @@ import {
   type StateValue,
 } from "./snapshot.ts";
 import { unitOf, type Unit } from "./unit.ts";
+import { boundOutputs } from "./outputs.ts";
+import { GenerationOutputs } from "./per-generation.ts";
 
 /** The result of one `pass`: one committed unit (`progress`), or no input or wake to commit. */
 export interface PassResult<Inputs extends InputMap = InputMap> {
@@ -220,15 +222,16 @@ const step = Effect.fn("Projection.pass")(function* <
 
   if (gone) Object.assign(next, { ended: true });
   const outputs: Record<string, Details["outputs"][string]> = {};
+  let generationOutputs: Map<string, Details["outputs"][string]> | undefined;
 
-  for (const [name, address] of Record.toEntries(projection.streams ?? {})) {
+  for (const [name, address] of Record.toEntries(boundOutputs(projection))) {
     const service = yield* address.stream;
-    outputs[name] = { address, service };
-  }
+    const generation = projection[GenerationOutputs]?.get(name);
+    const output = { address, service, generation };
 
-  if (projection.accepted !== undefined) {
-    const address = projection.accepted;
-    outputs[acceptedKey] = { address, service: yield* address.stream };
+    outputs[name] = output;
+
+    if (generation !== undefined) (generationOutputs ??= new Map()).set(name, output);
   }
 
   let prepared: unknown;
@@ -303,6 +306,8 @@ const step = Effect.fn("Projection.pass")(function* <
       ),
     },
   );
+
+  if (generationOutputs !== undefined) Object.assign(request, { generationOutputs });
 
   yield* projection.commit.apply(request).pipe(
     Effect.catchTag("HandlerFailed", (failure) =>

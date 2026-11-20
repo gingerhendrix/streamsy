@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
 import type { Effect } from "effect";
 import type { SqlClient } from "effect/sql";
-import type { WakeOutput } from "./wake.ts";
+import type { AcceptedOutput } from "./accepted.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Slices } from "./batch.ts";
 import {
@@ -52,7 +52,7 @@ export function process<
   Prepared = void,
   PE = never,
   PR = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
   A = void,
@@ -94,7 +94,7 @@ export function process<
   Prepared = void,
   PE = never,
   PR = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
   A = void,

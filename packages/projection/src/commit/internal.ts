@@ -4,6 +4,7 @@ import { Array, Effect, Option, Record } from "effect";
 import type { StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, Writer } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
+import { ProjectionFault } from "../fault.ts";
 import type { Commit, Pending, Folded, Emitted, Accumulated, OutputNames } from "./model.ts";
 import type { WakeAt } from "../wake-at.ts";
 import type { PinnedRange } from "../unit.ts";
@@ -17,6 +18,7 @@ export type Result =
 
 export interface ResolvedOutput {
   readonly address: StreamAddress.StreamAddress<unknown>;
+  readonly generation?: { readonly shared: boolean } | undefined;
   readonly service: {
     readonly owner: object;
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
@@ -48,6 +50,22 @@ export const load: Commit<never, never, CheckpointStore>["load"] = (key) =>
 
 export const remove: NonNullable<Commit<never, never, CheckpointStore>["remove"]> = (key) =>
   CheckpointStore.use((store) => store.remove(key));
+
+export const retire: NonNullable<Commit<never, never, CheckpointStore>["retire"]> = ({
+  key,
+  cleanup,
+}) =>
+  CheckpointStore.use((store) =>
+    store.retire === undefined
+      ? Effect.fail(
+          new ProjectionFault({
+            phase: "checkpoint",
+            reason: "unsupported-composition",
+            message: `The checkpoint store cannot retire ${key.id}`,
+          }),
+        )
+      : store.retire(key).pipe(Effect.tap(() => cleanup)),
+  );
 
 /** Merge the handler's state and timer into the same checkpoint write. */
 export const withState = (next: CheckpointRecord, result: Result): CheckpointRecord => {

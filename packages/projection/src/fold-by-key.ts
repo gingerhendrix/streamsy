@@ -19,6 +19,7 @@ import { decodeRow, encodeRow, storedValues } from "./state-table-rows.ts";
 import type { Step } from "./step.ts";
 import type { Transaction } from "./transaction.ts";
 import type { Unit } from "./unit.ts";
+import { TransactionGenerationOutputs } from "./per-generation.ts";
 
 /** Return this from a fold to delete its row. The next record receives undefined. */
 export const remove = Symbol("@streamsy/projection/FoldByKey.remove");
@@ -142,10 +143,24 @@ const make =
         );
       const { wire } = yield* output.stream;
 
-      yield* wire
-        .create(output.id, { contentType: output.contentType })
-        .pipe(Effect.mapError(writeFault(output.id)));
-      yield* table.at(params.value).sync();
+      const generationBound =
+        (yield* TransactionGenerationOutputs)?.get(spec.output)?.address.id === output.id;
+
+      if (!generationBound)
+        yield* wire
+          .create(output.id, { contentType: output.contentType })
+          .pipe(Effect.mapError(writeFault(output.id)));
+
+      yield* table
+        .at(params.value)
+        .sync()
+        .pipe(
+          Effect.mapError((cause) =>
+            generationBound && cause.reason === "history-unavailable"
+              ? fault("invalid-output", `Cannot write output ${output.id}`)(cause)
+              : cause,
+          ),
+        );
       const groups = new Map<string, A[]>();
 
       for (const { item } of items(batch)) {

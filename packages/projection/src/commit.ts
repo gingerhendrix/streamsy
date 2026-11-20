@@ -8,6 +8,7 @@ export {
   type Commit,
   type Variance,
   type Pending,
+  type RetireRequest,
   type OutputBatch,
 } from "./commit/model.ts";
 

@@ -7,21 +7,35 @@ import type { Result } from "./commit/internal.ts";
 import type { InputMap } from "./batch.ts";
 import type { Unit } from "./unit.ts";
 import type { WakeOutput } from "./wake.ts";
+import {
+  generationBinding,
+  isPerGeneration,
+  validateGenerationParam,
+  type PerGeneration,
+} from "./per-generation.ts";
 
 /** Private output name, stable across producer retries. */
 export const acceptedKey = "@streamsy/accepted";
 
+export type AcceptedOutput = WakeOutput | PerGeneration<WakeOutput, string>;
+
 export const validateAccepted = (
-  accepted: WakeOutput | undefined,
+  output: AcceptedOutput | undefined,
   params: StreamRoute.ParamCodecs,
   inputTemplates: ReadonlyArray<string>,
   commit: Pick<Commit<never>, "name">,
   outputNames: ReadonlyArray<string> = [],
 ): void => {
-  if (accepted === undefined) return;
+  if (output === undefined) return;
 
   if (!supportsAccepted(commit))
     throw new RangeError("accepted requires Commit.transaction or Commit.producer");
+
+  validateGenerationParam(output, params);
+
+  const { route: accepted, param } = isPerGeneration(output)
+    ? generationBinding(output)
+    : { route: output, param: undefined };
 
   if (accepted.collections !== Streamsy.wakeCollections) {
     // State declarations with the same wake collection schema are valid too.
@@ -33,7 +47,7 @@ export const validateAccepted = (
   }
 
   for (const name of Record.keys(accepted.paramCodecs)) {
-    if (!Record.has(params, name))
+    if (name !== param && !Record.has(params, name))
       throw new RangeError(`accepted parameter ${name} must be a projection parameter`);
   }
 
