@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { Expression } from "../src/ir/contracts.ts";
 import { aggregate, literal, parameterReference, selectors } from "../src/expression.ts";
+import { canonicalJson } from "../src/runtime/key.ts";
 
 interface Row {
   readonly id: string;
@@ -86,5 +87,12 @@ describe("expression construction", () => {
     expect(x.row.id.asc()).toEqual({ expression: x.row.id, direction: "ascending" });
     expect(Object.isFrozen(key)).toBe(true);
     expect(Object.isFrozen(literal(1))).toBe(true);
+  });
+
+  it("keeps object key order out of literal identity while preserving array order", () => {
+    const original = canonicalJson(literal({ a: [1, 2], b: true }));
+    expect(canonicalJson(literal({ b: true, a: [1, 2] }))).toBe(original);
+    expect(canonicalJson(literal({ a: [2, 1], b: true }))).not.toBe(original);
+    expect(() => canonicalJson(literal(NaN))).toThrow("non-finite");
   });
 });
