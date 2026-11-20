@@ -187,6 +187,53 @@ for (const commit of [Commit.transaction, Commit.producer]) {
       }),
     );
 
+    it.effect(`${commit.name}: replay after a gone input needs a new generation`, () =>
+      Effect.gen(function* () {
+        const params = { workspace: "recreated" };
+        const facts = yield* Facts;
+        const target = yield* Numbers;
+        const wake = yield* Accepted;
+        const bound = numbers(commit, 1).at(params);
+        const oldOutput = { ...params, rev: 1 };
+        const oldAccepted = { ...params, epoch: 1 };
+
+        yield* facts.create(params);
+        yield* facts.append(params, [first]);
+        yield* Projection.run(bound);
+
+        const acceptedBefore = (yield* wake.collect(oldAccepted)).items;
+        expect(acceptedBefore).toHaveLength(1);
+        expect((yield* target.collect(oldOutput)).items).toEqual([3]);
+        expect(Option.isSome((yield* commit.load(bound)).record)).toBe(true);
+
+        yield* facts.remove(params);
+        expect(yield* Projection.run(bound)).toMatchObject({
+          status: "source-closed",
+          units: 1,
+          items: 0,
+        });
+        expect((yield* commit.load(bound)).record).toEqual(Option.none());
+
+        yield* facts.create(params);
+        const appended = yield* facts.append(params, [second]);
+
+        expect(yield* Projection.run(bound).pipe(Effect.flip)).toMatchObject({
+          phase: commit === Commit.transaction ? "process" : "pin",
+          reason: "invalid-output",
+          retryable: false,
+        });
+        expect((yield* commit.load(bound)).record).toEqual(Option.none());
+
+        expect((yield* Projection.run(numbers(commit, 2).at(params))).items).toBe(1);
+        expect((yield* target.collect({ ...params, rev: 2 })).items).toEqual([5]);
+        expect((yield* wake.collect({ ...params, epoch: 2 })).items).toMatchObject([
+          { value: { stream: Facts.at(params).id, offset: appended.offset } },
+        ]);
+        expect((yield* target.collect(oldOutput)).items).toEqual([3]);
+        expect((yield* wake.collect(oldAccepted)).items).toEqual(acceptedBefore);
+      }),
+    );
+
     it.effect(`${commit.name}: empty input and first unit without output items`, () =>
       Effect.gen(function* () {
         const params = { workspace: "empty" };

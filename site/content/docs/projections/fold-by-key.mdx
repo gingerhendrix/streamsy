@@ -119,7 +119,7 @@ Return `FoldByKey.remove` to delete the row. The next record of the same key in 
 
 `FoldByKey.process` runs inside the transaction of the unit, after the Commit has checked its token and its outputs:
 
-1. It creates the output stream if it is missing.
+1. It creates a missing unwrapped output. If you wrap the output with `Projection.perGeneration`, `Commit.transaction` creates it in the first unit before the handler runs. A missing wrapped output in a later unit fails with `invalid-output`.
 2. It calls `sync` on the table of the output. See [Sync](/docs/projections/state-table#sync).
 3. It runs `records` and `key` for every input item, and groups the records by key in the order in which each key first appears.
 4. It loads the stored rows of those keys from the table.

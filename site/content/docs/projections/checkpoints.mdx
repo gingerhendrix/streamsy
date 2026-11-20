@@ -129,6 +129,8 @@ Before you call it, do these steps:
 
 With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks, so `forget` does not reserve or retire an address.
 
+The runner also forgets the checkpoint after the final unit for a gone input commits. If you recreate that input at the same address, a populated wrapped output or accepted stream can cause non-retryable `invalid-output` on replay. Raise `generation` to replay the recreated input into fresh streams. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs) and [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
+
 ## Several backends
 
 A projection can read its inputs from any storage, including a remote Layer. Where its outputs can live depends on the Commit:
