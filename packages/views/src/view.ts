@@ -15,7 +15,7 @@ import {
   selectors,
   type AggregateValue,
   type BooleanExpression,
-  type ExpressionValue,
+  type Selected,
   type Reference,
   type TypedAggregateExpression,
 } from "./expression.ts";
@@ -48,10 +48,6 @@ export type Input = StreamRoute.StreamRoute<any, any> &
     ) => StreamAddress.StateAddress<any, never, never> & Streamsy.Address<any, any>;
   };
 /* oxlint-enable typescript/no-explicit-any */
-
-type Selected<F extends Readonly<Record<string, Expression>>> = {
-  readonly [K in keyof F]: ExpressionValue<F[K]>;
-};
 
 export interface Relation<Row, Inputs extends Input = Input> {
   readonly rowType?: Row;
@@ -183,10 +179,12 @@ export function from<
 
 export const { count, sum, min, max } = aggregate;
 
+export { field, fn, literal } from "./expression.ts";
+
+export const { key } = selectors<never>();
+
 export { circuit, forget, migrate, PlanChanged, ViewFault } from "./circuit.ts";
 
 export { ViewDataFault as DataFault } from "./sql/data-fault.ts";
 
 export type { CircuitDeclaration, CircuitBinding } from "./circuit.ts";
-
-export * as View from "./view.ts";

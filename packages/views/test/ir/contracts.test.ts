@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { Change, Expression, RelationNode, RelationPlan } from "@streamsy/views/ir";
+import type { Change, Expression, RelationNode, RelationPlan } from "../../src/ir/contracts.ts";
 
 const expressionKind = (expression: Expression): Expression["kind"] => {
   switch (expression.kind) {
@@ -8,6 +8,8 @@ const expressionKind = (expression: Expression): Expression["kind"] => {
     case "unary":
     case "binary":
     case "variadic":
+    case "field":
+    case "call":
       return expression.kind;
     default: {
       const unreachable: never = expression;

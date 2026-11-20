@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import { StateTable } from "@streamsy/projection";
 import { Schema } from "effect";
-import { View } from "../../../src/relation.ts";
+import { View } from "../../../src/index.ts";
 
 export const Order = Schema.Struct({
   orderId: Schema.String,

@@ -21,27 +21,17 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/relation.js",
-  "types": "./dist/relation.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/relation.d.ts",
-      "import": "./dist/relation.js",
-      "default": "./dist/relation.js"
-    },
-    "./ir": {
-      "types": "./dist/ir/contracts.d.ts",
-      "import": "./dist/ir/contracts.js",
-      "default": "./dist/ir/contracts.js"
-    },
-    "./sql": {
-      "types": "./dist/sql/engine.d.ts",
-      "import": "./dist/sql/engine.js",
-      "default": "./dist/sql/engine.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "tsdown src/relation.ts src/ir/contracts.ts src/sql/engine.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core --deps.never-bundle @streamsy/projection",
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core --deps.never-bundle @streamsy/projection",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun --bun vitest run --dir test --exclude \"**/workerd.test.ts\"",
     "test:workerd": "bun --bun vitest run test/circuit/workerd.test.ts"

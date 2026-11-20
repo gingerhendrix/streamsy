@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { NonRetryable } from "@streamsy/projection";
 
 export const rowKeySchema = Schema.Union([
   Schema.String,
@@ -21,6 +22,8 @@ export class ViewDataFault extends Schema.TaggedError<
   key: Schema.NullOr(rowKeySchema),
   reason: Schema.String,
 }) {
+  readonly [NonRetryable] = true;
+
   override get message() {
     return `${this.view}/${this.node}: ${this.reason}`;
   }

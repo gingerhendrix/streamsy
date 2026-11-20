@@ -4,6 +4,7 @@ import { Streams, StreamsWriter, type StreamRoute } from "@streamsy/core/protoco
 import {
   CheckpointStore,
   Commit,
+  NonRetryable,
   Projection,
   ProjectionFault,
   Transaction,
@@ -11,11 +12,12 @@ import {
   type Declaration,
   type Slices,
   type Unit,
+  type WakeAt,
 } from "@streamsy/projection";
 import { SqlClient } from "effect/sql";
-import { compilePlan } from "./relation.ts";
-import { keyExpression } from "./expression.ts";
-import { circuitPlanHash, encodePlan } from "./plan.ts";
+import { compilePlan, parameter } from "./relation.ts";
+import { keyExpression, parameterReference, type TypedExpression } from "./expression.ts";
+import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
 import { makeEngine, type StateChange } from "./sql/engine.ts";
 import {
@@ -28,18 +30,23 @@ import {
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
-import type { SqlRelationPlan } from "./ir/contracts.ts";
+import type { JsonValue, SqlRelationPlan } from "./ir/contracts.ts";
 
 type Views = Readonly<Record<string, Pick<Relation<unknown>, "expression" | "inputs" | "rowType">>>;
 
-type InputsOf<V extends Views> = {
-  readonly [name: string]: V[keyof V]["inputs"] extends ReadonlyMap<
-    string,
-    { readonly state: infer I extends Input }
-  >
-    ? I
-    : never;
-};
+type OutputMap = Readonly<Record<string, Input>>;
+
+type ViewMap = Readonly<Record<string, Views>>;
+
+type InputOf<R> = R extends {
+  readonly inputs: ReadonlyMap<string, { readonly state: infer I extends Input }>;
+}
+  ? I
+  : never;
+
+type ViewInputs<V> = V extends Views ? InputOf<V[keyof V]> : never;
+
+type InputsOf<V extends ViewMap> = Readonly<Record<string, ViewInputs<V[keyof V]>>>;
 
 type CollectionsOf<O extends Input> = O["collections"];
 
@@ -76,16 +83,59 @@ type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
     : never;
 };
 
-type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
+export type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
 
-type Definition<C extends StreamRoute.ParamCodecs, V extends Views, O extends Input, HE, HR> = {
+export type ParameterExpressions<C extends StreamRoute.ParamCodecs> = {
+  readonly [
+    K in keyof C as C[K]["Type"] extends JsonValue | undefined ? K : never
+  ]: TypedExpression<C[K]["Type"]>;
+};
+
+type WithParameters<C extends StreamRoute.ParamCodecs, V> =
+  | V
+  | ((params: ParameterExpressions<NoInfer<C>>) => V);
+
+type Common<C extends StreamRoute.ParamCodecs, V extends ViewMap, O extends OutputMap, HE, HR> = {
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
   readonly params: C;
+  readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
+  /** Return a wake request after the unit, or void to clear the deadline. */
+  readonly wakeAt?: (unit: Unit<StreamRoute.Params<NoInfer<C>>>) => void | WakeAt;
+};
+
+type SingleDefinition<
+  C extends StreamRoute.ParamCodecs,
+  V extends Views,
+  O extends Input,
+  HE,
+  HR,
+> = Common<C, { output: V }, { output: O }, HE, HR> & {
   readonly output: O & (InvalidParams<NoInfer<C>, O> extends never ? unknown : never);
-  readonly views: V & Fits<V, NoInfer<O>> & ValidInputs<NoInfer<C>, V>;
-  readonly retry?: Declaration<C, CircuitBinding<V, O>, HE, HR>["retry"];
+  readonly outputs?: never;
+  readonly views: WithParameters<C, V & Fits<V, NoInfer<O>> & ValidInputs<NoInfer<C>, V>>;
+};
+
+type MultiDefinition<
+  C extends StreamRoute.ParamCodecs,
+  V extends ViewMap,
+  O extends OutputMap,
+  HE,
+  HR,
+> = Common<C, V, O, HE, HR> & {
+  readonly output?: never;
+  readonly outputs: O & {
+    readonly [K in keyof O]: InvalidParams<NoInfer<C>, O[K]> extends never ? O[K] : never;
+  };
+  readonly views: WithParameters<
+    C,
+    V & {
+      readonly [K in keyof O]: K extends keyof V
+        ? V[K] & Fits<V[K], NoInfer<O[K]>> & ValidInputs<NoInfer<C>, V[K]>
+        : never;
+    } & { readonly [K in Exclude<keyof V, keyof O>]: never }
+  >;
 };
 
 export class PlanChanged extends Schema.TaggedError<
@@ -95,7 +145,13 @@ export class PlanChanged extends Schema.TaggedError<
   namespace: Schema.String,
   stored: Schema.String,
   requested: Schema.String,
-}) {}
+}) {
+  readonly [NonRetryable] = true;
+
+  override get message() {
+    return `Circuit plan changed for ${this.namespace} (stored ${this.stored}, requested ${this.requested})`;
+  }
+}
 
 export class ViewFault extends Schema.TaggedError<ViewFault, { readonly brand: unique symbol }>()(
   "ViewFault",
@@ -155,58 +211,41 @@ const guard = Effect.fn("View.guard")(function* (
   return namespace;
 });
 
-/** The public Commit.remove hook keeps Projection.forget fully compatible. */
-const commit = Commit.make<void, SqlClient.SqlClient, CheckpointStore | Transaction>({
-  name: "views-transaction",
-  guarantee: Commit.transaction.guarantee,
-  load: Commit.transaction.load,
-  apply: Commit.transaction.apply,
-  remove: (key) =>
-    Effect.gen(function* () {
-      const tx = yield* Transaction;
-      const remove = Commit.transaction.remove;
-
-      if (remove === undefined) throw new TypeError("Commit.transaction must support removal");
-      yield* tx.withTransaction(
-        Effect.gen(function* () {
-          yield* remove(key);
-          yield* clearNamespace(tx.sql, identity(key).namespace).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectionFault({
-                  phase: "checkpoint",
-                  reason: "storage-failure",
-                  message: "Cannot forget circuit state",
-                  cause,
-                }),
-            ),
-          );
+const commit = Commit.transactionWithRemove((key, sql) =>
+  clearNamespace(sql, identity(key).namespace).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProjectionFault({
+          phase: "checkpoint",
+          reason: "storage-failure",
+          message: "Cannot forget circuit state",
+          cause,
         }),
-      );
-    }),
-});
+    ),
+  ),
+);
 
 /** Alias for Projection.forget; circuit commits also remove operator state. */
 export const forget = Projection.forget;
 
-export interface CircuitBinding<V extends Views, O extends Input> extends ProjectionKey {
+export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends ProjectionKey {
   readonly inputs: { readonly [name: string]: ReturnType<InputsOf<V>[string]["at"]> };
   readonly state: undefined;
   readonly streams: ReturnType<
-    ReturnType<typeof Projection.process<StreamRoute.ParamCodecs, InputsOf<V>, { output: O }>>["at"]
+    ReturnType<typeof Projection.process<StreamRoute.ParamCodecs, InputsOf<V>, O>>["at"]
   >["streams"];
-  readonly commit: Commit.Commit<void, SqlClient.SqlClient, CheckpointStore | Transaction>;
+  readonly commit: Commit.Commit<void | WakeAt, SqlClient.SqlClient, CheckpointStore | Transaction>;
   readonly process: (
     batch: Slices<CircuitBinding<V, O>["inputs"]>,
     unit: Unit,
     encoded?: string,
-  ) => Effect.Effect<void, CircuitError, SqlClient.SqlClient | O["Identifier"]>;
+  ) => Effect.Effect<void | WakeAt, CircuitError, SqlClient.SqlClient | O[keyof O]["Identifier"]>;
 }
 
 export interface CircuitDeclaration<
   C extends StreamRoute.ParamCodecs,
-  V extends Views,
-  O extends Input,
+  V extends ViewMap,
+  O extends OutputMap,
   HE = never,
   HR = never,
 > extends Declaration<C, CircuitBinding<V, O>, HE, HR> {}
@@ -218,82 +257,148 @@ export function circuit<
   O extends Input,
   HE = never,
   HR = never,
->(definition: Definition<C, V, O, HE, HR>): CircuitDeclaration<C, V, O, HE, HR> {
+>(
+  definition: SingleDefinition<C, V, O, HE, HR>,
+): CircuitDeclaration<C, { output: V }, { output: O }, HE, HR>;
+
+export function circuit<
+  C extends StreamRoute.ParamCodecs,
+  const V extends ViewMap,
+  const O extends OutputMap,
+  HE = never,
+  HR = never,
+>(definition: MultiDefinition<C, V, O, HE, HR>): CircuitDeclaration<C, V, O, HE, HR>;
+
+export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
+  definition: Common<C, ViewMap, OutputMap, HE, HR> &
+    (
+      | {
+          readonly output: Input;
+          readonly views: WithParameters<C, Views>;
+          readonly outputs?: never;
+        }
+      | {
+          readonly output?: never;
+          readonly views: WithParameters<C, ViewMap>;
+          readonly outputs: OutputMap;
+        }
+    ),
+): CircuitDeclaration<C, ViewMap, OutputMap, HE, HR> {
+  const parameterized = Predicate.isFunction(definition.views);
+
+  const refs = Record.map(definition.params, (_codec, name) => parameterReference(name));
+  // SAFETY: each selector has the decoded type of the matching parameter codec.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Record.map preserves the named keys; their expression types are phantom.
+  const params = refs as ParameterExpressions<C>;
+
+  const parameters = parameterized
+    ? Record.map(definition.params, (codec, name) => parameter(name, codec))
+    : {};
+
+  const { output: singleOutput } = definition;
+  const routedOutputs = singleOutput === undefined ? definition.outputs : { output: singleOutput };
+
+  const resolveViews = <V extends Views | ViewMap>(value: WithParameters<C, V>): V =>
+    Predicate.isFunction(value) ? value(params) : value;
+
+  const views =
+    singleOutput === undefined
+      ? resolveViews(definition.views)
+      : { output: resolveViews(definition.views) };
+
   const plans: Record<string, SqlRelationPlan> = {};
+  const targets = new Map<string, { readonly route: string; readonly collection: string }>();
   const sources = new Map<string, { readonly state: Input; readonly collection: string }>();
 
-  for (const name of Array.sort(Record.keys(definition.views), Order.String)) {
-    const relation = definition.views[name];
+  const owned = new Set<string>();
 
-    if (relation === undefined) throw new RangeError(`Missing view ${name}`);
-    const collection = definition.output.collections[name];
+  for (const route of Array.sort(Record.keys(routedOutputs), Order.String)) {
+    const state = routedOutputs[route];
 
-    if (collection === undefined) throw new RangeError(`Unknown output collection ${name}`);
+    if (state === undefined) throw new RangeError(`Missing output State class for ${route}`);
 
-    const expression = {
-      kind: "key",
-      input: relation.expression,
-      key: keyExpression(collection.key),
-    } as const;
+    if (owned.has(state.key)) throw new RangeError(`Duplicate output State class ${state.key}`);
+    owned.add(state.key);
+    const relations = views[route];
 
-    // SAFETY: canonical JSON is a round trip of the typed compiler output.
-    // Canonical field order keeps SQL arrangement identities stable when a
-    // caller reorders object properties without changing the plan hash.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Only our validated JSON plan is deserialized here, never external input.
-    plans[name] = JSON.parse(
-      encodePlan(
-        compilePlan(name, expression, { name: `${definition.output.key}/${name}`, version: 1 }),
-      ),
-    ) as SqlRelationPlan;
+    if (relations === undefined) throw new RangeError(`Missing views for output ${route}`);
 
-    for (const [id, input] of relation.inputs) sources.set(id, input);
+    for (const collection of Record.keys(state.collections))
+      if (!Record.has(relations, collection))
+        throw new RangeError(`Missing view for output collection ${state.key}/${collection}`);
+
+    for (const name of Array.sort(Record.keys(relations), Order.String)) {
+      const relation = relations[name];
+
+      if (relation === undefined) throw new RangeError(`Missing view ${name}`);
+      const collection = state.collections[name];
+
+      if (!Record.has(state.collections, name) || collection === undefined)
+        throw new RangeError(`Unknown output collection ${state.key}/${name}`);
+
+      const expression = {
+        kind: "key",
+        input: relation.expression,
+        key: keyExpression(collection.key),
+      } as const;
+
+      const planName = singleOutput === undefined ? JSON.stringify([route, name]) : name;
+      plans[planName] = orderPlanFields(
+        compilePlan(planName, expression, { name: `${state.key}/${name}`, version: 1 }, parameters),
+      );
+      targets.set(planName, { route, collection: name });
+
+      for (const [id, input] of relation.inputs) sources.set(id, input);
+    }
   }
+
+  if (owned.size === 0) throw new RangeError("A circuit needs an output State class");
+
+  for (const route of Record.keys(views))
+    if (!Record.has(routedOutputs, route)) throw new RangeError(`Unknown circuit output ${route}`);
 
   const inputs: Record<string, Input> = {};
 
   for (const { state } of sources.values()) inputs[state.key] = state;
 
-  // The public signature retains the input union. Runtime checks cover params
-  // before delegating to the ordinary Projection declaration builder.
-  for (const state of [...Record.values(inputs), definition.output]) {
+  for (const state of [...Record.values(inputs), ...Record.values(routedOutputs)]) {
     for (const name of Record.keys(state.paramCodecs))
       if (!Record.has(definition.params, name))
         throw new RangeError(`Missing circuit parameter ${name}`);
   }
 
-  // SAFETY: inputs were collected only from V's relation declarations; their
-  // params are checked above. Projection binds and validates every output.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Runtime collection erases the mapped input union, restored here at the compiler adapter boundary.
-  const checkedInputs = inputs as Parameters<
-    typeof Projection.process<C, InputsOf<V>, { output: O }>
-  >[0]["inputs"];
-
-  // SAFETY: output is exactly O; its parameter names were checked above.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Projection's conditional mapped Within type cannot reduce for generic O.
-  const routedOutputs = { output: definition.output } as Parameters<
-    typeof Projection.process<C, InputsOf<V>, { output: O }>
-  >[0]["outputs"];
-
   const hash = circuitPlanHash(plans);
   const engine = Effect.runSync(makeEngine(plans, true));
 
+  type ProjectionRoutes = Parameters<
+    typeof Projection.process<C, Record<string, Input>, OutputMap>
+  >[0];
+
+  // SAFETY: route parameters were checked by the public overloads and the runtime walk.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked input map at the Projection boundary.
+  const checkedInputs = inputs as ProjectionRoutes["inputs"];
+  // SAFETY: route parameters were checked by the public overloads and the runtime walk.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked output map at the Projection boundary.
+  const checkedOutputs = routedOutputs as ProjectionRoutes["outputs"];
+
   return Projection.process<
     C,
-    InputsOf<V>,
-    { output: O },
+    Record<string, Input>,
+    OutputMap,
     CircuitError,
-    SqlClient.SqlClient | O["Identifier"],
+    SqlClient.SqlClient | Input["Identifier"],
     CheckpointStore | Transaction,
     void,
     never,
     never,
     undefined,
     HE,
-    HR
+    HR,
+    void | WakeAt
   >({
     ...definition,
     inputs: checkedInputs,
-    outputs: routedOutputs,
+    outputs: checkedOutputs,
     commit,
     process: (batch, unit, { outputs }) =>
       Effect.gen(function* () {
@@ -344,30 +449,44 @@ export function circuit<
           );
         }
 
-        const changesOut = yield* engine.process(namespace, changes);
-        const output = outputs.output;
+        const changesOut = yield* engine.process(namespace, changes, unit.params);
+        const entriesByRoute = new Map<string, DurableState.Entry<Input["collections"]>[]>();
 
-        const entries = Array.map(changesOut, (change) =>
-          change.kind === "upsert"
-            ? DurableState.upsert(change.view, change.value, { headers: { txid: unit.key } })
-            : DurableState.remove(change.view, String(change.key), { headers: { txid: unit.key } }),
-        );
+        for (const change of changesOut) {
+          const target = targets.get(change.view);
 
-        // A State class's stream requires its service identifier. The runtime
-        // input abstraction erases that requirement; retain O at this boundary.
-        const service: Effect.Effect<
-          Effect.Success<typeof output.stream>,
-          never,
-          O["Identifier"]
-        > = output.stream;
+          if (target === undefined) throw new Error(`Missing output for view ${change.view}`);
+          const { collection, route } = target;
+          const options = { headers: { txid: unit.key } };
 
-        const { wire } = yield* service;
-        yield* wire.create(output.id, { contentType: output.contentType });
+          const entry =
+            change.kind === "upsert"
+              ? DurableState.upsert(collection, change.value, options)
+              : DurableState.remove(collection, String(change.key), options);
 
-        if (Array.isReadonlyArrayNonEmpty(entries)) {
-          const events = DurableState.changes(output, {}, entries);
-          yield* Streams.append(output, events).pipe(Effect.provideService(StreamsWriter, wire));
+          const entries = entriesByRoute.get(route) ?? [];
+          entries.push(entry);
+          entriesByRoute.set(route, entries);
         }
+
+        for (const [route, output] of Record.toEntries(outputs)) {
+          const service: Effect.Effect<
+            Effect.Success<typeof output.stream>,
+            never,
+            Input["Identifier"]
+          > = output.stream;
+
+          const { wire } = yield* service;
+          yield* wire.create(output.id, { contentType: output.contentType });
+          const entries = entriesByRoute.get(route);
+
+          if (entries !== undefined && Array.isReadonlyArrayNonEmpty(entries)) {
+            const events = DurableState.changes(output, {}, entries);
+            yield* Streams.append(output, events).pipe(Effect.provideService(StreamsWriter, wire));
+          }
+        }
+
+        return definition.wakeAt?.(unit);
       }).pipe(
         Effect.catchTags({
           SqlError: (cause) =>

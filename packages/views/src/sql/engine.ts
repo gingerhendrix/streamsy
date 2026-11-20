@@ -1,6 +1,6 @@
 import { Array as Arr, Effect, Schema, Record as Rec } from "effect";
 import { SqlClient } from "effect/sql";
-import { evaluate } from "../runtime/expression.ts";
+import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, SqlRelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
@@ -61,9 +61,13 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     ),
   );
 
-  const evaluateUnit = (store: Store, input: readonly StateChange[]) =>
+  const evaluateUnit = (
+    store: Store,
+    input: readonly StateChange[],
+    parameter: ExpressionScopes["parameter"],
+  ) =>
     Effect.gen(function* () {
-      const rt = runtime(program, store);
+      const rt = runtime(program, store, parameter);
       const normalized = new Map<string, Map<string, Delta>>();
 
       for (const c of input) {
@@ -78,7 +82,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           const encoded = encodeRowKey(c.key);
 
           if (c.kind === "upsert") {
-            const raw = asRowKey(evaluate(source.key, { row: c.value, key: c.key }));
+            const raw = asRowKey(evaluate(source.key, { row: c.value, key: c.key, parameter }));
 
             if (encodeRowKey(source.stateKey ? String(raw) : raw) !== encoded)
               throw fault(c.key, "input key disagrees with source key expression");
@@ -113,7 +117,12 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
 
           case "filter":
           case "project":
-            changes = linear(node, rt.changes.get(node.input) ?? new Map(), rt.fault(node.id));
+            changes = linear(
+              node,
+              rt.changes.get(node.input) ?? new Map(),
+              rt.fault(node.id),
+              parameter,
+            );
             break;
           case "key":
             changes = yield* rekey(
@@ -123,6 +132,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
               rt.fault(node.id),
               program.checkedKeys.has(node.id),
               program.stateKeys.has(node.id),
+              parameter,
             );
             break;
           case "inner-join":
@@ -158,6 +168,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
   const process = Effect.fn("ViewsSql.process")(function* (
     namespace: string,
     input: readonly StateChange[],
+    parameter?: ExpressionScopes["parameter"],
   ) {
     const sql = yield* SqlClient.SqlClient;
     const store = storeFor(sql, namespace);
@@ -183,7 +194,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           const sums = new Map<string, ReadonlyMap<string, Accumulator>>();
 
           for (const node of sumNodes) sums.set(node.id, yield* legacy.accumulators(node.id));
-          before = legacyRelations(program, sourceRows, sums);
+          before = legacyRelations(program, sourceRows, sums, parameter);
           yield* legacy.clearOperators();
           changes = [...replay, ...input];
         }
@@ -191,7 +202,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
         yield* store.put("@layout", [{ key: layoutKey, row: {} }]);
       }
 
-      const rt = yield* evaluateUnit(store, changes);
+      const rt = yield* evaluateUnit(store, changes, parameter);
       const output: OutputChange[] = [];
 
       for (const [view, relation] of Rec.toEntries(program.outputs)) {

@@ -68,10 +68,6 @@ Call `View.migrate(sql)` once at startup. A changed plan in the same namespace f
 
 Limits: no fan-out cap, `avg`, `distinct`, fact fold, closure, memory tier, dynamic parameters-as-data, frontier rows or `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
 
-| Export                | Purpose                                                                         |
-| --------------------- | ------------------------------------------------------------------------------- |
-| `@streamsy/views`     | `View`, expression builder, legacy declaration builder, `checkPlan`, `planHash` |
-| `@streamsy/views/ir`  | Serializable plan contracts                                                     |
-| `@streamsy/views/sql` | SQL engine, SQL plan checks, migrations and full-recompute oracle               |
-
-The 0.4 snapshot engine and its `./engine` and `./engine/conformance` exports have been removed. The lower-level builder and checks remain; SQL plans reject unsupported operators such as fact folds and `countWhere`.
+| Export            | Purpose                         |
+| ----------------- | ------------------------------- |
+| `@streamsy/views` | `View`, fault classes and types |

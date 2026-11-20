@@ -4,7 +4,7 @@ import { Array, Effect, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import { storeFor } from "../../src/sql/store.ts";
-import { fullRecompute, makeEngine, migrate, type StateChange } from "@streamsy/views/sql";
+import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
 
 const order = (orderId: string, total: number, customerId = "c1") => ({

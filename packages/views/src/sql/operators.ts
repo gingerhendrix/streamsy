@@ -1,5 +1,10 @@
 import { Array as Arr, Effect, Record as Rec } from "effect";
-import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
+import {
+  evaluate,
+  evaluateOptional,
+  isMissing,
+  type ExpressionScopes,
+} from "../runtime/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type {
   JsonObject,
@@ -20,11 +25,12 @@ export function linear(
   node: Extract<SqlRelationNode, { kind: "filter" | "project" }>,
   input: Deltas,
   fault: DataFault,
+  parameter: ExpressionScopes["parameter"],
 ): Deltas {
   const map = (entry: Entry): Entry | undefined =>
     checkData(fault, entry.key, () => {
       if (node.kind === "filter") {
-        const accepted = evaluate(node.predicate, { row: entry.row, key: entry.key });
+        const accepted = evaluate(node.predicate, { row: entry.row, key: entry.key, parameter });
 
         if (typeof accepted !== "boolean")
           throw fault(entry.key, "filter predicate must be Boolean");
@@ -35,7 +41,7 @@ export function linear(
       const row: Record<string, JsonValue> = {};
 
       for (const [name, e] of Rec.toEntries(node.fields)) {
-        const value = evaluateOptional(e, { row: entry.row, key: entry.key });
+        const value = evaluateOptional(e, { row: entry.row, key: entry.key, parameter });
 
         if (!isMissing(value)) row[name] = value;
       }
@@ -75,7 +81,10 @@ export const join = Effect.fnUntraced(function* (
   for (const d of rt.changes.get(node.right)?.values() ?? []) {
     for (const row of [d.before, d.after]) {
       if (!row) continue;
-      const key = checkData(fault, d.key, () => evaluateOptional(keys.right, { row, key: d.key }));
+
+      const key = checkData(fault, d.key, () =>
+        evaluateOptional(keys.right, { row, key: d.key, parameter: rt.parameter }),
+      );
 
       if (!isMissing(key)) rightKeys.add(canonicalJson([key]));
     }
@@ -94,7 +103,7 @@ export const join = Effect.fnUntraced(function* (
       if (!left) return [];
 
       const key = checkData(fault, left.key, () =>
-        evaluateOptional(keys.left, { row: left.row, key: left.key }),
+        evaluateOptional(keys.left, { row: left.row, key: left.key, parameter: rt.parameter }),
       );
 
       const right = isMissing(key)
@@ -139,7 +148,7 @@ export const aggregate = Effect.fnUntraced(function* (
   const operands = (row: JsonObject, key: RowKey, sign: 1 | -1) =>
     checkData(fault, key, () =>
       Arr.flatMap(sumFields, ([field, expression]) => {
-        const value = evaluateOptional(expression, { row, key });
+        const value = evaluateOptional(expression, { row, key, parameter: rt.parameter });
 
         if (isMissing(value)) return [];
 
@@ -168,7 +177,9 @@ export const aggregate = Effect.fnUntraced(function* (
       if (row === undefined) continue;
 
       const { key, fields } = checkData(fault, d.key, () => {
-        const groupFields = Rec.map(node.groupBy, (e) => evaluate(e, { row, key: d.key }));
+        const groupFields = Rec.map(node.groupBy, (e) =>
+          evaluate(e, { row, key: d.key, parameter: rt.parameter }),
+        );
 
         return { key: asRowKey(Rec.values(groupFields)), fields: groupFields };
       });
@@ -248,7 +259,7 @@ export const aggregate = Effect.fnUntraced(function* (
             if (first) {
               const expression = a.expression;
               row[name] = checkData(fault, first.key, () =>
-                evaluate(expression, { row: first.row, key: first.key }),
+                evaluate(expression, { row: first.row, key: first.key, parameter: rt.parameter }),
               );
             }
           } else throw new TypeError(`unsupported aggregate ${a.function}`);
@@ -273,7 +284,7 @@ export const aggregate = Effect.fnUntraced(function* (
 
 export const top = Effect.fnUntraced(function* (node: TopNNode, program: Program, rt: Runtime) {
   const fault = rt.fault(node.id);
-  const limit = checkData(fault, null, () => evaluate(node.limit, {}));
+  const limit = checkData(fault, null, () => evaluate(node.limit, { parameter: rt.parameter }));
 
   if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0 || limit > node.maximum)
     return yield* fault(null, "invalid top limit");
@@ -285,7 +296,11 @@ export const top = Effect.fnUntraced(function* (node: TopNNode, program: Program
       if (!row) continue;
 
       const key = checkData(fault, d.key, () =>
-        asRowKey(Arr.map(node.partitionBy ?? [], (e) => evaluate(e, { row, key: d.key }))),
+        asRowKey(
+          Arr.map(node.partitionBy ?? [], (e) =>
+            evaluate(e, { row, key: d.key, parameter: rt.parameter }),
+          ),
+        ),
       );
 
       partitions.add(canonicalJson(key));

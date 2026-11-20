@@ -52,14 +52,17 @@ export function joinKeys(on: Expression): { left: Expression; right: Expression 
 function scopes(e: Expression): string[] {
   switch (e.kind) {
     case "reference":
-      return [e.scope];
+      return e.scope === "parameter" ? [] : [e.scope];
     case "literal":
       return [];
     case "unary":
       return scopes(e.operand);
+    case "field":
+      return scopes(e.object);
     case "binary":
       return [...scopes(e.left), ...scopes(e.right)];
     case "variadic":
+    case "call":
       return Arr.flatMap(e.operands, scopes);
   }
 }
@@ -67,14 +70,17 @@ function scopes(e: Expression): string[] {
 function rowScope(e: Expression): Expression {
   switch (e.kind) {
     case "reference":
-      return { ...e, scope: "row" };
+      return e.scope === "parameter" ? e : { ...e, scope: "row" };
     case "literal":
       return e;
     case "unary":
       return { ...e, operand: rowScope(e.operand) };
+    case "field":
+      return { ...e, object: rowScope(e.object) };
     case "binary":
       return { ...e, left: rowScope(e.left), right: rowScope(e.right) };
     case "variadic":
+    case "call":
       return { ...e, operands: Arr.map(e.operands, rowScope) };
   }
 }
@@ -107,10 +113,6 @@ export function sqlPlanIssues(plan: SqlRelationPlan): readonly PlanIssue[] {
     for (const input of dependencies(node))
       if (!seen.has(input))
         messages.push(`input ${input} must precede its consumer (cycles are unsupported)`);
-
-    // Parameters are a fixed binding in the snapshot engine. SQL namespaces must have fixed plans.
-    if (plan.parameters && Rec.keys(plan.parameters).length)
-      messages.push("SQL tier does not yet support parameter bindings");
 
     for (const message of messages)
       issues.push({

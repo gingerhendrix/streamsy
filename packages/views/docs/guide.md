@@ -32,11 +32,34 @@ const top = orders.top({
 });
 ```
 
-A join condition must be equality between a left-only and a right-only expression. `leftJoin` makes the alias optional: use its `isPresent()`, `value` or `orElse(...)` expression operations. `where`, `select`, `groupBy` and `aggregate` callbacks build expressions; they do not run arbitrary JavaScript against each row.
+A join condition must be equality between a left-only and a right-only expression.
+A left-joined alias can be absent. Nested references such as `row.customer.name` preserve optionality through every field, and `select` omits absent fields from its output. Use `isPresent()` to test presence, `orElse(fallback)` to supply a value, or `unwrap()` to fail the unit if a value is absent. Use `View.field(row.value, "path")` when a field name overlaps an expression member.
 
-Declare output State collections with their schemas and keys, then pass their relations in `View.circuit({ id, params, output, views })`. The names in `views` are output collection names. A circuit may own a subset of those collections. Each owned collection needs one writer. Row types, including output key fields, are checked at compile time, and output encoding validates rows at runtime. The output key comes from the State collection; a join that can produce multiple rows for one output key needs an appropriate key field in its selected row.
+Use `View.fn(name, version, implementation)` to declare a pure, synchronous expression for `select` or `where`. The callback must be deterministic for its arguments and must leave its inputs unchanged. Its name and positive integer version are part of the plan hash. Raise the version when the implementation changes.
 
-A circuit returns a projection declaration with `id`, `version`, `generation`, `params`, `inputs`, `parse` and `.at(params)`. `version` and `generation` default to 1. `retry` accepts the normal projection binding policy, including `schedule`, `maxAttempts` and `onExhausted`. State input/output parameters must be subsets of the circuit parameters with the same decoded types. These parameters select separate namespaces; they are not query expressions or a shared relation of bindings.
+```ts
+const displayName = View.fn(
+  "customer-display-name",
+  1,
+  (name: string | undefined) => name ?? "Guest",
+);
+const joined = orders.leftJoin(customers, {
+  as: "customer",
+  on: (order, customer) => order.customerId.eq(customer.customerId),
+});
+const selected = joined.select((row) => ({
+  orderId: row.orderId,
+  customerName: displayName(row.customer.name),
+}));
+```
+
+A missing alias or optional leaf passes `undefined` to the function. TypeScript requires such arguments to accept `undefined` explicitly, or to be supplied by a fallback or an unwrap expression. Present arguments retain their values, including `null`. A function can return `undefined` intentionally to omit a selected field. A function used as a filter must return a Boolean.
+
+Declare output State collections with their schemas and keys, then pass their relations in `View.circuit({ id, params, output, views })`. Each State collection needs exactly one view. For multiple State classes, pass `outputs: { orders: OrderRows, customers: CustomerRows }` and group `views` under the same output names. A circuit rejects incomplete coverage and repeated State classes at declaration time. Collection names can repeat across different State classes. Row types, including key fields, are checked at compile time, and output encoding validates rows at runtime. The output key comes from the State collection.
+
+A circuit returns a projection declaration with `.at(params)`. `version` and `generation` default to 1. The `retry` option accepts the projection binding policy. State input/output parameters must be subsets of the circuit parameters with the same decoded types. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters as expressions. For example, a filter can use `row.workspace.eq(params.workspace)`. The plan hash identifies parameter names, and each binding evaluates that plan with its own decoded values and SQL namespace.
+
+Set `wakeAt: (unit) => Projection.wakeAt(deadline)` to save a wake deadline with the unit. Projection supplies the recorded due time in `unit.due` for timer units, and returning void clears the deadline.
 
 ## Bun host
 
@@ -95,11 +118,11 @@ Each unit normalizes input changes using the circuit's own SQL integrals. Numeri
 
 The SQL engine shares compatible arrangements within a circuit. It uses affected-key evaluation, differences for `count`/`sum`, and ordered indexes for extrema and top. It coalesces the final differences before output. Output State messages are absolute upserts/deletes and carry `txid: unit.key`. A unit with no changed output rows writes no output messages while still advancing its checkpoint.
 
-The circuit delegates execution to `Commit.transaction` and extends its public `Commit.remove` hook. Operator SQL, output appends, plan metadata and checkpoint either commit together or roll back. No Streamsy patch is needed for cleanup or `txid` in 0.12.0.
+The circuit uses `Commit.transactionWithRemove` to delete operator state in the same transaction as checkpoint removal. Operator SQL, output appends, plan metadata and checkpoint either commit together or roll back.
 
 ## Plan identity, generations and forget
 
-Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `View.PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Reordering object properties alone preserves the hash and compiled state identities. Collection codecs are not executable code in the plan hash; a codec change also requires a new generation.
+Operator namespaces include projection id, version, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `View.PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codecs are not executable code in the plan hash; a codec change also requires a new generation.
 
 Raise `generation` to rebuild from retained input history. On the first successful unit of the new generation, the circuit removes older operator namespaces for the same id, version and params. A later unit from an older generation fails while the newer metadata exists. Old projection checkpoint records are left to Streamsy. Stop old runners before starting the replacement.
 
@@ -117,6 +140,4 @@ There is no fan-out cap. A key with many dependants can create a large transacti
 
 ## Lower-level API and migration from 0.4
 
-The root export retains the typed expression/declaration builder, `checkPlan`, `encodePlan` and `planHash`. `@streamsy/views/ir` carries the serializable contracts. `@streamsy/views/sql` exposes `makeEngine`, `migrate`, `sqlPlanIssues` and `fullRecompute` for engine hosts and conformance tests. Its migration creates operator tables only; circuit hosts should use `View.migrate(sql)`.
-
-The 0.4 snapshot runtime, its state/requirements/operators and its tests are removed. `@streamsy/views/engine` and `@streamsy/views/engine/conformance` no longer exist. Replace manual enter/update/exit synthesis and snapshot persistence with State streams and a circuit. Unsupported lower-level plans fail SQL plan checks, including `reduceByKey` and `countWhere`.
+The package root exports the `View` namespace, fault classes and types. Internal compiler and SQL modules are available to the package's own tests.

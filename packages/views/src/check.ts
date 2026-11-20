@@ -316,6 +316,9 @@ function checkExpression(
   if (expression.kind === "unary")
     return checkExpression(expression.operand, scopes, `${path}.operand`, plan, add, nodeId);
 
+  if (expression.kind === "field")
+    return checkExpression(expression.object, scopes, `${path}.object`, plan, add, nodeId);
+
   if (expression.kind === "binary") {
     checkExpression(expression.left, scopes, `${path}.left`, plan, add, nodeId);
     checkExpression(expression.right, scopes, `${path}.right`, plan, add, nodeId);
@@ -323,7 +326,7 @@ function checkExpression(
     return;
   }
 
-  if (expression.kind === "variadic") {
+  if (expression.kind === "variadic" || expression.kind === "call") {
     Arr.forEach(expression.operands, (operand, index) =>
       checkExpression(operand, scopes, `${path}.operands[${index}]`, plan, add, nodeId),
     );
@@ -334,10 +337,11 @@ function couldBeBoolean(expression: Expression): boolean {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- LiteralExpression.value is parsed JsonValue; this distinguishes its boolean arm.
   if (expression.kind === "literal") return typeof expression.value === "boolean";
 
-  if (expression.kind === "reference") return true;
+  if (expression.kind === "reference" || expression.kind === "field" || expression.kind === "call")
+    return true;
 
   if (expression.kind === "unary")
-    return expression.operator === "is-present" || expression.operator === "not";
+    return expression.operator !== "unwrap" || couldBeBoolean(expression.operand);
 
   if (expression.kind === "binary") return !["add", "or-else"].includes(expression.operator);
 

@@ -1,4 +1,5 @@
 import { Array as Arr } from "effect";
+import { Invoke } from "./ir/contracts.ts";
 
 import type {
   AggregateExpression,
@@ -24,12 +25,12 @@ type LiteralOperand<T> =
 
 type Ordered = number | string;
 
-type ObjectFields<T> = T extends object
-  ? { readonly [K in keyof T & string]-?: TypedExpression<T[K]> }
+type ObjectFields<T, P = Present<T>> = P extends object
+  ? { readonly [K in keyof P & string]-?: TypedExpression<P[K] | Extract<T, undefined>> }
   : unknown;
 
 interface CommonOperations<T> {
-  readonly [ExpressionType]?: T;
+  readonly [ExpressionType]: T;
   readonly eq: (right: LiteralOperand<T>) => TypedExpression<boolean>;
   readonly ne: (right: LiteralOperand<T>) => TypedExpression<boolean>;
   readonly in: (...values: readonly LiteralOperand<T>[]) => TypedExpression<boolean>;
@@ -44,10 +45,14 @@ type SortOperations<T> = undefined extends T
 type OrderedOperations<T> =
   Present<T> extends Ordered
     ? {
-        readonly gt: (right: LiteralOperand<T>) => TypedExpression<boolean>;
-        readonly gte: (right: LiteralOperand<T>) => TypedExpression<boolean>;
-        readonly lt: (right: LiteralOperand<T>) => TypedExpression<boolean>;
-        readonly lte: (right: LiteralOperand<T>) => TypedExpression<boolean>;
+        readonly gt: (right: LiteralOperand<T>) => TypedExpression<boolean | Extract<T, undefined>>;
+        readonly gte: (
+          right: LiteralOperand<T>,
+        ) => TypedExpression<boolean | Extract<T, undefined>>;
+        readonly lt: (right: LiteralOperand<T>) => TypedExpression<boolean | Extract<T, undefined>>;
+        readonly lte: (
+          right: LiteralOperand<T>,
+        ) => TypedExpression<boolean | Extract<T, undefined>>;
       }
     : unknown;
 
@@ -62,16 +67,18 @@ type BooleanOperations<T> =
 
 type NumberOperations<T> =
   Present<T> extends number
-    ? { readonly add: (right: LiteralOperand<T>) => TypedExpression<number> }
+    ? {
+        readonly add: (right: LiteralOperand<T>) => TypedExpression<number | Extract<T, undefined>>;
+      }
     : unknown;
 
 type OptionalOperations<T> = undefined extends T
   ? {
       readonly isPresent: () => TypedExpression<boolean>;
-      readonly value: TypedExpression<Present<T>>;
+      readonly unwrap: () => TypedExpression<Present<T>>;
       readonly orElse: (fallback: LiteralOperand<T>) => TypedExpression<Present<T>>;
     }
-  : ObjectFields<T>;
+  : unknown;
 
 /** A typed facade over a frozen, JSON-only expression tree. */
 export type TypedExpression<T> = Expression &
@@ -80,11 +87,23 @@ export type TypedExpression<T> = Expression &
   BooleanOperations<T> &
   NumberOperations<T> &
   SortOperations<T> &
-  OptionalOperations<T>;
+  OptionalOperations<T> &
+  ObjectFields<T>;
 
-export type ExpressionValue<E> = E extends { readonly [ExpressionType]?: infer Value }
+export type ExpressionValue<E> = E extends { readonly [ExpressionType]: infer Value }
   ? Value
   : never;
+
+export type Selected<F extends Readonly<Record<string, Expression>>> = {
+  readonly [K in keyof F as undefined extends ExpressionValue<F[K]> ? never : K]: ExpressionValue<
+    F[K]
+  >;
+} & {
+  readonly [K in keyof F as undefined extends ExpressionValue<F[K]> ? K : never]?: Exclude<
+    ExpressionValue<F[K]>,
+    undefined
+  >;
+};
 
 export type TypedAggregateExpression<T> = AggregateExpression & { readonly [AggregateType]?: T };
 
@@ -133,22 +152,19 @@ const operations = new Set([
   "not",
   "add",
   "isPresent",
+  "unwrap",
   "orElse",
   "asc",
   "desc",
 ]);
 
-/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions -- Proxies are the intentional typed authoring boundary: their JSON target is a closed Expression, and the compile-time facade is covered by expression.test.ts and type-fixtures.ts. */
+/* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening -- Proxies are the intentional typed authoring boundary: their JSON target is a closed Expression, and the compile-time facade is covered by expression.test.ts and type-fixtures.ts. */
 function decorate<T>(node: Expression): TypedExpression<T> {
-  if (!isDecoratableExpression<T>(node))
-    throw new TypeError("expression nodes must be frozen before decoration");
-
-  return new Proxy(node, {
-    get(target, property) {
-      if (typeof property !== "string" || property in target)
+  const proxy = new Proxy(node, {
+    get(target, property): unknown {
+      // oxlint-disable-next-line effecttsgo/prefer-effect-record -- The closed IR union is an object with varying own keys, plus a private symbol.
+      if (typeof property !== "string" || Object.hasOwn(target, property))
         return Reflect.get(target, property) as unknown;
-
-      if (property === "value") return unary<Present<T>>("value", target);
 
       if (!operations.has(property)) return nestedReference<T>(target, property);
 
@@ -183,6 +199,8 @@ function decorate<T>(node: Expression): TypedExpression<T> {
           return (right: LiteralOperand<T>) => binary<number>("add", target, operand(right));
         case "isPresent":
           return () => unary<boolean>("is-present", target);
+        case "unwrap":
+          return () => unary<Present<T>>("unwrap", target);
         case "orElse":
           return (right: LiteralOperand<T>) =>
             binary<Present<T>>("or-else", target, operand(right));
@@ -195,6 +213,11 @@ function decorate<T>(node: Expression): TypedExpression<T> {
       }
     },
   });
+
+  if (!isDecoratableExpression<T>(proxy))
+    throw new TypeError("expression nodes must be frozen before decoration");
+
+  return proxy;
 }
 
 function isDecoratableExpression<T>(node: Expression): node is TypedExpression<T> {
@@ -202,22 +225,57 @@ function isDecoratableExpression<T>(node: Expression): node is TypedExpression<T
 }
 
 function nestedReference<T>(target: Expression, property: string): TypedExpression<T> {
-  if (target.kind !== "reference")
-    throw new TypeError(`cannot select ${property} from ${target.kind}`);
+  return target.kind === "reference"
+    ? reference<T>(target.scope, [...target.path, property])
+    : decorate<T>(Object.freeze({ kind: "field", object: target, field: property }));
+}
 
-  return reference<T>(target.scope, [...target.path, property]);
+/** Select a field whose name overlaps a fluent operation or expression member. */
+export function field<T, K extends keyof Present<T> & string>(
+  expression: Expression & { readonly [ExpressionType]: T },
+  name: K,
+): TypedExpression<Present<T>[K] | Extract<T, undefined>> {
+  return nestedReference(expression, name);
 }
 
 function isExpression(value: JsonValue | Expression): value is Expression {
   return typeof value === "object" && value !== null && "kind" in value;
 }
-/* oxlint-enable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions */
+/* oxlint-enable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening */
 
 const reference = <T>(scope: ReferenceScope, path: readonly string[]): TypedExpression<T> =>
   decorate<T>(Object.freeze({ kind: "reference", scope, path: Object.freeze(path) }));
 
 export const literal = <T extends JsonValue>(value: T): TypedExpression<T> =>
   decorate<T>(Object.freeze({ kind: "literal", value }));
+
+/** Declare a named, versioned, deterministic synchronous expression function. */
+export function fn<
+  Args extends readonly (JsonValue | undefined)[],
+  Result extends JsonValue | undefined,
+>(
+  name: string,
+  version: number,
+  implementation: (...args: Args) => Result,
+): (
+  ...operands: { readonly [K in keyof Args]: Expression & { readonly [ExpressionType]: Args[K] } }
+) => TypedExpression<Result> {
+  if (name.trim().length === 0 || !Number.isSafeInteger(version) || version < 1)
+    throw new RangeError("View.fn requires a name and a positive integer version");
+
+  return (...operands) =>
+    decorate<Result>(
+      Object.freeze({
+        kind: "call",
+        name,
+        version,
+        operands: Object.freeze(operands),
+        // SAFETY: the returned expression builder checks each operand against the corresponding argument.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the tuple whose values came from the checked operands.
+        [Invoke]: (args: readonly (JsonValue | undefined)[]) => implementation(...(args as Args)),
+      }),
+    );
+}
 
 export interface Selectors<Row, Event, State, Parameter, Right> {
   readonly row: Reference<Row>;
@@ -300,7 +358,7 @@ export const keyExpression = (declared: DeclaredKey): Expression => {
   return Arr.isArray(declared)
     ? variadic<readonly RowKeyValue[]>(
         "key",
-        Arr.map(fields, (field) => reference<RowKeyValue>("row", [field])),
+        Arr.map(fields, (name) => reference<RowKeyValue>("row", [name])),
       )
     : reference<unknown>("row", fields);
 };

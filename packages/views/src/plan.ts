@@ -1,6 +1,32 @@
 import type { SqlRelationPlan } from "./ir/contracts.ts";
 import { Predicate, Record as Rec, Array as Arr } from "effect";
 
+/** Keep circuit arrangement identities stable when view fields are reordered. */
+export function orderPlanFields(plan: SqlRelationPlan): SqlRelationPlan {
+  return {
+    ...plan,
+    nodes: Arr.map(plan.nodes, (node) => {
+      if (node.kind === "project") return { ...node, fields: orderedFields(node.fields) };
+
+      if (node.kind === "grouped-aggregate")
+        return {
+          ...node,
+          groupBy: orderedFields(node.groupBy),
+          aggregates: orderedFields(node.aggregates),
+        };
+
+      return node;
+    }),
+  };
+}
+
+function orderedFields<A>(fields: Readonly<Record<string, A>>): Record<string, A> {
+  const entries = Rec.toEntries(fields);
+  entries.sort(([left], [right]) => left.localeCompare(right));
+
+  return Rec.fromEntries(entries);
+}
+
 /** Canonical JSON with lexicographically sorted object keys and preserved array order. */
 export function encodePlan(plan: SqlRelationPlan): string {
   return canonical(plan, new Set<object>(), "$plan");

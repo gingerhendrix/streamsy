@@ -1,6 +1,6 @@
 import { Schema, Array as Arr } from "effect";
 import { describe, expect, it } from "@effect/vitest";
-import type { RelationNode, RelationPlan } from "@streamsy/views/ir";
+import type { RelationNode, RelationPlan } from "../src/ir/contracts.ts";
 import { collectPlanIssues, PlanIssue } from "../src/check.ts";
 
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions -- Malformed fixtures intentionally cross the static plan contract to exercise every checker issue code. */

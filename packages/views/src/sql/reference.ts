@@ -10,7 +10,7 @@ import type {
   TopNNode,
 } from "../ir/contracts.ts";
 import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
-import type { Evaluated } from "../runtime/expression.ts";
+import type { Evaluated, ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 
 import { dataFault } from "./data-fault.ts";
@@ -28,7 +28,7 @@ export interface OrderedPartition {
 export interface FullRecomputeInput {
   readonly plan: SqlRelationPlan;
   readonly sources: Readonly<Record<string, readonly StateRow[]>>;
-  readonly parameters?: JsonObject;
+  readonly parameters?: ExpressionScopes["parameter"];
   readonly decodeRow?: (schema: DescriptorRef, row: JsonObject, nodeId: string) => JsonObject;
 }
 
@@ -58,10 +58,11 @@ export function legacyRelations(
   program: Program,
   sources: FullRecomputeInput["sources"],
   accumulators: ReadonlyMap<string, ReadonlyMap<string, Accumulator>>,
+  parameters: ExpressionScopes["parameter"],
 ) {
   return evaluateRelations(
     program.nodes,
-    { sources },
+    { sources, parameters },
     {
       location: (node) => program.locations.get(node) ?? { view: "*", node },
       stateKeys: program.stateKeys,
@@ -222,7 +223,7 @@ function evaluateRelations(
 function sourceRows(
   source: readonly StateRow[],
   keyExpression: Expression,
-  parameters: JsonObject,
+  parameters: NonNullable<ExpressionScopes["parameter"]>,
   stateKey?: true,
 ): readonly StateRow[] {
   for (const entry of source) {
@@ -244,7 +245,7 @@ function sourceRows(
 function recomputeAggregate(
   node: SqlGroupedAggregateNode,
   input: readonly StateRow[],
-  parameters: JsonObject,
+  parameters: NonNullable<ExpressionScopes["parameter"]>,
   stored?: ReadonlyMap<string, Accumulator>,
 ): readonly StateRow[] {
   const groups = new Map<string, { key: RowKey; group: JsonObject; members: StateRow[] }>();
@@ -335,7 +336,7 @@ function recomputeAggregate(
 function recomputeTop(
   node: TopNNode,
   input: readonly StateRow[],
-  parameters: JsonObject,
+  parameters: NonNullable<ExpressionScopes["parameter"]>,
 ): FullRecomputeResult {
   const limit = evaluate(node.limit, { parameter: parameters });
 

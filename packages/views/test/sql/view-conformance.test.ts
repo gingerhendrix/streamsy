@@ -14,9 +14,11 @@ import {
   type MultiSet,
 } from "@tanstack/db-ivm";
 import { Array as Arr, Effect, Record as Rec, Schema } from "effect";
-import { fullRecompute, makeEngine, migrate, type StateChange } from "@streamsy/views/sql";
+import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
-import { View, compilePlan, keyExpression, type Reference } from "../../src/relation.ts";
+import { View } from "../../src/index.ts";
+import { compilePlan } from "../../src/relation.ts";
+import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import { identity, materialize } from "./support.ts";
 

@@ -1,5 +1,12 @@
-import { isJsonObject, type Expression, type JsonObject, type JsonValue } from "../ir/contracts.ts";
-import { Array as Arr, Record as Rec } from "effect";
+import {
+  Invoke,
+  isJsonObject,
+  type Expression,
+  type JsonObject,
+  type JsonValue,
+} from "../ir/contracts.ts";
+import { Array as Arr, Predicate, Record as Rec, Schema } from "effect";
+import type { StreamRoute } from "@streamsy/core/protocol";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, typescript/consistent-return -- This module is the pure runtime parser for JSON expression results; its guards establish each operator's scalar contract, and assertions only recover array/object evidence erased by indexed JSON access. */
 
@@ -18,8 +25,10 @@ export interface ExpressionScopes {
   readonly key?: JsonValue;
   readonly event?: JsonValue;
   readonly state?: JsonValue;
-  readonly parameter?: JsonValue;
+  readonly parameter?: StreamRoute.Params<StreamRoute.ParamCodecs> | undefined;
 }
+
+const isJson = Schema.is(Schema.Json);
 
 export class ExpressionFault extends TypeError {
   constructor(
@@ -45,12 +54,45 @@ export function evaluateOptional(expression: Expression, scopes: ExpressionScope
       return expression.value;
     case "reference":
       return reference(expression, scopes);
+    case "field": {
+      const object = evaluateOptional(expression.object, scopes);
+
+      if (object === Missing || !isJsonObject(object) || !Rec.has(object, expression.field))
+        return Missing;
+
+      const value = object[expression.field];
+
+      return value === undefined ? Missing : value;
+    }
+
+    case "call": {
+      const args = Arr.map(expression.operands, (operand) => {
+        const value = evaluateOptional(operand, scopes);
+
+        return value === Missing ? undefined : value;
+      });
+
+      const result = expression[Invoke](args);
+
+      if (result === undefined) return Missing;
+
+      if (!isJson(result))
+        throw new ExpressionFault(expression, "View.fn must return JSON or undefined");
+
+      return result;
+    }
+
     case "unary": {
       const operand = evaluateOptional(expression.operand, scopes);
 
       if (expression.operator === "is-present") return operand !== Missing;
 
-      if (expression.operator === "value") return operand;
+      if (expression.operator === "unwrap") {
+        if (operand === Missing)
+          throw new ExpressionFault(expression, "cannot unwrap an absent value");
+
+        return operand;
+      }
 
       if (operand === Missing || typeof operand !== "boolean")
         throw new ExpressionFault(expression, "not requires a present Boolean");
@@ -69,20 +111,20 @@ function reference(
   expression: Extract<Expression, { readonly kind: "reference" }>,
   scopes: ExpressionScopes,
 ): Evaluated {
-  const root = scopes[expression.scope];
-
-  if (root === undefined) return Missing;
-  let current: JsonValue = root;
+  let current: unknown = scopes[expression.scope];
 
   for (const segment of expression.path) {
-    if (!isJsonObject(current)) return Missing;
-    const child: JsonValue | undefined = current[segment];
-
-    if (child === undefined) return Missing;
-    current = child;
+    if (!Predicate.hasProperty(current, segment) || !Rec.has(current, segment)) return Missing;
+    current = current[segment];
   }
 
-  return current;
+  if (current === undefined) return Missing;
+
+  if (expression.scope === "parameter" && !isJson(current))
+    throw new ExpressionFault(expression, "a referenced circuit parameter must be JSON");
+
+  // Row scopes are already JSON. Parameter leaves were checked above.
+  return current as JsonValue;
 }
 
 function binary(

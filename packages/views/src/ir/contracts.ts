@@ -49,7 +49,7 @@ export interface ReferenceExpression {
   readonly path: readonly string[];
 }
 
-export type UnaryOperator = "is-present" | "value" | "not";
+export type UnaryOperator = "is-present" | "unwrap" | "not";
 
 export interface UnaryExpression {
   readonly kind: "unary";
@@ -82,12 +82,31 @@ export interface VariadicExpression {
   readonly operands: readonly Expression[];
 }
 
+export interface FieldExpression {
+  readonly kind: "field";
+  readonly object: Expression;
+  readonly field: string;
+}
+
+export const Invoke = Symbol("@streamsy/views/invoke");
+
+export interface CallExpression {
+  readonly kind: "call";
+  readonly name: string;
+  readonly version: number;
+  readonly operands: readonly Expression[];
+  /** The implementation travels with the expression and is omitted from canonical JSON. */
+  readonly [Invoke]: (args: readonly (JsonValue | undefined)[]) => JsonValue | undefined;
+}
+
 export type Expression =
   | LiteralExpression
   | ReferenceExpression
   | UnaryExpression
   | BinaryExpression
-  | VariadicExpression;
+  | VariadicExpression
+  | FieldExpression
+  | CallExpression;
 
 export type AggregateFunction = "count" | "count-where" | "sum" | "min" | "max";
 

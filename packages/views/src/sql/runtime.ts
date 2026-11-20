@@ -1,5 +1,5 @@
 import { Array as Arr, Effect } from "effect";
-import { evaluateOptional, isMissing } from "../runtime/expression.ts";
+import { evaluateOptional, isMissing, type ExpressionScopes } from "../runtime/expression.ts";
 import { canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
 import { checkData, dataFault, type DataFault } from "./data-fault.ts";
@@ -62,15 +62,21 @@ function unique(entries: readonly Entry[], fault: DataFault): Map<string, Entry>
   return result;
 }
 
-export function indexEntry(a: Arrangement, entry: Entry): IndexEntry | undefined {
-  const values = Arr.map(a.key, (e) => evaluateOptional(e, { row: entry.row, key: entry.key }));
+function indexEntry(
+  a: Arrangement,
+  entry: Entry,
+  parameter: ExpressionScopes["parameter"],
+): IndexEntry | undefined {
+  const values = Arr.map(a.key, (e) =>
+    evaluateOptional(e, { row: entry.row, key: entry.key, parameter }),
+  );
 
   if (Arr.some(values, isMissing)) return undefined;
 
   if (
     a.optional &&
     Arr.some(a.order, (t) =>
-      isMissing(evaluateOptional(t.expression, { row: entry.row, key: entry.key })),
+      isMissing(evaluateOptional(t.expression, { row: entry.row, key: entry.key, parameter })),
     )
   )
     return undefined;
@@ -79,7 +85,7 @@ export function indexEntry(a: Arrangement, entry: Entry): IndexEntry | undefined
 
   return {
     index_key: canonicalJson(present),
-    sort_key: orderKey(entry, a.order),
+    sort_key: orderKey(entry, a.order, parameter),
     row_key: encodeRowKey(entry.key),
   };
 }
@@ -88,7 +94,7 @@ export function indexEntry(a: Arrangement, entry: Entry): IndexEntry | undefined
  * Ordered reads fetch at most limit + changed entries, never the whole partition.
  * No cache or payload survives the unit; SQL is authoritative between units.
  */
-export function runtime(program: Program, store: Store) {
+export function runtime(program: Program, store: Store, parameter: ExpressionScopes["parameter"]) {
   const fault = (relation: string) => {
     const location = program.locations.get(relation);
 
@@ -230,13 +236,15 @@ export function runtime(program: Program, store: Store) {
             d.before === undefined
               ? undefined
               : checkData(fault(a.node), d.key, () =>
-                  indexEntry(a, { key: d.key, row: d.before! }),
+                  indexEntry(a, { key: d.key, row: d.before! }, parameter),
                 );
 
           const after =
             d.after === undefined
               ? undefined
-              : checkData(fault(a.node), d.key, () => indexEntry(a, { key: d.key, row: d.after! }));
+              : checkData(fault(a.node), d.key, () =>
+                  indexEntry(a, { key: d.key, row: d.after! }, parameter),
+                );
 
           if (before?.index_key === after?.index_key && before?.sort_key === after?.sort_key)
             continue;
@@ -265,7 +273,7 @@ export function runtime(program: Program, store: Store) {
       }
     });
 
-  return { changes, get, lookup, apply, fault };
+  return { changes, get, lookup, apply, fault, parameter };
 }
 
 export type Runtime = ReturnType<typeof runtime>;

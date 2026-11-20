@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { KeyNode } from "../ir/contracts.ts";
-import { evaluate } from "../runtime/expression.ts";
+import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import { checkData, type DataFault } from "./data-fault.ts";
 import { difference, type Deltas } from "./runtime.ts";
@@ -17,6 +17,7 @@ export const rekey = Effect.fnUntraced(function* (
   fault: DataFault,
   checked: boolean,
   stateKey: boolean,
+  parameter: ExpressionScopes["parameter"],
 ) {
   const before = new Map<string, OwnedEntry>();
   const after = new Map<string, OwnedEntry>();
@@ -29,7 +30,7 @@ export const rekey = Effect.fnUntraced(function* (
       if (row === undefined) continue;
 
       const evaluated = checkData(fault, d.key, () =>
-        asRowKey(evaluate(node.key, { row, key: d.key })),
+        asRowKey(evaluate(node.key, { row, key: d.key, parameter })),
       );
 
       const key = stateKey ? String(evaluated) : evaluated;

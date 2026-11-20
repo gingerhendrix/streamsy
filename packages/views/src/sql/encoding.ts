@@ -1,5 +1,10 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
-import { evaluate, isMissing, type Evaluated } from "../runtime/expression.ts";
+import {
+  evaluate,
+  isMissing,
+  type Evaluated,
+  type ExpressionScopes,
+} from "../runtime/expression.ts";
 import type { Entry } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */
@@ -43,11 +48,18 @@ export function scalarKey(value: JsonValue): string {
   throw new TypeError("order requires a finite number, string, or Boolean");
 }
 
-export function orderKey(entry: Entry, terms: readonly SortTerm[]): string {
+export function orderKey(
+  entry: Entry,
+  terms: readonly SortTerm[],
+  parameter?: ExpressionScopes["parameter"],
+): string {
   let result = "";
 
   for (const term of terms) {
-    const value = scalarKey(evaluate(term.expression, { row: entry.row, key: entry.key }));
+    const value = scalarKey(
+      evaluate(term.expression, { row: entry.row, key: entry.key, parameter }),
+    );
+
     result += term.direction === "ascending" ? value : invert(value);
   }
 

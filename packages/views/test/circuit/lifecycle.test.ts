@@ -4,7 +4,7 @@ import { SqlClient } from "effect/sql";
 import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
-import { View } from "../../src/relation.ts";
+import { View } from "../../src/index.ts";
 import { host } from "./support/host.ts";
 import { Shop, Results, Table, circuit, views } from "./support/shop.ts";
 

@@ -1,6 +1,6 @@
 import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
-import { View } from "../../src/relation.ts";
+import { View } from "../../src/index.ts";
 import { orders, Shop, Results, circuit, views } from "./support/shop.ts";
 
 const declaration = circuit();
@@ -19,29 +19,24 @@ void declaration.at({});
 // @ts-expect-error unknown input collection
 void View.from(Shop, "missing");
 
-View.circuit({
-  id: "bad",
-  params: { shop: Schema.String },
-  output: Results,
-  // @ts-expect-error the output row lacks the customerName field
-  views: { goldOrder: orders },
-});
+const config = { id: "bad", params: Results.paramCodecs, output: Results };
 
-View.circuit({
-  id: "bad",
-  params: { shop: Schema.String },
-  output: Results,
-  // @ts-expect-error unknown output collection
-  views: { missing: orders },
-});
+const wrongRow = { ...config, views: { goldOrder: orders } };
 
-View.circuit({
-  id: "bad",
-  params: { shop: Schema.String },
-  output: Results,
-  // @ts-expect-error the output key is required by its row schema
-  views: { topOrder: orders.select((row) => ({ customerId: row.customerId, total: row.total })) },
-});
+// @ts-expect-error the output row lacks the customerName field
+View.circuit(wrongRow);
+
+const wrongCollection = { ...config, views: { missing: orders } };
+
+// @ts-expect-error unknown output collection
+View.circuit(wrongCollection);
+
+const missingKey = orders.select((row) => ({ customerId: row.customerId, total: row.total }));
+
+const wrongKey = { ...config, views: { topOrder: missingKey } };
+
+// @ts-expect-error the output key is required by its row schema
+View.circuit(wrongKey);
 
 // @ts-expect-error State inputs and output require a matching shop parameter
 View.circuit({ id: "bad", params: {}, output: Results, views: { topOrder: orders } });

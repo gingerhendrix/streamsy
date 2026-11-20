@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { Expression } from "@streamsy/views/ir";
+import type { Expression } from "../src/ir/contracts.ts";
 import { aggregate, literal, parameterReference, selectors } from "../src/expression.ts";
 
 interface Row {
@@ -49,12 +49,12 @@ describe("expression construction", () => {
       operator: "is-present",
       operand: { kind: "reference", scope: "row", path: ["assigneeId"] },
     });
-    expect<Expression>(x.row.assigneeId.value.eq("user-1")).toEqual({
+    expect<Expression>(x.row.assigneeId.unwrap().eq("user-1")).toEqual({
       kind: "binary",
       operator: "equal",
       left: {
         kind: "unary",
-        operator: "value",
+        operator: "unwrap",
         operand: { kind: "reference", scope: "row", path: ["assigneeId"] },
       },
       right: { kind: "literal", value: "user-1" },
