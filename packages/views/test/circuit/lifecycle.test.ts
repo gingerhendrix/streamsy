@@ -445,8 +445,8 @@ it.live(
       const fault = yield* Projection.run(declaration).pipe(Effect.flip);
       expect(fault).toMatchObject({
         _tag: "ViewDataFault",
-        view: "row",
-        node: "row/key/0",
+        view: '["output","row"]',
+        node: '["output","row"]/key/0',
         key: "1",
         reason: "duplicate output key",
       });
