@@ -3,7 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Array, Context, Effect, Layer, Option, Schedule, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
-import { DurableState, Streamsy } from "@streamsy/core";
+import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
 import {
   CheckpointStore,
@@ -238,6 +238,34 @@ it.effect(
       expect((yield* mirror.head(params)).nextOffset).toBe(tail);
       expect(yield* Projection.read(declaration.at(params))).toEqual(checkpoint);
     }).pipe(Effect.provide(host)),
+);
+
+it.live("creates every output on the first unit and recreates a missing output on append", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const params = bindings[0]!;
+    const binding = View.circuit({
+      id: "api-empty-output",
+      params: Results.paramCodecs,
+      outputs: { selected: Results, original: Mirror },
+      views: ({ minimum }) => ({
+        selected: { row: buildResult("empty", 1)(minimum).where((row) => row.id.eq("new")) },
+        original: { row: items },
+      }),
+    }).at(params);
+
+    yield* Projection.run(binding);
+    const selected = yield* Results;
+    const original = yield* Mirror;
+    expect((yield* selected.head(params)).nextOffset).toBe(ZERO_OFFSET);
+    yield* original.remove(params);
+    yield* append([DurableState.upsert("item", { id: "new", value: { score: 5 } })]);
+    expect((yield* Projection.run(binding)).units).toBe(1);
+    yield* Projection.run(Table.at(params));
+    yield* Projection.run(MirrorTable.at(params));
+    expect((yield* Table.at(params).get("row", "new")).value?.id).toBe("new");
+    expect((yield* MirrorTable.at(params).get("row", "new")).value?.id).toBe("new");
+  }).pipe(Effect.provide(host)),
 );
 
 it("rejects partial and duplicate output coverage at declaration time", () => {

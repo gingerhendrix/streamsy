@@ -193,22 +193,25 @@ const guard = Effect.fn("View.guard")(function* (
   const { projectionKey, namespace } = identity(key);
   const state = circuitState(sql, projectionKey);
   const generations = yield* state.generations();
+  let firstUnit = true;
 
   for (const previous of generations) {
     if (previous.generation > key.generation)
       return yield* new ViewFault({ message: "A newer circuit generation has already run" });
 
-    if (previous.namespace === namespace && previous.plan_hash !== hash)
-      return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
+    if (previous.namespace === namespace) {
+      if (previous.plan_hash !== hash)
+        return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
+      firstUnit = false;
+    }
   }
 
   for (const previous of generations)
     if (previous.generation < key.generation) yield* clearNamespace(sql, previous.namespace);
 
-  if (!Array.some(generations, (previous) => previous.namespace === namespace))
-    yield* state.save(namespace, key.generation, hash);
+  if (firstUnit) yield* state.save(namespace, key.generation, hash);
 
-  return namespace;
+  return { namespace, firstUnit };
 });
 
 const commit = Commit.transactionWithRemove((key, sql) =>
@@ -410,7 +413,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         for (const [name, codec] of Record.toEntries(definition.params))
           boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
 
-        const namespace = yield* guard(
+        const { namespace, firstUnit } = yield* guard(
           sql,
           {
             id: unit.projectionId,
@@ -470,6 +473,10 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
 
         for (const [route, output] of Record.toEntries(outputs)) {
+          const entries = entriesByRoute.get(route) ?? [];
+
+          if (!firstUnit && entries.length === 0) continue;
+
           const service: Effect.Effect<
             Effect.Success<typeof output.stream>,
             never,
@@ -477,12 +484,20 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           > = output.stream;
 
           const { wire } = yield* service;
-          yield* wire.create(output.id, { contentType: output.contentType });
-          const entries = entriesByRoute.get(route);
+          const create = () => wire.create(output.id, { contentType: output.contentType });
 
-          if (entries !== undefined && Array.isReadonlyArrayNonEmpty(entries)) {
+          // The guard row, every output create, and the checkpoint commit together.
+          if (firstUnit) yield* create();
+
+          if (Array.isReadonlyArrayNonEmpty(entries)) {
             const events = DurableState.changes(output, {}, entries);
-            yield* Streams.append(output, events).pipe(Effect.provideService(StreamsWriter, wire));
+            const append = Streams.append(output, events).pipe(
+              Effect.provideService(StreamsWriter, wire),
+            );
+            // An owner can still delete a previously created stream explicitly.
+            yield* append.pipe(
+              Effect.catchTag("StreamNotFound", () => Effect.andThen(create(), append)),
+            );
           }
         }
 
