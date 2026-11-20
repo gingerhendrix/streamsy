@@ -82,9 +82,12 @@ across producer outputs. Chain projections for sinks with different guarantees.
 outside the transaction. It runs at least once and passes its result to
 `process`. A retry can read new input and change `unit.key`.
 
-`Commit.transactionWithRemove((key, sql) => cleanup)` runs the cleanup Effect after
-checkpoint deletion inside the same transaction. Use the supplied transaction
-SQL client for cleanup so a failure rolls both operations back.
+`Commit.transactionWithCleanup((key, sql) => cleanup)` passes the binding's
+checkpoint key and transaction SQL client to the cleanup Effect.
+`Projection.forget` runs cleanup after deleting any live checkpoint.
+`Projection.retire` runs it after the tombstone write and owned output cleanup.
+The callback also runs on a repeated retirement. A cleanup failure rolls back
+changes in the same transaction, including SQL run with the supplied client.
 
 `Commit.withCompensation(f)` calls `f(result, cause, unit)` after successful
 processing if the commit fails. It is also available as a `.pipe` combinator.

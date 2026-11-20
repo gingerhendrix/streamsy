@@ -137,27 +137,16 @@ export const transaction = withPrepare(
   }),
 ).pipe(withAccepted);
 
-/** Run additional removal work in the same transaction as checkpoint deletion. */
-export const transactionWithRemove = <R>(
-  afterRemove: (
-    key: ProjectionKey,
-    sql: SqlClient.SqlClient,
-  ) => Effect.Effect<void, ProjectionFault, R>,
-) =>
-  inherit(transaction, {
-    ...transaction,
-    remove: (key: ProjectionKey) =>
-      Transaction.use((tx) =>
-        tx.withTransaction(remove(key).pipe(Effect.andThen(() => afterRemove(key, tx.sql)))),
-      ),
-  });
-
 /** Clean up binding state in the owner transaction on both forget and retire. */
 export const transactionWithCleanup = (
   cleanup: (key: ProjectionKey, sql: SqlClient.SqlClient) => Effect.Effect<void, ProjectionFault>,
 ) =>
   inherit(transaction, {
-    ...transactionWithRemove(cleanup),
+    ...transaction,
+    remove: (key: ProjectionKey) =>
+      Transaction.use((tx) =>
+        tx.withTransaction(remove(key).pipe(Effect.andThen(() => cleanup(key, tx.sql)))),
+      ),
     retire: (request: RetireRequest) =>
       Transaction.use((tx) =>
         retireInTransaction({

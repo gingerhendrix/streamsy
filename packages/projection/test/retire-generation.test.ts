@@ -1,6 +1,6 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { StreamBusy, ZERO_OFFSET } from "@streamsy/core";
 import { OwnerRecords } from "@streamsy/core/internal";
@@ -9,6 +9,7 @@ import {
   CheckpointStore,
   Commit,
   Projection,
+  ProjectionFault,
   ProjectionWakeup,
   StateTable,
 } from "@streamsy/projection";
@@ -57,6 +58,107 @@ const previousEnvelope = Schema.fromJsonString(
 );
 
 layer(host)((it) => {
+  it.effect("transactionWithCleanup rolls back forget and callback SQL on failure", () =>
+    Effect.gen(function* () {
+      const { params } = binding("forget-with-cleanup");
+      const store = yield* CheckpointStore;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE forget_cleanup (id TEXT NOT NULL)`;
+
+      const failure = new ProjectionFault({
+        phase: "checkpoint",
+        reason: "storage-failure",
+        message: "forget cleanup failed",
+      });
+
+      const commit = Commit.transactionWithCleanup((key, client) =>
+        Effect.gen(function* () {
+          expect((yield* store.load(key)).token).toBe("0");
+          yield* client`INSERT INTO forget_cleanup (id) VALUES (${key.id})`.pipe(Effect.orDie);
+
+          return yield* failure;
+        }),
+      );
+
+      const bound = numbers(commit, 1).at(params);
+      yield* seed(params);
+      yield* Projection.run(bound);
+      const checkpoint = yield* store.load(bound);
+      expect(Option.isSome(checkpoint.record)).toBe(true);
+
+      expect(yield* Projection.forget(bound).pipe(Effect.flip)).toBe(failure);
+      expect(yield* store.load(bound)).toEqual(checkpoint);
+      expect(yield* sql`SELECT id FROM forget_cleanup`).toEqual([]);
+    }),
+  );
+
+  it.effect("transactionWithCleanup rolls back retirement and can retry after failure", () =>
+    Effect.gen(function* () {
+      const { params, rev, epoch, numberId, acceptedId } = binding("retire-with-cleanup");
+      const store = yield* CheckpointStore;
+      const target = yield* Numbers;
+      const accepted = yield* Accepted;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE retire_cleanup (generation INTEGER NOT NULL)`;
+      const failCleanup = yield* Ref.make(true);
+
+      const failure = new ProjectionFault({
+        phase: "checkpoint",
+        reason: "storage-failure",
+        message: "retire cleanup failed",
+      });
+
+      const commit = Commit.transactionWithCleanup((key, client) =>
+        Effect.gen(function* () {
+          expect(yield* store.load(key).pipe(Effect.flip, Effect.orDie)).toMatchObject(retired);
+          expect(yield* target.head(rev).pipe(Effect.flip, Effect.orDie)).toMatchObject(missing);
+          yield* client`INSERT INTO retire_cleanup (generation) VALUES (${key.generation})`.pipe(
+            Effect.orDie,
+          );
+
+          if (yield* Ref.get(failCleanup)) return yield* failure;
+
+          return yield* Effect.void;
+        }),
+      );
+
+      const spec = numbers(commit, 1);
+      const bound = spec.at(params);
+      yield* seed(params);
+      yield* Projection.run(bound);
+      const checkpoint = yield* store.load(bound);
+      expect(Option.isSome(checkpoint.record)).toBe(true);
+      const acceptedBefore = (yield* accepted.collect(epoch)).items;
+      expect(acceptedBefore).toHaveLength(1);
+
+      const retire = Projection.retire(spec, params, { generation: 1 });
+      expect(yield* retire.pipe(Effect.flip)).toBe(failure);
+      expect(yield* store.load(bound)).toEqual(checkpoint);
+      expect((yield* target.collect(rev)).items).toEqual([2]);
+      expect((yield* accepted.collect(epoch)).items).toEqual(acceptedBefore);
+      expect(yield* sql`SELECT generation FROM retire_cleanup`).toEqual([]);
+
+      yield* Ref.set(failCleanup, false);
+      expect(yield* retire).toEqual({
+        record: "retired",
+        outputs: {
+          numbers: { id: numberId, result: "removed" },
+          "@streamsy/accepted": { id: acceptedId, result: "removed" },
+        },
+      });
+      expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject(retired);
+      expect(yield* target.head(rev).pipe(Effect.flip)).toMatchObject(missing);
+      expect(yield* accepted.head(epoch).pipe(Effect.flip)).toMatchObject(missing);
+      expect(yield* sql`SELECT generation FROM retire_cleanup`).toEqual([{ generation: 1 }]);
+
+      expect((yield* retire).record).toBe("already-retired");
+      expect(yield* sql`SELECT generation FROM retire_cleanup`).toEqual([
+        { generation: 1 },
+        { generation: 1 },
+      ]);
+    }),
+  );
+
   for (const commit of [Commit.transaction, Commit.producer]) {
     it.effect(
       `${commit.name}: retire isolates generations, fences load and CAS, and survives forget`,

@@ -14,11 +14,7 @@ export {
 
 export { checkpoint } from "./commit/checkpoint.ts";
 
-export {
-  transaction,
-  transactionWithCleanup,
-  transactionWithRemove,
-} from "./commit/transaction.ts";
+export { transaction, transactionWithCleanup } from "./commit/transaction.ts";
 
 export { producer } from "./commit/producer.ts";
 

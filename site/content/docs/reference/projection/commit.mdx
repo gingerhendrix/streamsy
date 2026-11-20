@@ -84,10 +84,40 @@ same<typeof transaction, typeof Commit.transaction>(true);
 - A stream append in the handler to a stream on another owner fails with phase `process` and reason `unsupported-composition`.
 - When the checkpoint changed after the runner read it, the unit fails with phase `checkpoint` and reason `token-conflict`.
 - An output append failure has phase `process`: storage or transport faults use `storage-failure`, a busy output uses `output-busy`, and other rejections or encoding failures use `invalid-output`.
-- Only `transaction`, alone or wrapped by `withCompensation`, accepts `prepare`. It runs `prepare` before it opens the transaction.
+- `transaction` and `transactionWithCleanup` accept `prepare`, including when wrapped by `withCompensation`. They run `prepare` before opening the transaction.
 - A retry reads the inputs again, so a longer tail can change `unit.key`. An external call in the handler happens at least once.
 
 The [`Transaction`](#transaction) service opens the transaction. A memory host has no `SqlClient`, so `transaction` needs a SQL host.
+
+### `Commit.transactionWithCleanup`
+
+```ts
+// ---cut-start---
+import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import { Commit, type ProjectionFault, type ProjectionKey } from "@streamsy/projection";
+import { same, type Flat } from "./reference-check.ts";
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
+// ---cut-end---
+declare const transactionWithCleanup: (
+  cleanup: (key: ProjectionKey, sql: SqlClient.SqlClient) => Effect.Effect<void, ProjectionFault>,
+) => typeof Commit.transaction & Required<Pick<typeof Commit.transaction, "remove" | "retire">>;
+// ---cut-after---
+same<Parameters<typeof transactionWithCleanup>, Parameters<typeof Commit.transactionWithCleanup>>(
+  true,
+);
+same<
+  Writable<Flat<ReturnType<typeof transactionWithCleanup>>>,
+  ReturnType<typeof Commit.transactionWithCleanup>
+>(true);
+```
+
+`transactionWithCleanup` returns a [`transaction`](#committransaction) Commit that also runs `cleanup` during `Projection.forget` and `Projection.retire`. The callback receives the binding's checkpoint key and the storage owner's transaction `SqlClient`. The Commit supports `prepare` and accepted streams.
+
+- `Projection.forget` deletes any live checkpoint before it runs `cleanup`. An existing retirement tombstone stays in place.
+- `Projection.retire` writes the tombstone and removes or closes the owned generation outputs before it runs `cleanup`. If the checkpoint already has a tombstone, it skips the tombstone write and runs output cleanup and `cleanup` again.
+
+If `cleanup` fails, the lifecycle call returns that fault. The transaction rolls back the checkpoint deletion or tombstone write, any owned output changes, and any SQL run with the supplied client.
 
 ### `Commit.producer`
 
