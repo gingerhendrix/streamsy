@@ -21,20 +21,24 @@ class Shop extends Streamsy.state<Shop>()("Shop/Input", "shop/:shopId", {
   collections: { order: { schema: Order, key: "orderId" } },
 }) {}
 
-class ShopViews extends Streamsy.state<ShopViews>()("Shop/Views", "shop/:shopId/views", {
-  params: { shopId: Schema.String },
-  collections: {
-    customerTotals: {
-      schema: Schema.Struct({
-        customerId: Schema.String,
-        orders: Schema.Finite,
-        revenue: Schema.Finite,
-      }),
-      key: "customerId",
+class ShopViews extends Streamsy.state<ShopViews>()(
+  "Shop/Views",
+  "shop/:shopId/views/g/:generation",
+  {
+    params: { shopId: Schema.String, generation: Schema.FiniteFromString },
+    collections: {
+      customerTotals: {
+        schema: Schema.Struct({
+          customerId: Schema.String,
+          orders: Schema.Finite,
+          revenue: Schema.Finite,
+        }),
+        key: "customerId",
+      },
+      topOrder: { schema: Order, key: "orderId" },
     },
-    topOrder: { schema: Order, key: "orderId" },
   },
-}) {}
+) {}
 
 const orders = View.from(Shop, "order");
 const customerTotals = orders
@@ -49,7 +53,7 @@ const topOrders = orders.top({
 export const shopViews = View.circuit({
   id: "shop-views",
   params: { shopId: Schema.String },
-  output: ShopViews,
+  output: Projection.perGeneration(ShopViews, "generation"),
   views: { customerTotals, topOrder: topOrders },
 });
 
@@ -64,7 +68,7 @@ Supported operators: `where`, `select`, equality `join`, `leftJoin`, `groupBy` w
 
 String comparisons use **lexicographic UTF-16 code-unit ordering**, without locale comparison, case folding or Unicode normalization. This applies to comparisons, extrema and top ordering. Include the unique row key as the last top sort term. State rows have no result-list order; `StateTable.list` orders by its wire keys.
 
-Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to rebuild; the first unit removes older operator namespaces for that projection key. Stop older runners first and delete/reset output streams if the rebuild must start with empty outputs. `Projection.forget(bound)` deletes the checkpoint and operator state atomically and leaves output streams available.
+Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`. `Projection.forget(bound)` clears the checkpoint and operator state and keeps the output streams.
 
 Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
 
