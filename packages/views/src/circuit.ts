@@ -30,6 +30,7 @@ import {
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
+import { encodeRowKey } from "./runtime/key.ts";
 import type { JsonValue, SqlRelationPlan } from "./ir/contracts.ts";
 
 type Views = Readonly<Record<string, Pick<Relation<unknown>, "expression" | "inputs" | "rowType">>>;
@@ -425,12 +426,22 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         );
 
         const changes: StateChange[] = [];
+        const store = storeFor(sql, namespace);
 
-        for (const [sourceId, input] of sources) {
+        const active = Array.flatMap([...sources], ([sourceId, input]) => {
           const slice = batch[input.state.key];
 
-          if (slice === undefined) continue;
+          return slice === undefined
+            ? []
+            : [{ sourceId, input, slice, markerKey: encodeRowKey(sourceId) }];
+        });
 
+        const snapshots = yield* store.getMany(
+          "@snapshots",
+          Array.map(active, ({ markerKey }) => markerKey),
+        );
+
+        for (const { sourceId, input, slice, markerKey } of active) {
           const source = Array.findFirst(
             engine.program.nodes,
             (node) => node.kind === "source" && node.sourceId === sourceId,
@@ -442,12 +453,13 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
           changes.push(
             ...(yield* normalize(
-              storeFor(sql, namespace),
+              store,
               sourceId,
               source.value.id,
               input.collection,
               dataFault(location),
               slice.items,
+              snapshots.has(markerKey),
             )),
           );
         }

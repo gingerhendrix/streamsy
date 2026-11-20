@@ -125,10 +125,17 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
           return result;
         }
 
+        // Drive primary-key lookups directly from the values. Workerd counts
+        // reads from SQLite's temporary IN table as billable reads.
         for (const batch of Arr.chunksOf(keys, 98)) {
-          const rows = yield* sql<{ row_key: string; value: string }>`SELECT row_key, value
-            FROM streamsy_view_integrals WHERE namespace = ${namespace} AND relation = ${relation}
-            AND ${sql.in("row_key", batch)}`;
+          const values = Arr.map(batch, (key) => sql`(${key})`);
+
+          const rows = yield* sql<{
+            row_key: string;
+            value: string;
+          }>`WITH keys(key) AS (VALUES ${sql.csv(values)})
+            SELECT i.row_key, i.value FROM keys CROSS JOIN streamsy_view_integrals AS i
+            WHERE i.namespace = ${namespace} AND i.relation = ${relation} AND i.row_key = keys.key`;
 
           for (const row of rows) result.set(row.row_key, decodeRow(row.value));
         }
@@ -168,26 +175,15 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
       }),
     indexRemove: (arrangement: string, entries: readonly IndexEntry[]) =>
       Effect.gen(function* () {
-        if (entries.length === 1) {
-          const entry = entries[0]!;
-          yield* sql`DELETE FROM streamsy_view_arrangements
-            WHERE namespace = ${namespace} AND arrangement = ${arrangement}
-            AND index_key = ${entry.index_key} AND sort_key = ${entry.sort_key} AND row_key = ${entry.row_key}`;
-
-          return;
-        }
-
-        // Full primary keys keep the delete on point lookups. The namespace and
-        // arrangement consume two bindings, leaving 32 triples of entry values.
-        for (const batch of Arr.chunksOf(entries, 32)) {
-          const tuples = Arr.map(
+        // Use the full five-column primary key for each point delete.
+        for (const batch of Arr.chunksOf(entries, 20)) {
+          const clauses = Arr.map(
             batch,
-            (entry) => sql`(${entry.index_key}, ${entry.sort_key}, ${entry.row_key})`,
+            (entry) => sql`(namespace = ${namespace} AND arrangement = ${arrangement}
+              AND index_key = ${entry.index_key} AND sort_key = ${entry.sort_key} AND row_key = ${entry.row_key})`,
           );
 
-          yield* sql`DELETE FROM streamsy_view_arrangements
-            WHERE namespace = ${namespace} AND arrangement = ${arrangement}
-            AND (index_key, sort_key, row_key) IN (VALUES ${sql.csv(tuples)})`;
+          yield* sql`DELETE FROM streamsy_view_arrangements WHERE ${sql.or(clauses)}`;
         }
       }),
     lookup: (arrangement: string, indexKey: string, limit?: number, reverse = false) => {

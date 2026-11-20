@@ -144,14 +144,12 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
     Effect.gen(function* () {
       const { limit, reverse = false } = options;
 
-      const pending =
-        indexChanges.get(a.id)?.get(key) ??
-        new Map<string, { before?: IndexEntry; after?: IndexEntry }>();
+      const pending = before ? indexChanges.get(a.id)?.get(key) : undefined;
 
       // Both images read the same SQL index; the before image overlays the
       // removed entries and may need a longer prefix.
-      const prefix = limit === undefined ? undefined : limit + (before ? pending.size : 0);
-      const readKey = canonicalJson([a.id, key, reverse]);
+      const prefix = limit === undefined ? undefined : limit + (pending?.size ?? 0);
+      const readKey = `${a.id}:${reverse ? 1 : 0}:${key}`;
       let read = indexReads.get(readKey);
 
       if (
@@ -162,14 +160,15 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
         indexReads.set(readKey, read);
       }
 
-      const entries = prefix === undefined ? read.entries : read.entries.slice(0, prefix);
+      const entries =
+        prefix !== undefined && read.entries.length > prefix
+          ? read.entries.slice(0, prefix)
+          : read.entries;
 
-      const candidates = new Map<string, { row_key: string; sort_key: string }>();
+      const ordered = pending ? Arr.filter(entries, (e) => !pending.has(e.row_key)) : [...entries];
 
-      for (const e of entries) if (!before || !pending.has(e.row_key)) candidates.set(e.row_key, e);
+      if (pending) for (const d of pending.values()) if (d.before) ordered.push(d.before);
 
-      if (before) for (const [id, d] of pending) if (d.before) candidates.set(id, d.before);
-      const ordered = [...candidates.values()];
       ordered.sort((a, b) => {
         const x =
           a.sort_key < b.sort_key
@@ -190,9 +189,10 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
       cache.set(a.relation, cached);
       const overlay = before ? changes.get(a.relation) : undefined;
 
-      const keys = Arr.flatMap(selected, ({ row_key }) =>
-        cached.has(row_key) || overlay?.has(row_key) ? [] : [row_key],
-      );
+      const keys: string[] = [];
+
+      for (const { row_key } of selected)
+        if (!cached.has(row_key) && !overlay?.has(row_key)) keys.push(row_key);
 
       if (keys.length > 0) {
         const found = yield* store.getMany(a.relation, keys);

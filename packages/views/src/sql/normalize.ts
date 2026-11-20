@@ -15,11 +15,12 @@ export const normalize = Effect.fn("View.normalize")(function* (
   collection: string,
   fault: DataFault,
   events: readonly StreamAddress.CollectionsEvent<StreamAddress.Collections>[],
+  snapshotOpen: boolean,
 ) {
   const pending = new Map<string, StateChange>();
   const marker = `@snapshot/${sourceId}`;
   const markerKey = encodeRowKey(sourceId);
-  let open = (yield* store.get("@snapshots", markerKey)) !== undefined;
+  let open = snapshotOpen;
   const seen = new Set<string>();
 
   if (open) for (const entry of yield* store.lookup(marker, "")) seen.add(entry.row_key);
