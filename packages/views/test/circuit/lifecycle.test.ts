@@ -51,7 +51,10 @@ const state = Effect.gen(function* () {
       yield* sql`SELECT * FROM streamsy_view_accumulators ORDER BY namespace, node, group_key`,
     owners:
       yield* sql`SELECT * FROM streamsy_view_key_owners ORDER BY namespace, relation, output_key`,
-    circuits: yield* sql`SELECT * FROM streamsy_view_circuits ORDER BY namespace`,
+    circuits: yield* sql<{
+      namespace: string;
+      generation: number;
+    }>`SELECT * FROM streamsy_view_circuits ORDER BY namespace`,
   };
 });
 
@@ -207,15 +210,17 @@ const numericCircuit = View.circuit({
 
 const NumericTable = StateTable.define(NumericResult);
 
-it.live("numeric wire keys, reset and snapshots across units follow State semantics", () => {
-  const local = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-    Layer.provideMerge(
-      BunStorage.layer(Streamsy.group(Numeric, NumericResult), {
-        client: { filename: ":memory:" },
-      }),
-    ),
-  );
+const numericHost = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Numeric, NumericResult), {
+      client: { filename: ":memory:" },
+    }),
+  ),
+);
 
+const numericUpsert = (id: number, n: number) => DurableState.upsert("row", { id, n });
+
+it.live("numeric wire keys, reset and snapshots across units follow State semantics", () => {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* View.migrate(sql);
@@ -250,7 +255,7 @@ it.live("numeric wire keys, reset and snapshots across units follow State semant
       yield* append([StreamAddress.reset(), DurableState.upsert("row", { id: 5, n: 50 })]),
     ).toEqual([5]);
     expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
-  }).pipe(Effect.provide(local));
+  }).pipe(Effect.provide(numericHost));
 });
 
 it.live("filters a source integral across snapshots and resumes pre-R4 rows", () =>
@@ -260,6 +265,7 @@ it.live("filters a source integral across snapshots and resumes pre-R4 rows", ()
     yield* StateTable.migrate(sql);
     const input = yield* Numeric;
     yield* input.create({});
+
     const binding = View.circuit({
       id: "filtered-numeric",
       params: {},
@@ -277,9 +283,10 @@ it.live("filters a source integral across snapshots and resumes pre-R4 rows", ()
 
         return Array.map((yield* NumericTable.at({}).list("row")).rows, ({ value }) => value.id);
       });
-    const upsert = (id: number, n: number) => DurableState.upsert("row", { id, n });
 
-    expect(yield* append([upsert(1, 1), upsert(2, 20), upsert(3, 30)])).toEqual([2, 3]);
+    expect(
+      yield* append([numericUpsert(1, 1), numericUpsert(2, 20), numericUpsert(3, 30)]),
+    ).toEqual([2, 3]);
     const metadata = (yield* state).circuits[0]!;
     const store = storeFor(sql, metadata.namespace);
     const integralKeys = store.rows("r0").pipe(Effect.map(Array.map((row) => row.key)));
@@ -287,26 +294,20 @@ it.live("filters a source integral across snapshots and resumes pre-R4 rows", ()
 
     // R3 stored every source row with the same relation ID and plan hash.
     yield* store.put("r0", [{ key: "1", row: { id: 1, n: 1 } }]);
-    expect(yield* append([upsert(1, 11), upsert(2, 2), upsert(3, 30)])).toEqual([1, 3]);
+    expect(
+      yield* append([numericUpsert(1, 11), numericUpsert(2, 2), numericUpsert(3, 30)]),
+    ).toEqual([1, 3]);
     expect(yield* integralKeys).toEqual(["1", "3"]);
     yield* store.put("r0", [{ key: "2", row: { id: 2, n: 2 } }]);
-    expect(yield* append([StreamAddress.snapshotStart(), upsert(3, 31)])).toEqual([1, 3]);
-    expect(yield* append([upsert(4, 4), StreamAddress.snapshotEnd()])).toEqual([3]);
+    expect(yield* append([StreamAddress.snapshotStart(), numericUpsert(3, 31)])).toEqual([1, 3]);
+    expect(yield* append([numericUpsert(4, 4), StreamAddress.snapshotEnd()])).toEqual([3]);
     expect(yield* integralKeys).toEqual(["3"]);
-    expect(yield* append([StreamAddress.reset(), upsert(5, 50), upsert(6, 6)])).toEqual([5]);
+    expect(
+      yield* append([StreamAddress.reset(), numericUpsert(5, 50), numericUpsert(6, 6)]),
+    ).toEqual([5]);
     expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
     expect(yield* integralKeys).toEqual([]);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-        Layer.provideMerge(
-          BunStorage.layer(Streamsy.group(Numeric, NumericResult), {
-            client: { filename: ":memory:" },
-          }),
-        ),
-      ),
-    ),
-  ),
+  }).pipe(Effect.provide(numericHost)),
 );
 
 it.live("an attached circuit advances through the normal Projection registry", () => {

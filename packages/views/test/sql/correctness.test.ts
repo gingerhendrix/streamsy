@@ -31,6 +31,7 @@ it.live("retains the union of direct filters unless another view needs the whole
   Effect.gen(function* () {
     yield* migrate();
     const input = source("orders", "orderId");
+
     const filtered = (name: string, total: number) =>
       plan(name, [
         input,
@@ -47,6 +48,7 @@ it.live("retains the union of direct filters unless another view needs the whole
           },
         },
       ]);
+
     const views = { a: filtered("a", 1), b: filtered("b", 2) };
     const pushed = yield* makeEngine(views);
     const shared = yield* makeEngine({ ...views, raw: plan("raw", [input]) });
@@ -54,18 +56,23 @@ it.live("retains the union of direct filters unless another view needs the whole
     const seed = [upsert(order("o1", 1)), upsert(order("o2", 2)), upsert(order("o3", 3))];
     yield* pushed.process("pushed", seed);
     yield* shared.process("shared", seed);
-    expect((yield* storeFor(sql, "pushed").rows("r0")).map(({ key }) => key)).toEqual(["o1", "o2"]);
-    expect((yield* storeFor(sql, "shared").rows("r0")).map(({ key }) => key)).toEqual([
+    expect(Array.map(yield* storeFor(sql, "pushed").rows("r0"), ({ key }) => key)).toEqual([
+      "o1",
+      "o2",
+    ]);
+    expect(Array.map(yield* storeFor(sql, "shared").rows("r0"), ({ key }) => key)).toEqual([
       "o1",
       "o2",
       "o3",
     ]);
 
     const change = [upsert(order("o1", 2))];
+
     const expected = [
       { view: "a", kind: "delete", key: "o1" },
       { view: "b", kind: "upsert", key: "o1", value: order("o1", 2) },
     ];
+
     expect(yield* pushed.process("pushed", change)).toEqual(expected);
     expect(yield* shared.process("shared", change)).toEqual([
       ...expected,

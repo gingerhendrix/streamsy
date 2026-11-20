@@ -246,6 +246,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
       const filters = pushedFilters.get(input);
 
       if (filters === undefined) continue;
+
       if (node.kind === "filter") filters.push(node);
       else pushedFilters.delete(input);
     }

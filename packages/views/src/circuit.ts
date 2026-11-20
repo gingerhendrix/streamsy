@@ -491,10 +491,12 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
 
           if (Array.isReadonlyArrayNonEmpty(entries)) {
             const events = DurableState.changes(output, {}, entries);
+
             const append = Streams.append(output, events).pipe(
               Effect.provideService(StreamsWriter, wire),
             );
             // An owner can still delete a previously created stream explicitly.
+
             yield* append.pipe(
               Effect.catchTag("StreamNotFound", () => Effect.andThen(create(), append)),
             );

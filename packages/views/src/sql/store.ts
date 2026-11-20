@@ -173,6 +173,7 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
           yield* sql`DELETE FROM streamsy_view_arrangements
             WHERE namespace = ${namespace} AND arrangement = ${arrangement}
             AND index_key = ${entry.index_key} AND sort_key = ${entry.sort_key} AND row_key = ${entry.row_key}`;
+
           return;
         }
 
@@ -183,6 +184,7 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
             batch,
             (entry) => sql`(${entry.index_key}, ${entry.sort_key}, ${entry.row_key})`,
           );
+
           yield* sql`DELETE FROM streamsy_view_arrangements
             WHERE namespace = ${namespace} AND arrangement = ${arrangement}
             AND (index_key, sort_key, row_key) IN (VALUES ${sql.csv(tuples)})`;

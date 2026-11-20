@@ -151,7 +151,7 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
       // Both images read the same SQL index; the before image overlays the
       // removed entries and may need a longer prefix.
       const prefix = limit === undefined ? undefined : limit + (before ? pending.size : 0);
-      const readKey = JSON.stringify([a.id, key, reverse]);
+      const readKey = canonicalJson([a.id, key, reverse]);
       let read = indexReads.get(readKey);
 
       if (
@@ -162,7 +162,7 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
         indexReads.set(readKey, read);
       }
 
-      const entries = read.entries;
+      const entries = prefix === undefined ? read.entries : read.entries.slice(0, prefix);
 
       const candidates = new Map<string, { row_key: string; sort_key: string }>();
 
@@ -189,9 +189,11 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
       const cached = cache.get(a.relation) ?? new Map<string, Entry | undefined>();
       cache.set(a.relation, cached);
       const overlay = before ? changes.get(a.relation) : undefined;
+
       const keys = Arr.flatMap(selected, ({ row_key }) =>
         cached.has(row_key) || overlay?.has(row_key) ? [] : [row_key],
       );
+
       if (keys.length > 0) {
         const found = yield* store.getMany(a.relation, keys);
 
@@ -202,6 +204,7 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
 
       for (const e of selected) {
         const d = overlay?.get(e.row_key);
+
         const row =
           d === undefined
             ? cached.get(e.row_key)

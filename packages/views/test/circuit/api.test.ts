@@ -244,6 +244,7 @@ it.live("creates every output on the first unit and recreates a missing output o
   Effect.gen(function* () {
     yield* seed;
     const params = bindings[0]!;
+
     const binding = View.circuit({
       id: "api-empty-output",
       params: Results.paramCodecs,

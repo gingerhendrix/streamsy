@@ -104,11 +104,12 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           case "source": {
             const result = new Map<string, Delta>();
             const pending = normalized.get(node.id);
-            const filters = Arr.map(program.pushedFilters.get(node.id) ?? [], (node) => {
-              const changes = new Map<string, Delta>();
-              filtered.set(node.id, changes);
 
-              return { node, changes, fault: rt.fault(node.id) };
+            const filters = Arr.map(program.pushedFilters.get(node.id) ?? [], (filterNode) => {
+              const deltas = new Map<string, Delta>();
+              filtered.set(filterNode.id, deltas);
+
+              return { node: filterNode, deltas, fault: rt.fault(filterNode.id) };
             });
 
             if (pending) {
@@ -124,14 +125,17 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
                     accepts(filter.node, d.key, previous, filter.fault, parameter)
                       ? previous
                       : undefined;
+
                   const next =
                     d.after !== undefined &&
                     accepts(filter.node, d.key, d.after, filter.fault, parameter)
                       ? d.after
                       : undefined;
+
                   const change = delta(d.key, old, next);
 
-                  if (change) filter.changes.set(key, change);
+                  if (change) filter.deltas.set(key, change);
+
                   if (next !== undefined) retained = next;
                 }
 
