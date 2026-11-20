@@ -218,7 +218,7 @@ export const aggregate = Effect.fnUntraced(function* (
 
         // The arrangement returns canonical encoded-row-key order. Rebuild from
         // live operands so deletions, replays and unit boundaries round identically.
-        for (const entry of yield* rt.lookup(index, encoded, false, { batch: true })) {
+        for (const entry of yield* rt.lookup(index, encoded, false)) {
           for (const { field, value } of operands(entry.row, entry.key, 1)) {
             sums[field] = (sums[field] ?? 0) + value;
 

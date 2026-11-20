@@ -86,6 +86,14 @@ export interface Store {
 }
 
 export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
+  const get = (relation: string, rowKey: string) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
+        WHERE namespace = ${namespace} AND relation = ${relation} AND row_key = ${rowKey}`;
+
+      return rows[0] === undefined ? undefined : decodeRow(rows[0].value);
+    });
+
   return {
     rows: (relation: string) =>
       Effect.map(
@@ -103,16 +111,19 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
       sql`DELETE FROM streamsy_view_arrangements WHERE namespace = ${namespace} AND arrangement = ${arrangement}`.pipe(
         Effect.asVoid,
       ),
-    get: (relation: string, rowKey: string) =>
-      Effect.gen(function* () {
-        const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
-        WHERE namespace = ${namespace} AND relation = ${relation} AND row_key = ${rowKey}`;
-
-        return rows[0] === undefined ? undefined : decodeRow(rows[0].value);
-      }),
+    get,
     getMany: (relation, keys) =>
       Effect.gen(function* () {
         const result = new Map<string, Entry>();
+
+        if (keys.length === 1) {
+          const key = keys[0]!;
+          const entry = yield* get(relation, key);
+
+          if (entry !== undefined) result.set(key, entry);
+
+          return result;
+        }
 
         for (const batch of Arr.chunksOf(keys, 98)) {
           const rows = yield* sql<{ row_key: string; value: string }>`SELECT row_key, value
@@ -157,10 +168,25 @@ export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
       }),
     indexRemove: (arrangement: string, entries: readonly IndexEntry[]) =>
       Effect.gen(function* () {
-        for (const entry of entries)
+        if (entries.length === 1) {
+          const entry = entries[0]!;
           yield* sql`DELETE FROM streamsy_view_arrangements
-        WHERE namespace = ${namespace} AND arrangement = ${arrangement}
-        AND index_key = ${entry.index_key} AND sort_key = ${entry.sort_key} AND row_key = ${entry.row_key}`;
+            WHERE namespace = ${namespace} AND arrangement = ${arrangement}
+            AND index_key = ${entry.index_key} AND sort_key = ${entry.sort_key} AND row_key = ${entry.row_key}`;
+          return;
+        }
+
+        // Full primary keys keep the delete on point lookups. The namespace and
+        // arrangement consume two bindings, leaving 32 triples of entry values.
+        for (const batch of Arr.chunksOf(entries, 32)) {
+          const tuples = Arr.map(
+            batch,
+            (entry) => sql`(${entry.index_key}, ${entry.sort_key}, ${entry.row_key})`,
+          );
+          yield* sql`DELETE FROM streamsy_view_arrangements
+            WHERE namespace = ${namespace} AND arrangement = ${arrangement}
+            AND (index_key, sort_key, row_key) IN (VALUES ${sql.csv(tuples)})`;
+        }
       }),
     lookup: (arrangement: string, indexKey: string, limit?: number, reverse = false) => {
       const base = sql`SELECT row_key, sort_key FROM streamsy_view_arrangements

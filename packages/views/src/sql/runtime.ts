@@ -105,6 +105,13 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
 
   const changes = new Map<string, Deltas>();
   const cache = new Map<string, Map<string, Entry | undefined>>();
+  const indexReads = new Map<
+    string,
+    {
+      readonly limit: number | undefined;
+      readonly entries: readonly Omit<IndexEntry, "index_key">[];
+    }
+  >();
 
   const indexChanges = new Map<
     string,
@@ -132,21 +139,30 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
     a: Arrangement,
     key: string,
     before: boolean,
-    options: { readonly limit?: number; readonly reverse?: boolean; readonly batch?: boolean } = {},
+    options: { readonly limit?: number; readonly reverse?: boolean } = {},
   ) =>
     Effect.gen(function* () {
-      const { limit, reverse = false, batch = false } = options;
+      const { limit, reverse = false } = options;
 
       const pending =
         indexChanges.get(a.id)?.get(key) ??
         new Map<string, { before?: IndexEntry; after?: IndexEntry }>();
 
-      const entries = yield* store.lookup(
-        a.id,
-        key,
-        limit === undefined ? undefined : limit + (before ? pending.size : 0),
-        reverse,
-      );
+      // Both images read the same SQL index; the before image overlays the
+      // removed entries and may need a longer prefix.
+      const prefix = limit === undefined ? undefined : limit + (before ? pending.size : 0);
+      const readKey = JSON.stringify([a.id, key, reverse]);
+      let read = indexReads.get(readKey);
+
+      if (
+        read === undefined ||
+        (read.limit !== undefined && (prefix === undefined || prefix > read.limit))
+      ) {
+        read = { limit: prefix, entries: yield* store.lookup(a.id, key, prefix, reverse) };
+        indexReads.set(readKey, read);
+      }
+
+      const entries = read.entries;
 
       const candidates = new Map<string, { row_key: string; sort_key: string }>();
 
@@ -170,27 +186,28 @@ export function runtime(program: Program, store: Store, parameter: ExpressionSco
       });
       const selected = limit === undefined ? ordered : ordered.slice(0, limit);
 
-      if (batch) {
-        const rows = cache.get(a.relation) ?? new Map<string, Entry | undefined>();
-        cache.set(a.relation, rows);
-
-        const keys = Arr.map(
-          Arr.filter(
-            selected,
-            (e) => !rows.has(e.row_key) && !(before && changes.get(a.relation)?.has(e.row_key)),
-          ),
-          (e) => e.row_key,
-        );
-
+      const cached = cache.get(a.relation) ?? new Map<string, Entry | undefined>();
+      cache.set(a.relation, cached);
+      const overlay = before ? changes.get(a.relation) : undefined;
+      const keys = Arr.flatMap(selected, ({ row_key }) =>
+        cached.has(row_key) || overlay?.has(row_key) ? [] : [row_key],
+      );
+      if (keys.length > 0) {
         const found = yield* store.getMany(a.relation, keys);
 
-        for (const id of keys) rows.set(id, found.get(id));
+        for (const id of keys) cached.set(id, found.get(id));
       }
 
       const rows: Entry[] = [];
 
       for (const e of selected) {
-        const row = yield* get(a.relation, e.row_key, before);
+        const d = overlay?.get(e.row_key);
+        const row =
+          d === undefined
+            ? cached.get(e.row_key)
+            : d.before === undefined
+              ? undefined
+              : { key: d.key, row: d.before };
 
         if (!row) throw new TypeError("arrangement references absent integral row");
         rows.push(row);

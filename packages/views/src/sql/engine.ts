@@ -68,7 +68,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
   ) =>
     Effect.gen(function* () {
       const rt = runtime(program, store, parameter);
-      const normalized = new Map<string, Map<string, Delta>>();
+      const normalized = new Map<string, Map<string, Omit<Delta, "before">>>();
 
       for (const c of input) {
         const source = sources.get(c.sourceId);
@@ -91,11 +91,9 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
           return encoded;
         });
 
-        const entries = normalized.get(source.id) ?? new Map<string, Delta>();
+        const entries = normalized.get(source.id) ?? new Map<string, Omit<Delta, "before">>();
         normalized.set(source.id, entries);
-        const seen = entries.get(id);
-        const before = seen ? seen.before : (yield* store.get(source.id, id))?.row;
-        entries.set(id, { key: c.key, before, after: c.kind === "upsert" ? c.value : undefined });
+        entries.set(id, { key: c.key, after: c.kind === "upsert" ? c.value : undefined });
       }
 
       for (const node of program.nodes) {
@@ -104,11 +102,16 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
         switch (node.kind) {
           case "source": {
             const result = new Map<string, Delta>();
+            const pending = normalized.get(node.id);
 
-            for (const [key, d] of normalized.get(node.id) ?? []) {
-              const item = delta(d.key, d.before, d.after);
+            if (pending) {
+              const before = yield* store.getMany(node.id, [...pending.keys()]);
 
-              if (item) result.set(key, item);
+              for (const [key, d] of pending) {
+                const item = delta(d.key, before.get(key)?.row, d.after);
+
+                if (item) result.set(key, item);
+              }
             }
 
             changes = result;

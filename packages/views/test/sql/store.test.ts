@@ -34,6 +34,20 @@ it.live(
         Arr.map(entries, (e) => encodeRowKey(e.key)),
       );
       expect(yield* a.get("r", encodeRowKey(200))).toBeUndefined();
+
+      const indexEntries = Arr.map(keys, (row_key) => ({
+        row_key,
+        index_key: "same-bucket",
+        sort_key: row_key,
+      }));
+      const keep = { row_key: keys[0]!, index_key: "same-bucket", sort_key: "other-sort-key" };
+      yield* a.indexPut("i", [...indexEntries, keep]);
+      yield* b.indexPut("i", indexEntries);
+      yield* a.indexRemove("i", indexEntries);
+      expect(yield* a.lookup("i", "same-bucket")).toEqual([
+        { row_key: keep.row_key, sort_key: keep.sort_key },
+      ]);
+      expect(yield* b.lookup("i", "same-bucket")).toHaveLength(201);
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
   },
 );
