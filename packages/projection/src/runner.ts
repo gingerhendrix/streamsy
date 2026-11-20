@@ -30,7 +30,7 @@ import { catchUp, progressOf, type RunContext } from "./run.ts";
 import { bindingDelay } from "./binding-retry.ts";
 
 import { Registry, RunnerEvent, eventPublisher, type RunnerFailure } from "./registry.ts";
-import { runnerFailure } from "./failure.ts";
+import { hasNonRetryableHandler, nonRetryableHandlerReason, runnerFailure } from "./failure.ts";
 import { triggersOf } from "./triggers.ts";
 import { storageFault } from "./storage-fault.ts";
 import type { WakeOutput } from "./wake.ts";
@@ -557,7 +557,11 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
 
           const dueAt = Option.map(delay, (ms) => failed.at + ms);
 
-          yield* marks.fail(id, key, { attempts, dueAt, failure: failed });
+          const reason = hasNonRetryableHandler(exit.cause)
+            ? Option.some(nonRetryableHandlerReason)
+            : failed.reason;
+
+          yield* marks.fail(id, key, { attempts, dueAt, failure: { ...failed, reason } });
 
           if (publish !== undefined)
             yield* publish(
@@ -702,6 +706,10 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
                 stopped: row.stopped,
                 exhausted:
                   row.stopped &&
+                  !Option.contains(
+                    Option.flatMap(row.failure, (failed) => failed.reason),
+                    nonRetryableHandlerReason,
+                  ) &&
                   (row.attempts >= (declaration.retry?.maxAttempts ?? Number.POSITIVE_INFINITY) ||
                     Option.isNone(yield* bindingDelay(declaration.retry?.schedule, row.attempts))),
                 failure: row.failure,

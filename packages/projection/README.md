@@ -89,6 +89,11 @@ the declaration's [binding retry policy](https://streamsy.dev/docs/reference/pro
 for a retry budget and `onExhausted`, and [`Projection.wakeAt`](https://streamsy.dev/docs/projections/process#timers)
 for a deferred retry or a snooze. See the [effects guide](https://streamsy.dev/docs/projections/effects) for the complete pattern.
 
+To stop a binding on a permanent typed handler error, add
+`readonly [NonRetryable] = true` using `NonRetryable` from `@streamsy/projection`.
+Attached runners report the failure without stepping the retry schedule or
+calling `onExhausted`.
+
 `Commit.make` defines `load`, `apply`, and optional `remove`. Custom Commits
 extend ranges on retry. Never save after a failed handler; compare-and-set on
 `loaded.token`; report `checkpoint / token-conflict` for a moved token; return

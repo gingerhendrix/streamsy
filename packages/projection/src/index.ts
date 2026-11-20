@@ -40,7 +40,7 @@ export {
   type ProjectionKey,
 } from "./checkpoint-store.ts";
 
-export { InvalidBinding, NotAttached, ProjectionFault } from "./fault.ts";
+export { InvalidBinding, NonRetryable, NotAttached, ProjectionFault } from "./fault.ts";
 
 export { Transaction } from "./transaction.ts";
 

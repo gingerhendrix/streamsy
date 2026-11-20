@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
 import { StorageFault, TransportFault } from "@streamsy/core";
-import { ProjectionFault } from "../src/fault.ts";
+import { Cause } from "effect";
+import { retryable as canRetry } from "../src/failure.ts";
+import { NonRetryable, ProjectionFault } from "../src/fault.ts";
 
 test("ProjectionFault storage failures preserve the cause retryability", () => {
   const causes = [
@@ -55,3 +57,10 @@ for (const reason of [
     );
   });
 }
+
+test("typed handler errors opt out with the marker and ordinary errors keep retrying", () => {
+  const marked = { _tag: "Rejected", [NonRetryable]: true };
+  expect(canRetry(Cause.fail(marked))).toBe(false);
+  expect(canRetry(Cause.die(marked))).toBe(true);
+  expect(canRetry(Cause.fail({ _tag: "Existing", retryable: false }))).toBe(true);
+});

@@ -1,6 +1,9 @@
 import { Schema } from "effect";
 import { isStreamsFault } from "@streamsy/core";
 
+/** A typed handler failure bearing this marker stops its binding without retry. */
+export const NonRetryable = Symbol.for("@streamsy/projection/NonRetryable");
+
 /** No live runner for this declaration exists in the selected registry. */
 export class NotAttached extends Schema.TaggedError<NotAttached>()("NotAttached", {
   projection: Schema.String,
