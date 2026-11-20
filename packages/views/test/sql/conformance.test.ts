@@ -1,7 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Record as Rec } from "effect";
-import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { fullRecompute } from "../support/full-recompute.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import type { JsonObject } from "../../src/ir/contracts.ts";
 import { shopPlans } from "./fixtures.ts";

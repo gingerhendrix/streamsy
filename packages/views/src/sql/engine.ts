@@ -16,8 +16,6 @@ export { migrate } from "./store.ts";
 
 export { sqlPlanIssues } from "./planner.ts";
 
-export { fullRecompute } from "./reference.ts";
-
 export type StateChange =
   | {
       readonly sourceId: string;

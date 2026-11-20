@@ -8,13 +8,13 @@ import type {
   SqlRelationNode,
   RowKey,
   TopNNode,
-} from "../ir/contracts.ts";
-import { evaluate, evaluateOptional, isMissing } from "../runtime/expression.ts";
-import type { Evaluated, ExpressionScopes } from "../runtime/expression.ts";
-import { asRowKey, encodeRowKey } from "../runtime/key.ts";
+} from "../../src/ir/contracts.ts";
+import { evaluate, evaluateOptional, isMissing } from "../../src/runtime/expression.ts";
+import type { Evaluated, ExpressionScopes } from "../../src/runtime/expression.ts";
+import { asRowKey, encodeRowKey } from "../../src/runtime/key.ts";
 
-import { dataFault } from "./data-fault.ts";
-import type { Entry as StateRow } from "./store.ts";
+import { dataFault } from "../../src/sql/data-fault.ts";
+import type { Entry as StateRow } from "../../src/sql/store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */

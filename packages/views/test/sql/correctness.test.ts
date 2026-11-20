@@ -3,7 +3,8 @@ import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array, Effect } from "effect";
 import { SqlClient } from "effect/sql";
 import { storeFor } from "../../src/sql/store.ts";
-import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { fullRecompute } from "../support/full-recompute.ts";
 import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
 
 const order = (orderId: string, total: number, customerId = "c1") => ({

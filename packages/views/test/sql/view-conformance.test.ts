@@ -14,7 +14,8 @@ import {
   type MultiSet,
 } from "@tanstack/db-ivm";
 import { Array as Arr, Effect, Record as Rec, Schema } from "effect";
-import { fullRecompute, makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";
 import { compilePlan } from "../../src/relation.ts";

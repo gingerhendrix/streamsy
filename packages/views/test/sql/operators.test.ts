@@ -8,7 +8,7 @@ import { makeEngine, migrate, sqlPlanIssues, type StateChange } from "../../src/
 import type { JsonObject, SqlRelationNode } from "../../src/ir/contracts.ts";
 import { compareOrdered, scalarKey } from "../../src/sql/encoding.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
-import { fullRecompute } from "../../src/sql/reference.ts";
+import { fullRecompute } from "../support/full-recompute.ts";
 import { identity, materialize } from "./support.ts";
 import { plan, ref, schema, shopPlans, source } from "./fixtures.ts";
 

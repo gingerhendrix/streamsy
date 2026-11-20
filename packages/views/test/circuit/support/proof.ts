@@ -5,7 +5,7 @@ import { Projection, StateTable } from "@streamsy/projection";
 import { View } from "../../../src/index.ts";
 import { compilePlan } from "../../../src/relation.ts";
 import { keyExpression } from "../../../src/expression.ts";
-import { fullRecompute } from "../../../src/sql/reference.ts";
+import { fullRecompute } from "../../support/full-recompute.ts";
 import type { JsonObject } from "../../../src/ir/contracts.ts";
 import { canonicalJson } from "../../../src/runtime/key.ts";
 import { Shop, Results, Table, circuit, views, type Order, type Customer } from "./shop.ts";
