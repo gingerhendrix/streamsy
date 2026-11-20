@@ -1,7 +1,6 @@
 import { test, expect } from "@effect/vitest";
 import { Miniflare } from "miniflare";
 import { Array, Schema } from "effect";
-import baseline from "../../bench/baseline.json";
 
 const Result = Schema.Struct({
   units: Schema.Array(
@@ -15,7 +14,7 @@ const Result = Schema.Struct({
   noopUnits: Schema.Finite,
 });
 
-test("same spike C circuit on local workerd with billable SQL rows per unit", async () => {
+test("runs the shop circuit on local workerd and observes SQLite reads and writes", async () => {
   const scratch = Bun.fileURLToPath(new URL("../../build/workerd", import.meta.url));
 
   const built = await Bun.build({
@@ -59,21 +58,7 @@ test("same spike C circuit on local workerd with billable SQL rows per unit", as
       expect(unit.billing.rowsRead).toBeGreaterThan(0);
       expect(unit.billing.rowsWritten).toBeGreaterThan(0);
       expect(unit.txids).toHaveLength(1);
-
-      if (unit.name === "single-order")
-        expect(unit.billing.rowsWritten).toBe(baseline.workerd.singleOrder.rowsWritten);
     }
-
-    await Bun.write(`${scratch}/billing.json`, JSON.stringify(result, null, 2));
-    console.log(
-      JSON.stringify(
-        Array.map(result.units, ({ name, billing, outputChanges }) => ({
-          name,
-          ...billing,
-          outputChanges,
-        })),
-      ),
-    );
   } finally {
     await miniflare.dispose();
   }

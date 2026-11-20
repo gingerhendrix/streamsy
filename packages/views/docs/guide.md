@@ -110,10 +110,6 @@ bun run --cwd packages/views test:unit
 bun run --cwd packages/views test:workerd
 ```
 
-The workerd test writes its bundle and `billing.json` under `packages/views/build/workerd/`. Billable counts come from native SQL cursor `rowsRead`/`rowsWritten`, read after consumption. Measurement brackets one `Projection.run(binding, { limit: 1 })`, including input reads, operator SQL, output appends and the checkpoint. Input appends, migration, output-table reads and oracle comparisons are outside that bracket. The three measured workloads are one order total change, one customer rename affecting ten orders and a 100-order change unit.
-
-Run the four-view Bun SQL benchmark from the repo root with `bun run --cwd packages/views bench:sql 10000 <scratch-directory>`. The directory must already exist. The script uses a fresh WAL database and verifies results against full recomputation. The [recorded R4 baseline](../bench/baseline.json) gives the median of three per-run Bun measurements for each statistic, in milliseconds per unit. The workerd test pins the recorded single-order write count for lifecycle changes.
-
 ## Transaction and State semantics
 
 Each unit normalizes input changes using the circuit's own SQL integrals. Numeric State keys use their string wire representation; numeric row fields retain their numeric type. Deletes need no `old_value`. A `reset` retracts the source rows. Snapshots preserve previously visible rows until `snapshot-end`, then retract unseen keys; snapshot bookkeeping persists across units. These controls can visit a whole relation.
