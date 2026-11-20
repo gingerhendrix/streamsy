@@ -11,9 +11,11 @@ import {
   type AcceptedServices,
   type DecodedParams,
   type Input,
+  type OneOutputWithin,
   type OneWithin,
   type StreamDeclaration,
 } from "./declaration.ts";
+import type { AcceptedOutput } from "./accepted.ts";
 
 /** A Streamsy.wake class. Use WakeOutput<{}> for a fixed-address trigger with no params. */
 export type WakeOutput<P = any> = StreamDeclaration &
@@ -27,7 +29,7 @@ export interface WakeDefinition<
   O,
   W = undefined,
 > {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -87,7 +89,7 @@ export function wake<
   C extends StreamRoute.ParamCodecs,
   const I extends Input,
   const O extends WakeOutput,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
 >(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W> {
   const input: Input = definition.input;
 

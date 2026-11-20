@@ -2,7 +2,7 @@ import { withAccepted } from "./range.ts";
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
 import { Array, Effect, Option, Record } from "effect";
-import { isStreamsFault } from "@streamsy/core";
+import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { MAX_PRODUCER_ID_LENGTH, fitKey, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import {
@@ -178,6 +178,17 @@ export const producer = pin(
                 phase: "pin",
                 reason: "invalid-output",
                 message: `Output ${output.address.id} is closed`,
+              });
+
+            if (
+              output.generation?.shared === false &&
+              positions[name] === undefined &&
+              head.nextOffset !== ZERO_OFFSET
+            )
+              return yield* new ProjectionFault({
+                phase: "pin",
+                reason: "invalid-output",
+                message: `Generation-bound output ${output.address.id} must start empty and open`,
               });
             positions[name] = positions[name] ?? { epoch: projection.generation, nextSeq: 0 };
           }

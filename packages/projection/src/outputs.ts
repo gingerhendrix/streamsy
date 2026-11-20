@@ -1,13 +1,27 @@
 /* oxlint-disable typescript/no-explicit-any -- Route maps retain exact public types until the checked runtime adapter boundary. */
 import { Array, Effect, Predicate, Record, type Schema } from "effect";
-import { DurableState, type Producer, type StreamAddress, type Streamsy } from "@streamsy/core";
-import { addressesOf, type AddressOf, type Inputs, type DecodedParams } from "./declaration.ts";
+import {
+  DurableState,
+  isStreamsFault,
+  type Producer,
+  type StreamAddress,
+  type Streamsy,
+} from "@streamsy/core";
+import { isDeclaration, type AddressOf, type DecodedParams } from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import type { ResolvedOutput } from "./commit/internal.ts";
 import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
+import { acceptedKey, type AcceptedOutput } from "./accepted.ts";
+import {
+  GenerationOutputs,
+  generationBinding,
+  isPerGeneration,
+  type GenerationOutputBindings,
+  type RoutedOutput,
+} from "./per-generation.ts";
 
-export type RoutedMap = Inputs;
+export type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 export type Item<T> =
   AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
@@ -20,10 +34,35 @@ export type Services<O extends RoutedMap> = {
   [K in keyof O]: AddressOf<O[K]> extends Streamsy.Address<any, infer R> ? R : never;
 }[keyof O];
 
-/** Resolve routes just like inputs, retaining the route codec and collection names. */
-export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs: InputMap) => {
-  const streams = addressesOf(outputs, params);
-  const ids = Array.map(Record.values(streams), (address) => address.id);
+/** Resolve ordinary and accepted outputs with the same parameter sources. */
+export const resolveOutputs = (
+  outputs: RoutedMap,
+  acceptedOutput: AcceptedOutput | undefined,
+  params: DecodedParams,
+  generation: number,
+  inputs: InputMap,
+) => {
+  const generationOutputs = new Map<string, { readonly shared: boolean }>();
+
+  const resolve = (name: string, output: RoutedOutput): Streamsy.Address<any, any> => {
+    if (isPerGeneration(output)) {
+      const { route, param, shared } = generationBinding(output);
+
+      generationOutputs.set(name, { shared });
+
+      return route.at({ ...params, [param]: generation });
+    }
+
+    return isDeclaration(output) ? output.at(params) : output;
+  };
+
+  const streams = Record.map(outputs, (output, name) => resolve(name, output));
+  const accepted = acceptedOutput === undefined ? undefined : resolve(acceptedKey, acceptedOutput);
+
+  const addresses =
+    accepted === undefined ? Record.values(streams) : [...Record.values(streams), accepted];
+
+  const ids = Array.map(addresses, (address) => address.id);
 
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
@@ -32,11 +71,53 @@ export const resolveOutputs = (outputs: RoutedMap, params: DecodedParams, inputs
   if (Array.some(ids, (id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
 
-  if (Array.some(Record.values(streams), (address) => !Predicate.isTagged(address, "Json")))
+  if (Array.some(addresses, (address) => !Predicate.isTagged(address, "Json")))
     throw new RangeError("Projection outputs require JSON or state routes");
 
-  return streams;
+  return { streams, accepted, generationOutputs };
 };
+
+export const createOutput = (
+  address: StreamAddress.StreamAddress<unknown>,
+  wire: ResolvedOutput["service"]["wire"],
+) =>
+  Streams.create(address).pipe(
+    Effect.provideService(StreamsWriter, wire),
+    Effect.mapError(
+      (cause) =>
+        new ProjectionFault({
+          phase: "process",
+          reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
+          message: `Cannot create output ${address.id}`,
+          cause,
+        }),
+    ),
+  );
+
+interface BoundOutputs<R> extends GenerationOutputBindings {
+  readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, R>>>;
+  readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
+}
+
+export const boundOutputs = <R>(bound: BoundOutputs<R>) =>
+  bound.accepted === undefined
+    ? (bound.streams ?? {})
+    : { ...bound.streams, [acceptedKey]: bound.accepted };
+
+/** Create the generation-bound outputs of one binding, using each output's owner. */
+export const createOutputs = <R>(bound: BoundOutputs<R>): Effect.Effect<void, ProjectionFault, R> =>
+  Effect.gen(function* () {
+    const bindings = bound[GenerationOutputs];
+
+    if (bindings === undefined) return;
+
+    for (const [name, address] of Record.toEntries(boundOutputs(bound))) {
+      if (!bindings.has(name)) continue;
+      const { wire } = yield* address.stream;
+
+      yield* createOutput(address, wire);
+    }
+  });
 
 export const collect = (
   outputs: Readonly<Record<string, Streamsy.Address<unknown, any>>>,

@@ -17,6 +17,7 @@ export type Result =
 
 export interface ResolvedOutput {
   readonly address: StreamAddress.StreamAddress<unknown>;
+  readonly generation?: { readonly shared: boolean } | undefined;
   readonly service: {
     readonly owner: object;
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;

@@ -4,6 +4,7 @@ import type { StreamAddress } from "@streamsy/core";
 import type { CheckpointRecord, Loaded, ProjectionKey } from "../checkpoint-store.ts";
 import type { ProjectionFault } from "../fault.ts";
 import type { Unit } from "../unit.ts";
+import type { ResolvedOutput } from "./internal.ts";
 
 export const TypeId = "~@streamsy/projection/Commit";
 
@@ -31,6 +32,8 @@ export interface Pending<Result, Provides = never> {
   readonly loaded: Loaded;
   readonly next: CheckpointRecord;
   readonly run: Effect.Effect<Result, HandlerFailed, Provides>;
+  /** Resolved generation-bound outputs, including the accepted stream when wrapped. */
+  readonly generationOutputs?: ReadonlyMap<string, ResolvedOutput>;
 }
 
 /** Opaque to Commit authors; the kernel restores the original typed handler error. */

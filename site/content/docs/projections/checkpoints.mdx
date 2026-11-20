@@ -103,11 +103,13 @@ Build the host Layer once for each host lifetime. Each build of `CheckpointStore
 
 A projection has no reset. To start again from zero offsets, raise `generation` in the declaration. The default is 1. The new generation has its own record, so it reads every input from the start.
 
-For the outputs of `Commit.producer`, the generation is the producer epoch. The first append of the new generation starts a higher epoch on each output. After that, an append of an older generation fails with phase `pin` and reason `stale-epoch`, so a runner left on the old declaration cannot write to the outputs. The new generation appends after the items that the old one wrote. To rebuild an output from empty, delete the output stream first.
+Use `Projection.perGeneration(route, param)` on each derived output and on `accepted` to replay into fresh stream addresses. Choose a route codec with a distinct address for each generation. Readers can stay pinned to the previous generation until the new one catches up, then switch to the new address and read from its start. The previous generation's stream and checkpoint remain available. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
-The outputs of `Commit.transaction` have no producer position, so a new generation does not fence them. Stop the old runners before you start the new generation.
+Raise `generation` in the same deployment that adds the wrapper or otherwise changes the output addresses. A checkpoint tracks the input addresses but does not store the output addresses. A transaction with an existing checkpoint skips first-unit creation. A producer can start writing to a new address from the current checkpoint instead of replaying the input from the start.
 
-A new `version` also names a new record. `Commit.producer` then appends under a new producer id, because the producer id contains the version. The old version keeps its own producer id, so a new version does not fence it.
+An unwrapped output keeps the same address when you raise `generation`. For `Commit.producer`, the first append of the new generation starts a higher producer epoch on that stream, after the items already there. A later append from an older epoch fails with phase `pin` and reason `stale-epoch`. To rebuild an unwrapped output from empty, delete its stream first. For unwrapped `Commit.transaction` outputs, stop the old runners before starting the new generation because transaction appends carry no producer position.
+
+A new `version` also names a new record and gives `Commit.producer` a new producer id. Since `version` is absent from generation-addressed paths, raising it alone reuses the same output addresses. The built-in commits reject a populated generation-bound output on the first write unless you opted into sharing.
 
 ## One writer
 
@@ -124,6 +126,8 @@ Before you call it, do these steps:
 1. Stop the follower for that key.
 2. Wait for other runs, including direct `Projection.pass` calls.
 3. For an output projection, delete the output streams first, or use a new generation. The producer sequences start again at 0 after `forget`. An output that keeps its producer state answers `Duplicate` to those appends and drops their items.
+
+With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks, so `forget` does not reserve or retire an address.
 
 ## Several backends
 

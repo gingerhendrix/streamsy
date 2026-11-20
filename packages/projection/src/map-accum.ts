@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-returns -- Only the implementation signature is erased; callers see the checked generic overload above it. */
-import type { WakeOutput } from "./wake.ts";
+import type { AcceptedOutput } from "./accepted.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Entry, Slices } from "./batch.ts";
 import type { Accumulated } from "./commit.ts";
@@ -47,7 +47,7 @@ export function mapAccum<
   R = never,
   P = never,
   Q = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -78,7 +78,7 @@ export function mapAccumBatch<
   R = never,
   P = never,
   Q = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(

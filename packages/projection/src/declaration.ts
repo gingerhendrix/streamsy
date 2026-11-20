@@ -4,9 +4,8 @@ import { Array, Option, Record, Schema, type Effect, type Schedule } from "effec
 import { type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { resolveOutputs, type RoutedMap, type Services } from "./outputs.ts";
-import { acceptedKey, validateAccepted } from "./accepted.ts";
+import { validateAccepted, type AcceptedOutput } from "./accepted.ts";
 import type { WakeAt } from "./wake-at.ts";
-import type { WakeOutput } from "./wake.ts";
 import { supportsPrepare } from "./commit/range.ts";
 import * as Commit from "./commit.ts";
 import type { Executable } from "./executable.ts";
@@ -16,6 +15,12 @@ import type { InputMap, Slices } from "./batch.ts";
 import { bindState, type StateDefinition, type BoundState } from "./state.ts";
 import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
+import {
+  GenerationOutputs,
+  validateGenerationParam,
+  type DeclaredParams,
+  type PerGeneration,
+} from "./per-generation.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
 export type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
@@ -28,15 +33,16 @@ export type Input = StreamDeclaration | Streamsy.Address<any, any>;
 
 export type Inputs = Readonly<Record<string, Input>>;
 
-export type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
+export type AddressOf<X> =
+  X extends PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 
-export type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
-
-type DeclaredParams<X> = X extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : {};
+export type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 type Invalid<C extends StreamRoute.ParamCodecs, P> = {
   readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
@@ -60,7 +66,20 @@ export type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
 export type OneWithin<C extends StreamRoute.ParamCodecs, X> =
   InvalidInput<C, X> extends never ? X : never;
 
-export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+
+export type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+
+export type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
+
+/** Internal access to the same binding at a chosen generation. */
+const BindGeneration = Symbol.for("@streamsy/projection/internal/BindGeneration");
 
 /** Inert: `at` binds the params and returns the value runners take. */
 export interface Declaration<
@@ -82,9 +101,17 @@ export interface Declaration<
   readonly parse: (id: string) => Option.Option<Partial<StreamRoute.Params<Codecs>>>;
 }
 
-export type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
+export const bindAtGeneration = <C extends StreamRoute.ParamCodecs, Bound>(
+  declaration: Pick<Declaration<C, Bound>, "at" | "params"> & {
+    readonly [BindGeneration]?: (params: StreamRoute.Params<C>, generation: number) => Bound;
+  },
+  params: StreamRoute.Params<C>,
+  generation: number,
+): Bound | undefined => declaration[BindGeneration]?.(params, generation);
 
-export type AcceptedResult<Result, W> = W extends WakeOutput
+export type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+
+export type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Commit.Folded<infer A>
     ? Commit.Accumulated<A, {}>
     : Result extends WakeAt
@@ -124,7 +151,7 @@ export interface Common<
   readonly params: C;
   readonly inputs: I & Within<C, I>;
   /** Publish accepted input offsets in this wake stream as part of each unit. */
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 
 /** Decoded params, keyed by name. */
@@ -183,6 +210,15 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR
   const version = definition.version ?? 1;
   const generation = definition.generation ?? 1;
 
+  const atGeneration = (params: StreamRoute.Params<C>, selected: number) =>
+    bind({
+      id: definition.id,
+      version,
+      generation: selected,
+      params: encodeParams(definition.id, definition.params, params),
+      decoded: params,
+    });
+
   const declaration: Declaration<C, Bound, HE, HR> = {
     retry: definition.retry,
     id: definition.id,
@@ -190,15 +226,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR
     generation,
     params: definition.params,
     inputs: definition.inputs,
-    at: (params) => {
-      return bind({
-        id: definition.id,
-        version,
-        generation,
-        params: encodeParams(definition.id, definition.params, params),
-        decoded: params,
-      });
-    },
+    at: (params) => atGeneration(params, generation),
     parse: (id) => {
       for (const input of Record.values<string, Input>(definition.inputs)) {
         if (!isDeclaration(input)) continue;
@@ -211,7 +239,7 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR
     },
   };
 
-  return declaration;
+  return Object.defineProperty(declaration, BindGeneration, { value: atGeneration });
 };
 
 export interface Committing<Result, P, Q> {
@@ -299,13 +327,11 @@ export type AccumulatingDeclaration<
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 
 /** Public constructors check all mapped types before this shared binding boundary. */
-export interface BuildDefinition extends Common<
-  StreamRoute.ParamCodecs,
-  Inputs,
-  WakeOutput | undefined,
-  any,
-  any
+export interface BuildDefinition extends Omit<
+  Common<StreamRoute.ParamCodecs, Inputs, AcceptedOutput | undefined, any, any>,
+  "accepted"
 > {
+  readonly accepted?: AcceptedOutput | undefined;
   readonly commit?: Commit.Commit<any, any, any>;
   readonly state?: StateDefinition<any, any, any>;
   readonly outputs?: RoutedMap;
@@ -319,6 +345,10 @@ export interface BuildDefinition extends Common<
 
 export const build = (kind: Kind, definition: BuildDefinition) => {
   const commit = definition.commit ?? Commit.checkpoint;
+  const outputs = definition.outputs ?? {};
+
+  for (const output of Record.values(outputs)) validateGenerationParam(output, definition.params);
+
   validateAccepted(
     definition.accepted,
     definition.params,
@@ -327,7 +357,7 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
       (input) => input.template,
     ),
     commit,
-    Record.keys(definition.outputs ?? {}),
+    Record.keys(outputs),
   );
 
   if (definition.prepare !== undefined && !supportsPrepare(commit))
@@ -336,13 +366,16 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
     const inputs = addressesOf(definition.inputs, decoded);
-    const streams = resolveOutputs(definition.outputs ?? {}, decoded, inputs);
-    const accepted = definition.accepted?.at(decoded);
 
-    if (accepted !== undefined)
-      resolveOutputs({ ...streams, [acceptedKey]: accepted }, decoded, inputs);
+    const { streams, accepted, generationOutputs } = resolveOutputs(
+      outputs,
+      definition.accepted,
+      decoded,
+      key.generation,
+      inputs,
+    );
 
-    return {
+    const bound = {
       ...key,
       inputs,
       state,
@@ -374,6 +407,11 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
           attempt,
         ),
     };
+
+    if (generationOutputs.size > 0)
+      Object.assign(bound, { [GenerationOutputs]: generationOutputs });
+
+    return bound;
   });
 
   return declaration;

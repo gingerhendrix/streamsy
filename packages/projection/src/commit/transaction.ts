@@ -1,12 +1,14 @@
-import { Array, Effect, Predicate, Record } from "effect";
+import { Array, Effect, Option, Predicate, Record } from "effect";
 import { SqlClient } from "effect/sql";
-import { isStreamsFault } from "@streamsy/core";
+import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
 import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
+import { createOutput } from "../outputs.ts";
+import { TransactionGenerationOutputs } from "../per-generation.ts";
 import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
 
 import { withPrepare, withAccepted } from "./range.ts";
@@ -21,7 +23,7 @@ export const transaction = withPrepare(
       Effect.gen(function* () {
         const tx = yield* Transaction;
         const store = yield* CheckpointStore;
-        const outputs = detailsOf(pending).outputs;
+        const { outputs, prepare } = detailsOf(pending);
 
         for (const { address, service } of Record.values(outputs)) {
           if (service.owner !== tx.owner)
@@ -31,8 +33,6 @@ export const transaction = withPrepare(
               message: `Output ${address.id} does not share the transaction owner`,
             });
         }
-
-        const prepare = detailsOf(pending).prepare;
 
         if (prepare !== undefined) yield* prepare;
         yield* tx.withTransaction(
@@ -46,9 +46,24 @@ export const transaction = withPrepare(
                 message: `Record of ${pending.key.id} changed while the unit was read. A second writer on the same key is the likely cause. Use one writer per key: the follower or one run at a time.`,
               });
 
+            if (Option.isNone(again.record)) {
+              for (const { address, service, generation } of Record.values(outputs)) {
+                if (generation === undefined) continue;
+                const created = yield* createOutput(address, service.wire);
+
+                if (!generation.shared && (created.closed || created.nextOffset !== ZERO_OFFSET))
+                  return yield* new ProjectionFault({
+                    phase: "process",
+                    reason: "invalid-output",
+                    message: `Generation-bound output ${address.id} must start empty and open`,
+                  });
+              }
+            }
+
             const result = yield* pending.run.pipe(
               Effect.provideService(SqlClient.SqlClient, tx.sql),
               Effect.provideService(CurrentOwner, tx.owner),
+              Effect.provideService(TransactionGenerationOutputs, pending.generationOutputs),
               Effect.catchDefect((defect) =>
                 isForeignOwner(defect)
                   ? Effect.fail(
