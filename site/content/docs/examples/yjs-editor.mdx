@@ -11,7 +11,7 @@ Open the [live Yjs editor](https://yjs-editor.streamsy.dev), choose **Create roo
 
 Each document uses four kinds of Streamsy stream under `/v1/stream/yjs/:service/docs/:docPath/`: `.updates`, `.snapshots/<offset>_snapshot`, `.awareness/<name>`, and `.awareness-index`.
 
-**Windows one and two sync through `.updates` and `.awareness`.** Each browser creates a `Y.Doc`, attaches an `Awareness` instance, and binds both to ProseMirror via `y-prosemirror` and `YjsProvider` from `@streamsy/y-durable-streams`. `connect()` starts syncing the room. The view allows edits only while the provider is connected. Snippet titles are relative to `examples/yjs-editor`, except those starting with `y-durable-streams/`, which refer to the provider package. `// ...` marks omitted lines.
+**Windows one and two sync through `.updates` and `.awareness`.** Each browser creates a `Y.Doc`, attaches an `Awareness` instance, and binds both to ProseMirror via `y-prosemirror` and `YjsProvider`. `connect()` starts syncing the room. The view allows edits only while the provider is connected. Snippet titles are relative to `examples/yjs-editor`. `// ...` marks omitted lines.
 
 ```ts title="src/main.ts"
 const doc = new Y.Doc();
@@ -55,7 +55,7 @@ Cursors, selections, and names travel separately as lib0-framed updates on `.awa
 
 Compaction does not prune `.updates`. Update history remains intact for lagging readers, so snapshots reduce transfer and load time for new peers rather than disk usage.
 
-## Background folding, snapshot discovery, and the provider fork
+## Background folding and snapshot discovery
 
 Snapshot creation and snapshot discovery are intentionally decoupled.
 
@@ -124,47 +124,11 @@ const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL
 });
 ```
 
-**Why the browser client was forked.** Upstream `@durable-streams/y-durable-streams` 0.2.9 probes `?offset=snapshot` with `redirect: "manual"` and inspects the `Location` header. Browsers return an opaque response (status `0`, no readable headers) for manual redirects, so browser clients silently fell back to replaying `.updates` from `-1`. `@streamsy/y-durable-streams` follows the redirect instead, extracts the offset from the final URL, applies the snapshot body if one exists, and resumes from `stream-next-offset` without changing the wire protocol:
-
-```ts title="y-durable-streams/src/yjs-provider.ts"
-private async discoverSnapshot(ctx: ConnectionContext, attempt = 1): Promise<void> {
-  const url = `${this.docUrl()}?offset=snapshot`;
-
-  const response = await fetch(url, {
-    method: `GET`,
-    // SAFETY: upstream cast. Function-valued HeadersRecord entries are not resolved on raw fetch calls (known upstream limit, see README).
-    headers: this.headers as Record<string, string>,
-    signal: ctx.controller.signal,
-  });
-
-  // `response.url` is empty only for a Response that fetch did not produce.
-  const offset = new URL(response.url || url).searchParams.get(`offset`);
-
-  if (offset?.endsWith(`_snapshot`)) {
-    // ...
-    const data = new Uint8Array(await response.arrayBuffer());
-    if (data.length > 0) {
-      Y.applyUpdate(this.doc, data, `server`);
-    }
-
-    ctx.startOffset = response.headers.get(`stream-next-offset`) ?? `-1`;
-    return;
-  }
-
-  // No snapshot. The redirect target is a log read, which the updates stream
-  // repeats, so do not download it here.
-  await YjsProvider.discardBody(response);
-
-  // Start from the offset the server named. Without a redirect, start from the beginning.
-  ctx.startOffset = offset !== null && offset !== `snapshot` ? offset : `-1`;
-}
-```
-
 ## Deployment and Durable Object wiring
 
 On Cloudflare, the Alchemy stack deploys one Worker, static assets, and a SQLite Durable Object namespace (`DocumentObject`). Each document ID (`yjs/<service>/docs/<path>`) maps to its own `DocumentObject`, keeping the streams and fold checkpoint together so compaction and document deletion stay transactional.
 
-![Architecture diagram. The browser runs the ProseMirror editor and the YjsProvider from @streamsy/y-durable-streams, and links the raw update stream. A Cloudflare Worker sends /v1/yjs document requests to the DocumentObject named after the document, and /v1/stream reads through router(placement). In the object, the Yjs routes forward to the .updates and .awareness streams and read the compaction fold's state for snapshot discovery and the size budget. Http.routes serves all four streams read-only. The object's alarm runs the compaction fold, which keeps a checkpoint of byte counts and the snapshot offset and publishes a .snapshots stream stored as 1 MiB messages.](/docs/examples/yjs-editor-architecture.svg)
+![Architecture diagram. The browser runs the ProseMirror editor and YjsProvider, and links the raw update stream. A Cloudflare Worker sends /v1/yjs document requests to the DocumentObject named after the document, and /v1/stream reads through router(placement). In the object, the Yjs routes forward to the .updates and .awareness streams and read the compaction fold's state for snapshot discovery and the size budget. Http.routes serves all four streams read-only. The object's alarm runs the compaction fold, which keeps a checkpoint of byte counts and the snapshot offset and publishes a .snapshots stream stored as 1 MiB messages.](/docs/examples/yjs-editor-architecture.svg)
 
 All four stream definitions (`Updates`, `Snapshots`, `Awareness`, and `AwarenessIndex`) share one placement owner so every stream of a document lands in the same Durable Object. The Worker forwards `/v1/yjs/...` requests to that `DocumentObject` by document ID, sends `/v1/stream/...` reads through Streamsy's `router` using this `placement`, and falls back to `env.ASSETS` for the editor app:
 
@@ -200,7 +164,7 @@ export class DocumentObject extends StreamsyObject.make({
 
 - **SQLite and memory bounds.** Durable Object SQLite rejects values above 2 MB, so update appends over 1.5 MiB return `413` and snapshots are split into 1 MiB messages. Compaction also loads the whole `Y.Doc` into the object's 128 MB memory limit. The write budget keeps the demo below the document sizes that exhausted the object during earlier tests.
 - **Approximate 8 MiB write budget.** Document `POST` returns `413` (`DOCUMENT_TOO_LARGE`) once folded `bytes` exceeds 8 MiB; reads keep working. Because the budget reads the alarm-updated fold checkpoint rather than the live log tail, writes can land past 8 MiB (a check on the current demo accepted about 8.4 MB before rejecting).
-- **Upstream conformance and reconnect behavior.** Against upstream `yjs-conformance.test.ts` (commit `461b4026`, run on local `workerd` with a 1,500-byte threshold), 59 of 68 tests pass, 3 Node-server tests are skipped, and 6 fail. Four expect a `__ds` snapshot subscription API (`404`). The other two use raw writes to simulate TTL expiry or seed a legacy awareness index. The read-only mount refuses those writes (`405`). The forked provider also inherits upstream 0.2.9 [issue #413](https://github.com/durable-streams/durable-streams/issues/413) (producer epoch reuse on reconnect can lose edits), so the UI pauses editing when disconnected until you reload. Room links carry the Nano ID in the URL fragment, and the demo has no authentication, room registry, or offline persistence.
+- **Upstream conformance and reconnect behavior.** Against upstream `yjs-conformance.test.ts` (commit `461b4026`, run on local `workerd` with a 1,500-byte threshold), 59 of 68 tests pass, 3 Node-server tests are skipped, and 6 fail. Four expect a `__ds` snapshot subscription API (`404`). The other two use raw writes to simulate TTL expiry or seed a legacy awareness index. The read-only mount refuses those writes (`405`). To avoid [losing edits on reconnect](https://github.com/durable-streams/durable-streams/issues/413), the editor pauses editing when disconnected and asks you to reload. Room links carry the Nano ID in the URL fragment, and the demo has no authentication, room registry, or offline persistence.
 
 ## Run it locally
 

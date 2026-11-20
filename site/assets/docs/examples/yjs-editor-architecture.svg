@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 724" width="920" height="724" role="img" aria-labelledby="title desc">
   <title id="title">Yjs editor on Cloudflare architecture</title>
-  <desc id="desc">The browser runs a ProseMirror editor bound to a Yjs document and the YjsProvider from @streamsy/y-durable-streams. The page also links each room's raw update stream. A Cloudflare Worker sends every /v1/yjs document request to the DocumentObject named after the document, and sends /v1/stream requests through a Streamsy router that uses the same placement. One DocumentObject owns every stream of its document. Its HttpRouter Yjs routes forward document reads and appends to the .updates stream and awareness requests to the .awareness streams. They read the compaction fold's state to discover the latest snapshot and to refuse writes past the document budget. Http.routes serves all four streams read-only. Each commit to .updates marks the compaction fold, and the object's alarm runs it. The fold keeps a small checkpoint of byte counts and the snapshot offset, and when enough new bytes arrive it publishes a snapshot stream stored as 1 MiB messages.</desc>
+  <desc id="desc">The browser runs a ProseMirror editor bound to a Yjs document and YjsProvider. The page also links each room's raw update stream. A Cloudflare Worker sends every /v1/yjs document request to the DocumentObject named after the document, and sends /v1/stream requests through a Streamsy router that uses the same placement. One DocumentObject owns every stream of its document. Its HttpRouter Yjs routes forward document reads and appends to the .updates stream and awareness requests to the .awareness streams. They read the compaction fold's state to discover the latest snapshot and to refuse writes past the document budget. Http.routes serves all four streams read-only. Each commit to .updates marks the compaction fold, and the object's alarm runs it. The fold keeps a small checkpoint of byte counts and the snapshot offset, and when enough new bytes arrive it publishes a snapshot stream stored as 1 MiB messages.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -41,7 +41,7 @@
 
   <rect class="node" x="330" y="116" width="260" height="56" rx="14"/>
   <text class="node-title" x="460" y="140" text-anchor="middle">YjsProvider</text>
-  <text class="node-subtitle" x="460" y="158" text-anchor="middle">@streamsy/y-durable-streams</text>
+  <text class="node-subtitle" x="460" y="158" text-anchor="middle">YjsProvider</text>
 
   <rect class="node" x="624" y="116" width="260" height="56" rx="14"/>
   <text class="node-title" x="754" y="140" text-anchor="middle">Raw stream link</text>
