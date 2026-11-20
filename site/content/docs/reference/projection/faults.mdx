@@ -31,6 +31,7 @@ interface ProjectionFault {
     | "output-busy"
     | "range-unreproducible"
     | "stale-epoch"
+    | "retired-generation"
     | "storage-failure"
     | "unsupported-composition";
   readonly input?: string;
@@ -62,6 +63,7 @@ same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
 | `token-conflict`          | Another writer changed the record first                                                                      |
 | `range-unreproducible`    | A pinned range cannot be read again                                                                          |
 | `stale-epoch`             | A newer generation has written to an output                                                                  |
+| `retired-generation`      | The checkpoint is a retirement tombstone                                                                     |
 | `storage-failure`         | Storage, transport, or SQL failed                                                                            |
 | `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                 |
 

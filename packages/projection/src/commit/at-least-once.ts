@@ -3,7 +3,7 @@ import { Effect, Option } from "effect";
 import type { WakeAt } from "../wake-at.ts";
 import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
-import { beforeRecord, detailsOf, load, remove, pin, withState } from "./internal.ts";
+import { beforeRecord, detailsOf, load, remove, retire, pin, withState } from "./internal.ts";
 
 export const atLeastOnce = pin(
   make<void | WakeAt, never, CheckpointStore>({
@@ -11,6 +11,7 @@ export const atLeastOnce = pin(
     guarantee: "at-least-once",
     load,
     remove,
+    retire,
     apply: (pending) =>
       Effect.gen(function* () {
         const store = yield* CheckpointStore;

@@ -4,7 +4,8 @@ import { Effect } from "effect";
 import { type ProjectionKey } from "./checkpoint-store.ts";
 
 /**
- * Deletes the record. Stop the follower first, or use a new generation.
+ * Deletes a live record and preserves retirement tombstones. Stop the follower first,
+ * or use a new generation.
  * Delete stream outputs first, because forgetting restarts their producer sequences.
  */
 export const forget = <R>(

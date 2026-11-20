@@ -7,7 +7,7 @@ import type {
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { SqlClient } from "effect/sql";
-import { Http, Streamsy } from "@streamsy/core";
+import { Http, StreamBusy, Streamsy } from "@streamsy/core";
 import { CheckpointStore, Commit, Projection, StateTable, Transaction } from "@streamsy/projection";
 import { Placement, router, rule, StreamsyObject } from "@streamsy/serve/cloudflare";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
@@ -54,6 +54,41 @@ const run = HttpRouter.add(
   Effect.gen(function* () {
     const path = yield* HttpRouter.params;
     const generation = Number(path.generation);
+
+    if (path.mode === "retire" || path.mode === "retire-busy") {
+      const accepted = yield* Accepted;
+
+      const retire = Projection.retire(numbers(Commit.transaction, generation), params, {
+        generation: 1,
+      });
+
+      const result = yield* (
+        path.mode === "retire-busy"
+          ? retire.pipe(
+              Effect.provideService(Accepted, {
+                ...accepted,
+                wire: { ...accepted.wire, remove: (id) => new StreamBusy({ id }) },
+              }),
+            )
+          : retire
+      ).pipe(Effect.result);
+
+      return HttpServerResponse.jsonUnsafe(
+        result._tag === "Success" ? result.success : { reason: result.failure.reason },
+      );
+    }
+
+    if (path.mode === "inspect-old") {
+      const old = numbers(Commit.transaction, 1).at(params);
+      const result = yield* Commit.transaction.load(old).pipe(Effect.result);
+
+      return HttpServerResponse.jsonUnsafe(
+        result._tag === "Success"
+          ? { live: Option.isSome(result.success.record), token: result.success.token }
+          : { phase: result.failure.phase, reason: result.failure.reason },
+      );
+    }
+
     const bound = numbers(Commit.transaction, generation, path.mode === "fail").at(params);
     const result = yield* Projection.run(bound).pipe(Effect.result);
     const store = yield* CheckpointStore;
@@ -90,8 +125,12 @@ const worker: ExportedHandler<Env> = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/proof/run" || url.pathname === "/proof/fail") {
-      const mode = url.pathname === "/proof/fail" ? "fail" : "run";
+    const mode = url.pathname.slice("/proof/".length);
+
+    if (
+      url.pathname.startsWith("/proof/") &&
+      ["run", "fail", "retire", "retire-busy", "inspect-old"].includes(mode)
+    ) {
       url.pathname = `/proof/${env.GENERATION}/${mode}`;
 
       return env.OBJECT.get(env.OBJECT.idFromName(owner(params))).fetch(url.toString());

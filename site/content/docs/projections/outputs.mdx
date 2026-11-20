@@ -123,6 +123,8 @@ On Cloudflare, use `Placement.byRoute` and choose the same Durable Object as the
 
 A `StateTable` over a wrapped State output indexes each stream independently. Bind the table with the same generation parameter as the pinned reader. A `FoldByKey` handler uses the bound output's address to choose its table rows.
 
+After readers switch to a new generation, you can close or remove the old generation's exclusive streams and fence its checkpoint. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
+
 ## Producer positions
 
 `Commit.producer` gives each output its own producer position. The output stream drops an append whose position it has already accepted, so a retried unit writes its items once.

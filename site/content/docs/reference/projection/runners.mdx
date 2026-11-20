@@ -990,11 +990,17 @@ declare function forget<R>(
 same<typeof forget, typeof Projection.forget>(true);
 ```
 
-`forget` deletes the checkpoint record of a bound projection through the `remove` of its Commit. It deletes no stream.
+`forget` deletes the live checkpoint record of a bound projection through the `remove` of its Commit. It preserves retirement tombstones and leaves streams in place.
 
 - When the Commit has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`. Every built-in Commit has `remove`.
 - Stop the follower of the key first, or use a new generation.
 - For a projection with outputs, delete the output streams first. The producer sequences of the outputs start again after `forget`.
+
+### `Projection.retire`
+
+`retire(declaration, params, { generation, streams })` takes a declaration and its decoded binding params. `generation` is required. `streams` defaults to `"remove"` and also accepts `"close"`. The effect uses the Commit's services and the output stream services.
+
+`Projection.Retired` reports the checkpoint status in `record` and the stream id and cleanup result for each wrapped output in `outputs`. A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
 
 ## Helpers
 

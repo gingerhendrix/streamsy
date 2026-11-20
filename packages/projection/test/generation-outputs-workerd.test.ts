@@ -16,7 +16,7 @@ const request = (
   init?: Parameters<Miniflare["dispatchFetch"]>[1],
 ) => instance.dispatchFetch(`http://generation.test${path}`, init);
 
-test("generation outputs route to the checkpoint object after restart and creation rolls back", async () => {
+test("generation creation and retirement roll back and the serving generation survives a restart", async () => {
   const root = mkdtempSync(join(scratch, "generation-workerd-"));
   let mf: Miniflare | undefined;
 
@@ -109,6 +109,39 @@ test("generation outputs route to the checkpoint object after restart and creati
         [{ value: { stream: "g1/facts/one", offset } }],
       );
     }
+
+    const oldCheckpoint = await (await request(mf, "/proof/inspect-old")).json();
+    const oldAccepted = await (await request(mf, `${accepted}/1?offset=-1`)).text();
+
+    expect(oldCheckpoint).toMatchObject({ live: true });
+    expect(await (await request(mf, "/proof/retire-busy")).json()).toEqual({
+      reason: "output-busy",
+    });
+    expect(await (await request(mf, "/proof/inspect-old")).json()).toEqual(oldCheckpoint);
+    expect(await (await request(mf, `${numbers}/1?offset=-1`)).text()).toBe(oldNumbers);
+    expect(await (await request(mf, `${accepted}/1?offset=-1`)).text()).toBe(oldAccepted);
+    expect(await (await request(mf, "/proof/retire")).json()).toMatchObject({
+      record: "retired",
+      outputs: {
+        numbers: { result: "removed" },
+        "@streamsy/accepted": { result: "removed" },
+      },
+    });
+
+    await mf.dispose();
+    mf = start(2);
+    expect(await (await request(mf, "/proof/inspect-old")).json()).toEqual({
+      phase: "load",
+      reason: "retired-generation",
+    });
+    expect((await request(mf, `${numbers}/1?offset=-1`)).status).toBe(404);
+    expect((await request(mf, `${accepted}/1?offset=-1`)).status).toBe(404);
+    expect(await (await request(mf, `${numbers}/2?offset=-1`)).text()).toBe(oldNumbers);
+    expect(await (await request(mf, `${accepted}/2?offset=-1`)).text()).toBe(oldAccepted);
+    expect(await (await request(mf, proof)).json()).toMatchObject({
+      checkpoint: true,
+      replayed: 0,
+    });
   } finally {
     await mf?.dispose();
     rmSync(root, { recursive: true, force: true });

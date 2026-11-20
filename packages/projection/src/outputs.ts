@@ -94,7 +94,7 @@ export const createOutput = (
     ),
   );
 
-interface BoundOutputs<R> extends GenerationOutputBindings {
+export interface BoundOutputs<R> extends GenerationOutputBindings {
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, R>>>;
   readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
 }

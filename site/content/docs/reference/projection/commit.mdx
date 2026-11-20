@@ -233,6 +233,9 @@ interface Commit<in Result, in Provides = never, out Requires = never> extends P
     pending: Pending<Result, Provides>,
   ) => Effect.Effect<void, ProjectionFault | HandlerFailed, Requires>;
   readonly remove?: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, Requires>;
+  readonly retire?: (
+    request: Real.RetireRequest,
+  ) => Effect.Effect<"retired" | "already-retired", ProjectionFault, Requires>;
 }
 // ---cut-after---
 same<
@@ -244,13 +247,14 @@ same<Commit<void>, Real.Commit<void>>(true);
 
 A `Commit` writes the units of a projection. `Result` is the handler result that it takes, `Provides` holds the services that it gives the handler, and `Requires` holds the services that it needs.
 
-| Field       | Meaning                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------- |
-| `name`      | A name for messages                                                                             |
-| `guarantee` | How often the effects of a unit happen                                                          |
-| `load`      | The function that loads the checkpoint record of a key, and its token                           |
-| `apply`     | The function that runs the handler of a unit and writes the result and the checkpoint           |
-| `remove`    | The optional function that deletes the checkpoint record of a key. `Projection.forget` calls it |
+| Field       | Meaning                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `name`      | A name for messages                                                                                                          |
+| `guarantee` | How often the effects of a unit happen                                                                                       |
+| `load`      | The function that loads the checkpoint record of a key, and its token                                                        |
+| `apply`     | The function that runs the handler of a unit and writes the result and the checkpoint                                        |
+| `remove`    | The optional function that deletes the checkpoint record of a key. `Projection.forget` calls it                              |
+| `retire`    | The optional function that fences checkpoint writes for a key, then runs the request's cleanup. `Projection.retire` calls it |
 
 A Commit with a result type that does not fit a constructor fails at the `commit:` field of the definition.
 

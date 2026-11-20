@@ -129,3 +129,22 @@ export const wake = Projection.wake({
   output: Wake,
   accepted,
 });
+
+export const retirement = Projection.retire(process, { workspace: "one" }, { generation: 1 });
+
+export type RetirementServices = Assert<
+  Same<
+    Effect.Services<typeof retirement>,
+    | Numbers
+    | Rows
+    | Accepted
+    | import("@streamsy/projection").CheckpointStore
+    | import("@streamsy/projection").Transaction
+  >
+>;
+
+// @ts-expect-error retirement requires an explicit generation
+export const missingGeneration = Projection.retire(process, { workspace: "one" }, {});
+
+// @ts-expect-error params come from the declaration
+export const invalidParams = Projection.retire(process, { workspace: 1 }, { generation: 1 });

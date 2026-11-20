@@ -26,6 +26,7 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
     "output-busy",
     "range-unreproducible",
     "stale-epoch",
+    "retired-generation",
     "storage-failure",
     "unsupported-composition",
   ]),
@@ -48,6 +49,7 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
       case "invalid-output":
       case "range-unreproducible":
       case "stale-epoch":
+      case "retired-generation":
       case "unsupported-composition":
         return false;
     }

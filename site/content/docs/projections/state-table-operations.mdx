@@ -17,6 +17,12 @@ This page lists the operator steps for [State tables](/docs/projections/state-ta
 
 `rebuild` and the start run read only the State stream. A fold fix reads the sources again.
 
+## Clear a retired stream's rows
+
+Stop and drain the table runner and any other jobs that update its rows. After you remove the retired State stream, call `StateTable.clear(table)` with the table bound to that stream's address. The call deletes the cached rows and their applied offset in one SQL transaction. It works after the stream is gone. The stream and the table binding's checkpoint are outside this operation.
+
+If you need the index again while the stream still exists, call `StateTable.rebuild(table)` to replay it. A table runner at the end of the stream can find no new work after a clear. A later sync or a unit with new input can repopulate the index.
+
 ## Fix a fold
 
 A fold fix folds every source again from zero into empty rows. It uses the `generation` of the folds and a `reset` of the stream. A new generation does not fence the old runners of a `Commit.transaction` projection, so you stop them first.

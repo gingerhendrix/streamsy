@@ -1,7 +1,12 @@
 import { extend } from "./range.ts";
 import { Data, type Effect, Pipeable, Schema } from "effect";
 import type { StreamAddress } from "@streamsy/core";
-import type { CheckpointRecord, Loaded, ProjectionKey } from "../checkpoint-store.ts";
+import type {
+  CheckpointRecord,
+  Loaded,
+  ProjectionKey,
+  RetirementStatus,
+} from "../checkpoint-store.ts";
 import type { ProjectionFault } from "../fault.ts";
 import type { Unit } from "../unit.ts";
 import type { ResolvedOutput } from "./internal.ts";
@@ -24,6 +29,15 @@ export interface Commit<in Result, in Provides = never, out Requires = never>
     pending: Pending<Result, Provides>,
   ) => Effect.Effect<void, ProjectionFault | HandlerFailed, Requires>;
   readonly remove?: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, Requires>;
+  /** Fence future checkpoint writes, then run cleanup even if the key was already retired. */
+  readonly retire?: (
+    request: RetireRequest,
+  ) => Effect.Effect<RetirementStatus, ProjectionFault, Requires>;
+}
+
+export interface RetireRequest {
+  readonly key: ProjectionKey;
+  readonly cleanup: Effect.Effect<void, ProjectionFault>;
 }
 
 export interface Pending<Result, Provides = never> {

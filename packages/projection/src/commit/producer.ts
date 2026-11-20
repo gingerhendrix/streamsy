@@ -1,7 +1,7 @@
 import { withAccepted } from "./range.ts";
 import { appendPinned } from "../outputs.ts";
 /* oxlint-disable typescript/no-misused-spread -- CheckpointRecord is a Schema.Struct plain data record. */
-import { Array, Effect, Option, Record } from "effect";
+import { Array, Effect, Option, Predicate, Record } from "effect";
 import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { MAX_PRODUCER_ID_LENGTH, fitKey, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -18,6 +18,7 @@ import {
   detailsOf,
   load,
   remove,
+  retire,
   pin,
   withState,
   type ResolvedOutput,
@@ -41,26 +42,32 @@ export const producerId = (
   );
 
 /** The head of one output. A missing output on the checkpoint's owner is created here. */
-export const prepareOutput = (output: ResolvedOutput, store: CheckpointStoreApi) => {
+const prepareOutput = (
+  output: ResolvedOutput,
+  store: CheckpointStoreApi,
+  beforeCreate: Effect.Effect<void, ProjectionFault>,
+) => {
   const { wire, owner: outputOwner } = output.service;
 
   return wire.head(output.address.id).pipe(
     Effect.catchTag("StreamNotFound", (cause) =>
       outputOwner !== ownerOf(store.load)
         ? Effect.fail(cause)
-        : Streams.create(output.address).pipe(
+        : beforeCreate.pipe(
+            Effect.andThen(Streams.create(output.address)),
             Effect.provideService(StreamsWriter, wire),
             Effect.andThen(wire.head(output.address.id)),
           ),
     ),
-    Effect.mapError(
-      (cause) =>
-        new ProjectionFault({
-          phase: "pin",
-          reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
-          message: `Cannot prepare output ${output.address.id}`,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      Predicate.isTagged(cause, "ProjectionFault")
+        ? cause
+        : new ProjectionFault({
+            phase: "pin",
+            reason: isStreamsFault(cause) ? "storage-failure" : "invalid-output",
+            message: `Cannot prepare output ${output.address.id}`,
+            cause,
+          }),
     ),
   );
 };
@@ -76,6 +83,7 @@ export const producer = pin(
     name: "producer",
     guarantee: "effectively-once",
     remove,
+    retire,
     load: (key) =>
       Effect.gen(function* () {
         const loaded = yield* load(key);
@@ -169,9 +177,29 @@ export const producer = pin(
         let token = before.token;
 
         if (pending === undefined && Record.keys(seqs).length > 0) {
+          // The create and pin are separate operations. Check the fence before
+          // creating a wrapped stream, even when the unit loaded token "0".
+          const checkBeforeCreate = Effect.gen(function* () {
+            const current = yield* owner.load(projection);
+
+            if (current.token !== before.token)
+              return yield* new ProjectionFault({
+                phase: "pin",
+                reason: "token-conflict",
+                message: `Record for ${projection.id} changed before creating an output`,
+              });
+
+            return yield* Effect.void;
+          });
+
           for (const [name, output] of Record.toEntries(streams)) {
             if (seqs[name] === undefined) continue;
-            const head = yield* prepareOutput(output, owner);
+
+            const head = yield* prepareOutput(
+              output,
+              owner,
+              output.generation === undefined ? Effect.void : checkBeforeCreate,
+            );
 
             if (head.closed)
               return yield* new ProjectionFault({

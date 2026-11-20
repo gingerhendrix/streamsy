@@ -127,9 +127,55 @@ Before you call it, do these steps:
 2. Wait for other runs, including direct `Projection.pass` calls.
 3. For an output projection, delete the output streams first, or use a new generation. The producer sequences start again at 0 after `forget`. An output that keeps its producer state answers `Duplicate` to those appends and drops their items.
 
-With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks, so `forget` does not reserve or retire an address.
+With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks. To stop a generation from running again, use [`Projection.retire`](#retire-a-generation). `forget` preserves a checkpoint tombstone.
 
 The runner also forgets the checkpoint after the final unit for a gone input commits. If you recreate that input at the same address, a populated wrapped output or accepted stream can cause non-retryable `invalid-output` on replay. Raise `generation` to replay the recreated input into fresh streams. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs) and [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
+
+## Retire a generation
+
+Stop and drain runners for the old generation before you retire it. Once readers switch to the serving generation, you can remove the old streams. Call `Projection.retire` with the declaration, the binding params, and the old generation number. On Cloudflare, run the call inside the Durable Object that holds the checkpoint.
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+class Events extends Streamsy.json<Events>()("Retire/Events", "events/:user", {
+  params: { user: Schema.String },
+  schema: Schema.Finite,
+}) {}
+
+class Totals extends Streamsy.json<Totals>()("Retire/Totals", "totals/:user/g/:revision", {
+  params: { user: Schema.String, revision: Schema.FiniteFromString },
+  schema: Schema.Finite,
+}) {}
+
+const totals = Projection.mapAccum({
+  id: "totals",
+  generation: 2,
+  params: { user: Schema.String },
+  inputs: { events: Events },
+  outputs: { totals: Projection.perGeneration(Totals, "revision") },
+  state: { schema: Schema.Finite, initial: 0 },
+  commit: Commit.transaction,
+  mapAccum: (sum, { item }) => [sum + item, { totals: [sum + item] }] as const,
+});
+// ---cut-end---
+const retireOldTotals = Projection.retire(totals, { user: "u1" }, { generation: 1 });
+```
+
+Retirement replaces the checkpoint with a tombstone, even if the binding never ran. A later run fails at `load` with non-retryable `retired-generation`. The call removes every exclusively owned `Projection.perGeneration` output, including a wrapped accepted stream. Use `streams: "close"` to keep the data and let readers reach the end of the stream. Call again with `streams: "remove"` to remove closed streams.
+
+The result reports `record` as `"retired"` or `"already-retired"`. Each wrapped output appears in `outputs`, keyed by name or by `"@streamsy/accepted"`. Each entry has an `id` and a `result` of `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared outputs and unwrapped outputs stay in place. A removed stream with a dependent fork stays reserved by stream storage.
+
+With `Commit.transaction`, the tombstone and cleanup commit together on the checkpoint owner. With `Commit.producer`, the tombstone commits first, and a cleanup failure can leave some streams in place. Retry the same call to finish cleanup, including after a retryable `output-busy` fault. A Commit or checkpoint store without a retirement hook fails with `unsupported-composition`.
+
+An unpinned producer unit can finish its handler, but its pin cannot commit after the tombstone. If retirement lands between the checkpoint recheck and creation of a missing wrapped stream, the unit can leave an empty stream. Run retirement again to remove it. A unit pinned before retirement can append to a stream that is still open, including a shared or unwrapped stream. The tombstone rejects its final checkpoint write.
+
+The tombstone covers the exact projection id, version, generation, and binding params. Retirement resolves old stream ids from the declaration you pass, so use the route templates and codecs that wrote those streams. Raise `generation` to rebuild. A version change alone can reuse the same stream addresses. `Projection.createOutputs` and direct stream calls can still recreate a purged stream id.
+
+Registry marks are keyed by projection id and params. A stale runner can stop the mark that the serving generation uses. After stopping the stale runner, use `Registry.retry` on the serving binding to clear the stop. If the retired stream had a State table, clear its cached rows separately. See [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows).
 
 ## Several backends
 
@@ -153,6 +199,7 @@ A pass fails with a `ProjectionFault`, or with the error of the handler. The run
 | `history-unavailable`     | An input stream does not exist, or was removed before the first checkpoint                                         | Create the input. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)         |
 | `range-unreproducible`    | A pinned range cannot be read again                                                                                | Declare a new generation                                                                             |
 | `stale-epoch`             | A newer generation has appended to an output                                                                       | Stop this runner                                                                                     |
+| `retired-generation`      | The checkpoint is a retirement tombstone                                                                           | Use a new generation                                                                                 |
 | `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                                       | Fix the option                                                                                       |
 | `invalid-record`          | The stored record or state does not decode, a pinned unit does not fit the Commit, or an output sequence has a gap |                                                                                                      |
 | `invalid-source`          | An input read is invalid, does not advance, or has an item that does not decode                                    |                                                                                                      |

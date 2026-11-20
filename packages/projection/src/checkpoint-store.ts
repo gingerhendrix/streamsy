@@ -38,6 +38,14 @@ const Envelope = Schema.Struct({ version: Counter, record: CheckpointRecord });
 
 const EnvelopeJson = Schema.fromJsonString(Envelope);
 
+const Tombstone = Schema.Struct({ version: Counter, retired: Schema.Struct({}) });
+
+const TombstoneJson = Schema.fromJsonString(Tombstone);
+
+const StoredJson = Schema.fromJsonString(Schema.Union([Envelope, Tombstone]));
+
+export type RetirementStatus = "retired" | "already-retired";
+
 export interface ProjectionKey {
   readonly id: string;
   readonly version: number;
@@ -70,8 +78,10 @@ export interface CheckpointStoreApi {
     ifToken: string,
     record: CheckpointRecord,
   ) => Effect.Effect<string, ProjectionFault>;
-  /** Deletes the record. Absent keys are ignored. */
+  /** Deletes a live record. Absent keys and tombstones are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
+  /** Replaces the live or absent record with a tombstone. */
+  readonly retire?: (key: ProjectionKey) => Effect.Effect<RetirementStatus, ProjectionFault>;
 }
 
 const storageFailure =
@@ -156,11 +166,9 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
             records.set(key, value);
           }),
         remove: (key) =>
-          lock.withPermits(1)(
-            Effect.sync(() => {
-              records.delete(key);
-            }),
-          ),
+          Effect.sync(() => {
+            records.delete(key);
+          }),
         withTransaction: lock.withPermits(1),
       });
     }),
@@ -177,33 +185,36 @@ export interface EncodedStore {
   ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
 
+const decodeStored = (id: string, encoded: string) =>
+  Schema.decodeEffect(StoredJson)(encoded).pipe(
+    Effect.mapError(
+      () =>
+        new ProjectionFault({
+          phase: "load",
+          reason: "invalid-record",
+          message: `Invalid stored record for ${id}`,
+        }),
+    ),
+  );
+
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
-  const load = Effect.fn("Projection.CheckpointStore.load")(function* (key: ProjectionKey) {
+  const load = Effect.fn("Projection.CheckpointStore.load")(function* (
+    key: ProjectionKey,
+  ): Effect.fn.Return<Loaded, ProjectionFault> {
     const encoded = yield* store.read(recordKey(key));
 
-    if (Option.isNone(encoded)) {
-      const absent: Loaded = { record: Option.none(), token: ABSENT_TOKEN };
+    if (Option.isNone(encoded)) return { record: Option.none(), token: ABSENT_TOKEN };
 
-      return absent;
-    }
+    const envelope = yield* decodeStored(key.id, encoded.value);
 
-    const envelope = yield* Schema.decodeEffect(EnvelopeJson)(encoded.value).pipe(
-      Effect.mapError(
-        () =>
-          new ProjectionFault({
-            phase: "load",
-            reason: "invalid-record",
-            message: `Invalid stored record for ${key.id}`,
-          }),
-      ),
-    );
+    if ("retired" in envelope)
+      return yield* new ProjectionFault({
+        phase: "load",
+        reason: "retired-generation",
+        message: `Generation ${key.generation} of ${key.id} is retired. Raise generation to run it again.`,
+      });
 
-    const loaded: Loaded = {
-      record: Option.some(envelope.record),
-      token: String(envelope.version),
-    };
-
-    return loaded;
+    return { record: Option.some(envelope.record), token: String(envelope.version) };
   });
 
   const compareAndSet = Effect.fn("Projection.CheckpointStore.compareAndSet")(function* (
@@ -244,7 +255,64 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   return {
     load,
     compareAndSet,
-    remove: (key) => store.remove(recordKey(key)),
+    remove: (key) =>
+      store.withTransaction(
+        Effect.gen(function* () {
+          const slot = recordKey(key);
+
+          const encoded = yield* store.read(slot).pipe(
+            Effect.mapError(
+              (fault) =>
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: fault.reason,
+                  message: fault.message,
+                  cause: fault.cause,
+                }),
+            ),
+          );
+
+          // An absent SQL row cannot be locked. Skip DELETE so it can't race a first retire.
+          if (Option.isNone(encoded)) return;
+
+          // Forget can still delete a malformed live record.
+          const current = Schema.decodeOption(StoredJson)(encoded.value);
+
+          if (Option.isSome(current) && "retired" in current.value) return;
+
+          yield* store.remove(slot);
+        }),
+      ),
+    retire: (key) =>
+      store.withTransaction(
+        Effect.gen(function* (): Effect.fn.Return<RetirementStatus, ProjectionFault> {
+          const slot = recordKey(key);
+          const existing = yield* store.read(slot);
+          let version = 1;
+
+          if (Option.isSome(existing)) {
+            const current = yield* decodeStored(key.id, existing.value);
+
+            if ("retired" in current) return "already-retired";
+            version = current.version + 1;
+          }
+
+          const encoded = yield* Schema.encodeEffect(TombstoneJson)({ version, retired: {} }).pipe(
+            Effect.mapError(
+              () =>
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "invalid-record",
+                  message: `Cannot encode tombstone for ${key.id}`,
+                }),
+            ),
+          );
+
+          yield* store.write(slot, encoded);
+
+          return "retired";
+        }),
+      ),
   };
 };
 

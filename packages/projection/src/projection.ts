@@ -43,6 +43,8 @@ export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
 
+export { retire, type Retired } from "./retire.ts";
+
 export { perGeneration, type PerGeneration } from "./per-generation.ts";
 
 export { createOutputs } from "./outputs.ts";

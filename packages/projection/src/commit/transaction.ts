@@ -1,7 +1,7 @@
 import { Array, Effect, Option, Predicate, Record } from "effect";
 import { SqlClient } from "effect/sql";
 import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
-import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal";
+import { CurrentOwner, isForeignOwner, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
@@ -9,7 +9,7 @@ import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { createOutput } from "../outputs.ts";
 import { TransactionGenerationOutputs } from "../per-generation.ts";
-import { detailsOf, load, remove, settle, type Result } from "./internal.ts";
+import { detailsOf, load, remove, retire, settle, type Result } from "./internal.ts";
 
 import { withPrepare, withAccepted } from "./range.ts";
 
@@ -19,6 +19,22 @@ export const transaction = withPrepare(
     guarantee: "exactly-once",
     load,
     remove,
+    retire: (request) =>
+      Effect.gen(function* () {
+        const tx = yield* Transaction;
+        const store = yield* CheckpointStore;
+
+        if (ownerOf(store.load) !== tx.owner)
+          return yield* new ProjectionFault({
+            phase: "checkpoint",
+            reason: "unsupported-composition",
+            message: `The checkpoint store for ${request.key.id} does not share the transaction owner`,
+          });
+
+        return yield* tx.withTransaction(
+          retire(request).pipe(Effect.provideService(CurrentOwner, tx.owner)),
+        );
+      }),
     apply: (pending) =>
       Effect.gen(function* () {
         const tx = yield* Transaction;
