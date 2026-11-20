@@ -3,8 +3,13 @@ import { chat, EventType, type StreamChunk } from "@tanstack/ai";
 import { fakeText } from "@tanstack/ai/testing";
 import { STOP_EVENT, type Stopped } from "./contract.ts";
 
-export const answer =
-  "A durable response is recorded once. Reload to replay the same answer. Any reader can stop the native model, and every reader sees the recorded reason.";
+export const answer = `A durable response starts with one model call. As the model writes, the server saves each text event in a SQLite log. The chat hook uses those events to build the assistant message you see here.
+
+Open this response in a second tab while the answer is still arriving. The new tab replays the events it missed, then follows the live stream. Reloading works the same way: the chat hook rebuilds the message from recorded events without asking the model to repeat its answer.
+
+Try pressing Stop in either tab. The server aborts the model and saves a separate event with the stop reason before it closes the stream. The other tab gets the same partial text and stop reason, even though it never sent a stop request.
+
+Come back to the response later. The completed log still has everything the model wrote before it finished or was stopped. A late reader can reconstruct that answer without a running model.`;
 
 export interface Running {
   controller: AbortController;

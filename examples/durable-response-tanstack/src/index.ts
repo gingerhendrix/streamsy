@@ -11,7 +11,8 @@ const application = Layer.unwrap(
       Config.withDefault(`${import.meta.dirname}/../.data/responses.sqlite`),
     );
 
-    const paceMs = yield* Config.Int("DURABLE_RESPONSE_PACE_MS").pipe(Config.withDefault(150));
+    // The fake adapter emits four characters per tick.
+    const paceMs = yield* Config.Int("DURABLE_RESPONSE_PACE_MS").pipe(Config.withDefault(40));
 
     if (paceMs < 0) return yield* Effect.die("DURABLE_RESPONSE_PACE_MS must be nonnegative");
     const fs = yield* FileSystem.FileSystem;

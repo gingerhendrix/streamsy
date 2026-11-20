@@ -2,16 +2,28 @@
 import { MockLanguageModelV3 } from "ai/test";
 
 export const chunks = [
-  "A durable response ",
-  "is written once ",
-  "to a persistent log. ",
-  "Each reader follows ",
-  "the same recorded parts. ",
-  "Reload this page ",
-  "while the model continues. ",
-  "Another reader can join ",
-  "and any reader can stop ",
-  "the generation for everyone.",
+  "Start with a question in one tab. ",
+  "The server runs the model once ",
+  "and records its output in a SQLite log. ",
+  "The chat hook reads that log through the transport ",
+  "and turns successive text parts into ",
+  "the assistant message you see here.\n\n",
+  "Reload before the answer finishes. ",
+  "The page loses its in-memory chat state, ",
+  "but the server keeps recording the answer. ",
+  "The new chat hook replays the stored parts from the beginning ",
+  "to rebuild the message, then follows new parts as they arrive. ",
+  "You do not have to send your question again.\n\n",
+  "A second tab uses that same replay path. ",
+  "It can catch up with the first tab ",
+  "even if it opens after the model has finished. ",
+  "Look at the model call count to check ",
+  "that neither reader started another generation.\n\n",
+  "To end the generation early, press Stop in either tab. ",
+  "The server interrupts the model ",
+  "and records the end of the answer. ",
+  "Both tabs keep the text already written, ",
+  "and a reload shows the same partial message and stop reason.",
 ];
 
 /** A real AI SDK model interface, paced at the provider boundary, with observable abort. */
