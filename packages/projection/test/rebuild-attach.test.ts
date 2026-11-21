@@ -2,6 +2,7 @@ import { layer } from "@effect/vitest";
 import { expect } from "vitest";
 import { Context, Deferred, Effect, Exit, Layer, Option, Ref, Schema, Scope } from "effect";
 import { MemoryStorage, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
 import {
   CheckpointStore,
   Commit,
@@ -9,7 +10,7 @@ import {
   ProjectionFault,
   ProjectionWakeup,
 } from "@streamsy/projection";
-import type { Loaded } from "@streamsy/projection/checkpoint";
+import { recordKey, type Loaded } from "@streamsy/projection/checkpoint";
 import { AlarmSlot } from "../../serve/src/cloudflare/alarm.ts";
 import { makeWakeups } from "../../serve/src/cloudflare/wakeup.ts";
 import { eventually } from "./support/eventually.ts";
@@ -356,6 +357,44 @@ layer(host)((it) => {
       ).toBe(true);
       yield* explicit.run;
       expect(yield* items(params.workspace, 3)).toEqual([3, 5, 7]);
+    }),
+  );
+
+  it.effect("keeps live commits running if another generation holds a malformed checkpoint", () =>
+    Effect.gen(function* () {
+      const params = { workspace: "malformed" };
+      yield* seed(params.workspace);
+      const projection = numbers("malformed", 1);
+      yield* Projection.run(projection.at(params));
+
+      yield* (yield* OwnerRecords).write(
+        recordKey({ id: projection.id, version: 1, generation: 7, params: { workspace: "bad" } }),
+        "not a checkpoint",
+      );
+      yield* Layer.build(Projection.attach(projection, { durable: true }));
+      yield* (yield* Facts).append(params, [{ id: "c", n: 7 }]);
+
+      expect(
+        yield* eventually(items(params.workspace, 1), (values) => values.length === 3),
+      ).toEqual([3, 5, 7]);
+    }),
+  );
+
+  it.effect("keeps live commits running if the explicit bindings option fails", () =>
+    Effect.gen(function* () {
+      const params = { workspace: "failed-list" };
+      yield* seed(params.workspace);
+      const old = numbers("failed-list", 1);
+      yield* Projection.run(old.at(params));
+
+      const wakeup = yield* ProjectionWakeup.attach(numbers(old.id, 2), {
+        bindings: Effect.fail("list unavailable"),
+      });
+
+      expect(yield* wakeup.next).toEqual(Option.none());
+      yield* (yield* Facts).append(params, [{ id: "c", n: 7 }]);
+      yield* wakeup.run;
+      expect(yield* items(params.workspace, 2)).toEqual([3, 5, 7]);
     }),
   );
 });

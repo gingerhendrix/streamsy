@@ -221,9 +221,10 @@ const startupInventory = Effect.fn("Projection.startupInventory")(function* <
     return candidates;
   });
 
+  // One unreadable record must not stop the live commits of every binding of the id.
   return yield* discover.pipe(
     Effect.catchIf(
-      (fault) => fault.reason === "unsupported-composition",
+      (fault) => fault.reason === "unsupported-composition" || fault.reason === "invalid-record",
       (fault) =>
         Effect.logWarning(
           `Projection ${id} skipped startup inventory: ${fault.message}. Supply attach bindings explicitly.`,
@@ -410,7 +411,16 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
       const candidates =
         options.bindings === undefined
           ? yield* startupInventory(declaration)
-          : Array.map(yield* options.bindings, (params) => declaration.at(params));
+          : yield* options.bindings.pipe(
+              Effect.map(Array.map((params) => declaration.at(params))),
+              // As with an unreadable inventory, live commits still run without startup replay.
+              Effect.catch((error) =>
+                Effect.logError(
+                  `Projection ${declaration.id} skipped startup replay: the bindings option failed`,
+                  error,
+                ).pipe(Effect.as([])),
+              ),
+            );
 
       const byKey = new Map(
         Array.map(candidates, (binding) => [canonicalParams(binding.params), binding] as const),

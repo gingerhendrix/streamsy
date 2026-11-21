@@ -134,6 +134,8 @@ Checkpoint inventory omits bindings that never committed a unit and records that
 
 MySQL owner records can contain irreversible shortened keys, so `Projection.bindings` fails there and attach skips implicit inventory. Adapters without checkpoint listing also skip implicit inventory. Supply `bindings` from your application on those hosts. Live commits and configured triggers continue to schedule work.
 
+Attach also skips startup replay and logs the cause when a checkpoint record under the id does not decode, or when the `bindings` Effect fails. `Projection.bindings` fails on such a record and on stored params that the current codecs no longer accept. Live commits and triggers still run, but no binding is queued for replay until the next start. Fix the record or the list, then restart the host.
+
 ## Retire the old generation
 
 An open browser tab keeps the address it opened. After the old runner stops, that stream stops receiving projection writes. If you close the stream, the tab can read to the end and your app can prompt for a reload. If you remove it, subsequent reader requests get a missing stream.
