@@ -1,6 +1,6 @@
 # Releasing Streamsy
 
-Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its four public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection` and `@streamsy/serve`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
+Streamsy uses [Tegami](https://tegami.fuma-nama.dev) to version and publish its five public packages: `@streamsy/core`, `@streamsy/storage`, `@streamsy/projection`, `@streamsy/serve` and `@streamsy/views`. They share one version and one `v<version>` tag. The config is in `scripts/tegami.mts`.
 
 ## Release notes
 
@@ -23,7 +23,7 @@ packages:
 The remote client now resumes from the last offset it received.
 ```
 
-Use `patch`, `minor` or `major` in the frontmatter. The four packages share a version, so a note for one package bumps all four. Target `"group:streamsy"` when the note is about every package.
+Use `patch`, `minor` or `major` in the frontmatter. The five packages share a version, so a note for one package bumps all five. Target `"group:streamsy"` when the note is about every package.
 
 ### Write one note for each user-facing change
 
@@ -33,7 +33,7 @@ Tegami adds each note as its own section under the next release in the changelog
 - Do not add a note for a fix to behaviour that has not been released yet. Users never saw the bug. Update the feature's note if the fix changes what it says.
 - Write for a developer who uses Streamsy. Say what they can do now, which API they call, and what they must change in their code. Mark a breaking change with `**Breaking change:**`. Leave out internal names and implementation steps unless a user must act on them, and link the docs page.
 
-Do not edit package versions or create release tags by hand.
+Do not edit package versions or create release tags by hand. The one exception is a package that joins the group, described under [New packages](#new-packages).
 
 ## How a release happens
 
@@ -48,6 +48,8 @@ Keep the workflow file name `publish.yml`. npm trusted publishing is tied to it.
 The private workspaces (examples, tools and `@streamsy/conformance-tests`) get a patch bump in each Version Packages pull request because they depend on `@streamsy/core`. They never publish, so the bump does no harm.
 
 ## New packages
+
+A package that joins the `streamsy` group must start at the group's current version. Tegami's `syncBump` gives every package in the group the same bump type, not the same version. A new package at another version would get a different version, and the `streamsy-shared-release-tag` plugin in `scripts/tegami.mts` then fails with `Streamsy release packages have mismatched versions`. So when you add the package to the group, set its `version` in `package.json` once to the version that the other packages have on `main`. This is the one exception to the rule against editing versions by hand. `@streamsy/views` joined at `0.12.0` this way.
 
 npm trusted publishing works only for a package that already exists on npm. Before you merge a Version Packages pull request that contains a new public package, create the package and its trusted publisher once from your own machine. `npm trust` needs npm 11.10.0 or newer, and your npm account needs two-factor authentication.
 
