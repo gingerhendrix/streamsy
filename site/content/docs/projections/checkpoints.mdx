@@ -129,6 +129,8 @@ Before you call it, do these steps:
 
 With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks. To stop a generation from running again, use [`Projection.retire`](#retire-a-generation). `forget` preserves a checkpoint tombstone.
 
+For a live binding with routed outputs, `forget` also clears its route records in the checkpoint transaction. Replay checks each touched stream again on first open. A tombstoned binding keeps any route records from an earlier close so that retirement can remove those streams later.
+
 The runner also forgets the checkpoint after the final unit for a gone input commits. If you recreate that input at the same address, a populated wrapped output or accepted stream can cause non-retryable `invalid-output` on replay. Raise `generation` to replay the recreated input into fresh streams. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs) and [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
 ## Retire a generation
@@ -168,6 +170,8 @@ const retireOldTotals = Projection.retire(totals, { user: "u1" }, { generation: 
 Retirement replaces the checkpoint with a tombstone, even if the binding never ran. A later run fails at `load` with non-retryable `retired-generation`. The call removes every exclusively owned `Projection.perGeneration` output, including a wrapped accepted stream. Use `streams: "close"` to keep the data and let readers reach the end of the stream. Call again with `streams: "remove"` to remove closed streams.
 
 The result reports `record` as `"retired"` or `"already-retired"`. Each wrapped output appears in `outputs`, keyed by name or by `"@streamsy/accepted"`. Each entry has an `id` and a `result` of `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared outputs and unwrapped outputs stay in place. A removed stream with a dependent fork stays reserved by stream storage.
+
+Routed outputs appear in `routed` with an array of stream results per output name. Retirement finds them through generation-owned records for this binding. It keeps those records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
 
 With `Commit.transaction`, the tombstone and cleanup commit together on the checkpoint owner. With `Commit.producer`, the tombstone commits first, and a cleanup failure can leave some streams in place. Retry the same call to finish cleanup, including after a retryable `output-busy` fault. A Commit or checkpoint store without a retirement hook fails with `unsupported-composition`.
 

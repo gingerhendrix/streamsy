@@ -1044,6 +1044,8 @@ same<typeof forget, typeof Projection.forget>(true);
 
 `Projection.Retired` reports the checkpoint status in `record` and the stream id and cleanup result for each wrapped output in `outputs`. A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
 
+For routed declarations, `routed` reports the streams cleaned for each routed output. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
+
 ## Helpers
 
 ### `Projection.items`

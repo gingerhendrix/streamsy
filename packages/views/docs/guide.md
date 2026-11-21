@@ -83,6 +83,14 @@ Declare an output State route with a numeric generation parameter in its path, t
 
 A circuit returns a projection declaration with `.at(params)`. The circuit's `version` and `generation` default to 1. The `retry` option accepts the projection binding policy. Input route parameters and the remaining output route parameters must be circuit parameters with the same decoded types. Projection supplies the generation parameter from the circuit's `generation`. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters as expressions, for example `row.workspace.eq(params.workspace)`. The plan hash includes the parameter names. Each binding evaluates the plan with its own decoded values and SQL namespace.
 
+## Routed outputs
+
+Use `Projection.perGeneration(DayRows, "generation", { routeBy: ["workspace", "date"] })` to have one binding write to multiple workspace and date streams. Wrap every view of that output in `View.routed(relation, { by: (row) => ({ workspace: row.workspace, date: row.date }) })`. The selector supplies exactly the route names and types, using strings, finite numbers or Booleans. Add `row: (row) => row.value` when the relation carries the emitted row as a nested value. Routing and binding parameter expressions can be used together.
+
+The engine uses the route values followed by the collection key. Two streams can hold the same collection key. If a row moves, the old stream gets a delete and the new stream gets an upsert in the same transaction with the same `txid`. Readers following one stream receive its own notification.
+
+A route that has never had an emitted row returns `StreamNotFound`. The first row creates the stream in the checkpoint transaction, and deleting its last row leaves a stream containing its history. If a route value fails to encode, the unit fails with a `ViewDataFault` identifying the row. For a rebuild, check `Projection.caughtUp` on the binding before switching readers.
+
 Set `wakeAt: (unit) => Projection.wakeAt(deadline)` to save a wake deadline with the unit. Projection supplies the recorded due time in `unit.due` for timer units, and returning void clears the deadline.
 
 ## Bun host

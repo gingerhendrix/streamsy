@@ -40,6 +40,14 @@ Every constructor takes the fields of `Common`:
 
 Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a subset of `params` with the same types. `Projection.perGeneration` supplies one output route parameter from the projection's `generation`. Omit that parameter from `params`. The compiler rejects a field with incompatible params. A fixed address takes no params from the projection. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
+### `Projection.perGeneration`
+
+Use `Projection.perGeneration(route, generationParam, { routeBy: ["workspace", "date"] })` when a single binding writes to several routes. Each name in `routeBy` must be a distinct route parameter supplied by the handler. The generation parameter comes from the declaration and the remaining route parameters come from the binding with matching decoded types.
+
+Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction` or `Commit.transactionWithCleanup`. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
+
+Routed outputs appear in the handler's `outputs`. A bound projection's `streams` and `Projection.createOutputs` handle the outputs with a single fixed address.
+
 ## Constructors
 
 ### `Projection.fold`
