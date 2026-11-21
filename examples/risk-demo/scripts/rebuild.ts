@@ -1,0 +1,54 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This Bun rebuild executable directly owns terminal reporting and process configuration around the reusable rebuild service. */
+/**
+ * Host/admin CLI: rebuild a game's board projection into a fresh generation and
+ * cut the durable active pointer over to it after verification.
+ *
+ * Not a product-UI action — it opens the SQLite database directly (the same file
+ * the server uses) so it is host-only. The old generation is retained and stays
+ * usable; on verification failure nothing is cut over and the exit code is
+ * non-zero.
+ *
+ *   DB_PATH=./risk.sqlite bun run scripts/rebuild.ts <gameId> [targetGeneration]
+ */
+
+import { openBunStorage } from "../server/persistence/bun.ts";
+import { rebuildBoardGeneration } from "../server/game/rebuild.ts";
+
+const gameId = process.argv[2] ?? process.env.GAME_ID ?? "";
+const generation = process.argv[3] ?? process.env.TARGET_GENERATION ?? undefined;
+const dbPath = process.env.DB_PATH ?? ":memory:";
+
+if (!gameId) {
+  console.error(
+    "usage: DB_PATH=./risk.sqlite bun run scripts/rebuild.ts <gameId> [targetGeneration]",
+  );
+  process.exit(2);
+}
+
+const storage = await openBunStorage(dbPath);
+
+try {
+  const result = await rebuildBoardGeneration(storage, gameId, {
+    generation,
+  });
+  console.log(JSON.stringify(result, null, 2));
+  if (result.status === "cutover") {
+    console.log(
+      `✓ cut over ${gameId}: ${result.fromGeneration} → ${result.toGeneration} ` +
+        `(watermark ${result.sourceThroughOffset ?? "∅"}; retained ${result.retainedGenerations.join(", ")})`,
+    );
+    // Worth calling out separately: a rebuild across reducer versions is the
+    // migration, and until it runs the active stream still holds rows an older
+    // reducer wrote.
+    if (result.fromReducerVersion !== result.toReducerVersion) {
+      console.log(
+        `  reducer ${result.fromReducerVersion ?? "unrecorded"} → ${result.toReducerVersion}`,
+      );
+    }
+  } else {
+    console.error(`✗ rebuild ${result.status} for ${gameId}; active generation unchanged.`);
+    process.exitCode = 1;
+  }
+} finally {
+  await storage.close();
+}

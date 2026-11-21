@@ -260,6 +260,17 @@
       }
     },
     {
+      // Hex Domination retains its archived TypeScript, React, and standalone
+      // launcher style. Keep correctness checks and Effect tag checks enabled.
+      "files": ["examples/risk-demo/**"],
+      "rules": {
+        "anti-slop/require-readable-spacing": "off",
+        "anti-slop-effect/prefer-effect-match": "off",
+        "effecttsgo/prefer-effect-array": "off",
+        "effecttsgo/prefer-effect-record": "off"
+      }
+    },
+    {
       // Tests and test support assert encoded wire shapes, so they name `_tag` directly.
       "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/src/testing/**"],
       "rules": {
