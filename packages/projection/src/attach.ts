@@ -1,6 +1,7 @@
 import { Clock, Duration, Effect, Exit, Layer, Option, Pull, Schedule, Schema } from "effect";
 import type { Storage, StorageFault } from "@streamsy/core";
 import type { InputMap, InputServices } from "./batch.ts";
+import type { DecodedParams } from "./declaration.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { Registry, registerRunner, type RunnerStatus } from "./registry.ts";
@@ -10,7 +11,13 @@ import type { WakeOutput } from "./wake.ts";
 
 export type { Attachable } from "./runner.ts";
 
-export interface AttachOptions {
+export interface AttachOptions<Params = DecodedParams, E = never, R = never> {
+  /**
+   * Decoded params to consider for startup replay. Defaults to the checkpoint
+   * inventory when it is available. An explicit list uses this declaration's
+   * id, version and generation to check for existing checkpoints.
+   */
+  readonly bindings?: Effect.Effect<ReadonlyArray<Params>, E, R>;
   /**
    * Fixed-address wake classes whose source ids request binding runs. A provided
    * stream service on another storage owner is remote; an absent service or a
@@ -58,6 +65,8 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * subscribes to `Storage.committed` when it is built, so build it with the
  * storage layer and before the app writes. For each written id, the input's
  * `parse` gives the params, and the runner runs `projection.at(params)`.
+ * The background runner also queues startup replays from the checkpoint
+ * inventory or `options.bindings`.
  *
  * Use it on long-lived hosts (Bun, Node). On a Cloudflare object, use
  * `ProjectionWakeup.attach(projection)`.
@@ -82,10 +91,23 @@ class PassDefect extends Schema.TaggedError<PassDefect, { readonly brand: unique
  * );
  * ```
  */
-export const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
-  options: AttachOptions = {},
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>> => {
+export const attach = <
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P,
+  OR = never,
+  HE = never,
+  HR = never,
+  Params extends DecodedParams = DecodedParams,
+  BE = never,
+  BR = never,
+>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR, Params>,
+  options: AttachOptions<NoInfer<Params>, BE, BR> = {},
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I> | BR> => {
   const runner = runnerOf(projection, options);
 
   return Layer.effectDiscard(

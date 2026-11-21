@@ -225,7 +225,10 @@ for (const [label, local] of [
 
           const replayed: Array<string> = [];
           const next = declaration(projection.id, replayed, 2);
-          yield* Layer.build(Projection.attach(next, { durable, triggers: [Wake] }));
+          // Exercise the trigger cursor with checkpoint-based startup replay disabled.
+          yield* Layer.build(
+            Projection.attach(next, { durable, triggers: [Wake], bindings: Effect.succeed([]) }),
+          );
           expect(
             yield* eventually(
               Effect.sync(() => replayed.length),

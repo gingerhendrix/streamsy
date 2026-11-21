@@ -22,7 +22,7 @@ import {
 } from "@streamsy/core/internal";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import { inputEntries, type InputMap } from "./batch.ts";
-import { isDeclaration, type Inputs } from "./declaration.ts";
+import { isDeclaration, type DecodedParams, type Inputs } from "./declaration.ts";
 import type { Executable } from "./executable.ts";
 import { InvalidBinding, ProjectionFault } from "./fault.ts";
 import { canonicalParams, withParams, type Unit } from "./unit.ts";
@@ -30,10 +30,19 @@ import { catchUp, progressOf, type RunContext } from "./run.ts";
 import { bindingDelay } from "./binding-retry.ts";
 
 import { Registry, RunnerEvent, eventPublisher, type RunnerFailure } from "./registry.ts";
-import { hasNonRetryableHandler, nonRetryableHandlerReason, runnerFailure } from "./failure.ts";
+import {
+  hasNonRetryableHandler,
+  nonRetryableHandlerReason,
+  retryable,
+  runnerFailure,
+} from "./failure.ts";
 import { triggersOf } from "./triggers.ts";
 import { storageFault } from "./storage-fault.ts";
 import type { WakeOutput } from "./wake.ts";
+import { CheckpointStore } from "./checkpoint-store.ts";
+import { createOutputs } from "./outputs.ts";
+import { GenerationOutputs } from "./per-generation.ts";
+import { tails } from "./catch-up.ts";
 
 /** Re-read wall time after a suspended host resumes, even for distant deadlines. */
 const MAX_DUE_WAIT_MS = 30_000;
@@ -51,7 +60,8 @@ const MAX_DEFER_MS = 60 * 60 * 1_000;
 export const deferDelay = (attempts: number): number =>
   Math.min(1_000 * 2 ** Math.max(0, attempts - 1), MAX_DEFER_MS);
 
-export interface RunnerOptions {
+export interface RunnerOptions<BE, BR> {
+  readonly bindings?: Effect.Effect<ReadonlyArray<DecodedParams>, BE, BR>;
   readonly triggers?: ReadonlyArray<WakeOutput<{}>> | undefined;
   /** Units for each binding in one run. Default 100. */
   readonly limit?: number | undefined;
@@ -64,7 +74,7 @@ export interface RunnerOptions {
 }
 
 /** The part of a projection declaration that the attach runner reads. */
-export interface Attachable<B, HE = never, HR = never> {
+export interface Attachable<B, HE = never, HR = never, Params = DecodedParams> {
   readonly retry?:
     | {
         readonly schedule?: Schedule.Schedule<unknown>;
@@ -83,7 +93,7 @@ export interface Attachable<B, HE = never, HR = never> {
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
   // Method syntax: a declaration with typed params is assignable here.
-  at(params: Readonly<Record<string, unknown>>): B;
+  at(params: Params): B;
 }
 
 /**
@@ -173,6 +183,54 @@ export const bindingOf = <B extends { readonly params: Readonly<Record<string, s
     }
   });
 
+const startupInventory = Effect.fn("Projection.startupInventory")(function* <
+  B extends {
+    readonly params: Readonly<Record<string, string>>;
+  },
+>(declaration: Omit<Attachable<B>, "retry">) {
+  const store = yield* Effect.serviceOption(CheckpointStore);
+  const list = Option.getOrUndefined(store)?.list;
+  const id = declaration.id;
+
+  const discover = Effect.gen(function* () {
+    if (list === undefined) return [];
+
+    const all = yield* list(id);
+    const keys = new Set(Array.map(all, canonicalParams));
+
+    if (Record.isEmptyRecord(declaration.params)) keys.add(canonicalParams({}));
+
+    // The generation also names the output address, regardless of checkpoint version.
+    if (all.length > 0)
+      for (const params of yield* list(id, declaration.generation))
+        keys.delete(canonicalParams(params));
+
+    const candidates: B[] = [];
+
+    for (const key of keys) {
+      const bound = bindingOf(declaration, key);
+
+      if (Option.isSome(bound)) candidates.push(bound.value);
+      else
+        yield* Effect.logWarning(
+          `Projection ${id} skipped startup params ${key}: they no longer decode`,
+        );
+    }
+
+    return candidates;
+  });
+
+  return yield* discover.pipe(
+    Effect.catchIf(
+      (fault) => fault.reason === "unsupported-composition",
+      (fault) =>
+        Effect.logWarning(
+          `Projection ${id} skipped startup inventory: ${fault.message}. Supply attach bindings explicitly.`,
+        ).pipe(Effect.as([])),
+    ),
+  );
+});
+
 /**
  * A binding that faults with `history-unavailable` on an input whose head is
  * absent can never run: its source is gone, and an id never returns. With a
@@ -253,9 +311,9 @@ const durableMarks = (
  * binding backs off or stops its own mark, and its neighbours run. A start
  * makes stopped marks due once before answering next, wait or drain.
  */
-export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
+export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE, BR>(
   declaration: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
-  options: RunnerOptions = {},
+  options: RunnerOptions<BE, BR> = {},
   defaultDurable = false,
   host: "process" | "wakeup" = "process",
 ) => {
@@ -334,11 +392,66 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
     let started = false;
     const startPermit = yield* Semaphore.make(1);
 
-    // Retry a failed resume on the next request, without failing layer acquisition.
+    const prepare = Effect.fnUntraced(function* (binding: Binding) {
+      const loaded = yield* binding.commit.load(binding);
+
+      if (Option.isSome(loaded.record)) return false;
+
+      if ((binding[GenerationOutputs]?.size ?? 0) > 0) {
+        yield* tails(binding);
+        yield* createOutputs(binding);
+      }
+
+      return true;
+    });
+
+    const seed = Effect.gen(function* () {
+      const candidates =
+        options.bindings === undefined
+          ? yield* startupInventory(declaration)
+          : Array.map(yield* options.bindings, (params) => declaration.at(params));
+
+      const byKey = new Map(
+        Array.map(candidates, (binding) => [canonicalParams(binding.params), binding] as const),
+      );
+
+      for (const chunk of Array.chunksOf([...byKey], SCHEDULE_CHUNK)) {
+        const keys: string[] = [];
+
+        for (const [key, binding] of chunk) {
+          const ready = yield* prepare(binding).pipe(
+            Effect.catchIf(
+              (fault) =>
+                fault.reason === "retired-generation" || fault.reason === "history-unavailable",
+              () => Effect.succeed(false),
+            ),
+          );
+
+          if (ready) keys.push(key);
+        }
+
+        // A durable mark survives partial replay, even once a checkpoint exists.
+        if (keys.length > 0)
+          yield* marks.mark(declaration.id, keys).pipe(Effect.mapError(storageFault("marks.mark")));
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StorageFault({
+            operation: "projection.startup",
+            message: `Cannot queue startup replay for ${declaration.id}`,
+            retryable: retryable(Cause.fail(cause)),
+            cause,
+          }),
+      ),
+    );
+
+    // Retry failed startup work on the next request, without failing layer acquisition.
     const start = startPermit.withPermit(
       Effect.gen(function* () {
         if (started) return;
         yield* marks.resume(declaration.id);
+        yield* seed;
         started = true;
       }),
     );

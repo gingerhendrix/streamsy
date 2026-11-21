@@ -1,5 +1,6 @@
 import { Clock, Effect, Option } from "effect";
 import type { InputMap } from "./batch.ts";
+import type { DecodedParams } from "./declaration.ts";
 import type { Executable } from "./executable.ts";
 import { runnerOf, type Attachable } from "./runner.ts";
 import { retryable } from "./failure.ts";
@@ -23,6 +24,8 @@ interface WakeupHost {
  * request writes. Triggers must belong to this storage owner. A provided trigger
  * service on another owner dies at attach with a RangeError naming its stream;
  * remote trigger followers require the process host, Projection.attach.
+ * On acquire, startup replays from the checkpoint inventory or `options.bindings`
+ * are queued for the alarm on this object.
  *
  * Durable by default: each commit writes a pending mark for its bindings in
  * the same transaction, so an eviction or a deploy between the commit and the
@@ -32,9 +35,22 @@ interface WakeupHost {
  * A wake during backoff waits; a stopped timer fires late after retry or restart.
  * Return a time after unit.due to avoid repeatedly running a passed deadline.
  */
-const attach = <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
-  options: AttachOptions = {},
+const attach = <
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P,
+  OR = never,
+  HE = never,
+  HR = never,
+  Params extends DecodedParams = DecodedParams,
+  BE = never,
+  BR = never,
+>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR, Params>,
+  options: AttachOptions<NoInfer<Params>, BE, BR> = {},
 ) => {
   const runner = runnerOf(projection, options, true, "wakeup");
 
