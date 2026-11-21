@@ -201,4 +201,6 @@ export interface RelationPlan {
   readonly parameters: readonly string[];
   readonly nodes: readonly RelationNode[];
   readonly output: string;
+  /** Number of route values before the State key in the output key. */
+  readonly routeArity?: number;
 }

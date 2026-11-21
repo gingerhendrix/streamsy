@@ -1,4 +1,5 @@
 import { Projection } from "@streamsy/projection";
+import { Streamsy } from "@streamsy/core";
 import { Effect, Schema } from "effect";
 import { View } from "../../src/index.ts";
 import { orders, Shop, Results, circuit, views } from "./support/shop.ts";
@@ -73,3 +74,55 @@ Projection.attach(retry, { durable: true });
 
 // @ts-expect-error a circuit run needs its stream and checkpoint services
 void Effect.runPromise(Projection.run(declaration.at({ shop: "a" })));
+
+const routedOutput = Projection.perGeneration(Results, "generation", { routeBy: ["shop"] });
+
+const routedOrders = View.routed(orders, { by: () => ({ shop: View.literal("all") }) });
+
+const inputsRequireShop = {
+  id: "routed-with-input-param",
+  params: { shop: Schema.String },
+  output: routedOutput,
+  views: { topOrder: routedOrders },
+};
+
+// @ts-expect-error A parameter is either routed or bound.
+View.circuit(inputsRequireShop);
+
+const unboundOrders = View.from(
+  // A parameterless State class makes the routed output's param checks independent of input params.
+  class AllOrders extends Streamsy.state<AllOrders>()("ViewTypes/AllOrders", "all-orders", {
+    params: {},
+    collections: Shop.collections,
+  }) {},
+  "order",
+);
+
+const routed = { id: "routed", params: {}, output: routedOutput };
+
+View.circuit({
+  ...routed,
+  views: { topOrder: View.routed(unboundOrders, { by: () => ({ shop: View.literal("all") }) }) },
+});
+
+View.circuit({
+  ...routed,
+  // @ts-expect-error Every collection of a routed output needs explicit route expressions.
+  views: { topOrder: unboundOrders },
+});
+
+View.circuit({
+  ...routed,
+  // @ts-expect-error Route expressions must match the decoded route types.
+  views: { topOrder: View.routed(unboundOrders, { by: () => ({ shop: View.literal(1) }) }) },
+});
+
+View.circuit({
+  ...routed,
+  views: {
+    // @ts-expect-error Route expressions must supply exactly the routed parameter names.
+    topOrder: View.routed(unboundOrders, {
+      by: () => ({ shop: View.literal("all"), extra: View.literal(1) }),
+    }),
+  },
+});

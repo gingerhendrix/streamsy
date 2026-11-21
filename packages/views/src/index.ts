@@ -13,7 +13,7 @@ export type {
   ParameterExpressions,
 } from "./circuit.ts";
 
-export type { Input, Relation, State } from "./view.ts";
+export type { Input, Relation, RoutedView, State } from "./view.ts";
 
 export type {
   BooleanExpression,

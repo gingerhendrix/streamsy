@@ -6,6 +6,7 @@ import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Shop, Results } from "./shop.ts";
 import { proof } from "./proof.ts";
+import { routedGroup, routedProof } from "./routed-proof.ts";
 
 interface Env {
   readonly SHOP: {
@@ -16,7 +17,7 @@ interface Env {
 
 export default {
   fetch: (request: Request, env: Env) =>
-    env.SHOP.get(env.SHOP.idFromName("proof")).fetch(request.url),
+    env.SHOP.get(env.SHOP.idFromName(new URL(request.url).pathname)).fetch(request.url),
 };
 
 export class ShopObject {
@@ -24,7 +25,7 @@ export class ShopObject {
   constructor(ctx: DurableObjectState) {
     this.#ctx = ctx;
   }
-  async fetch(): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const cursors: { readonly rowsRead: number; readonly rowsWritten: number }[] = [];
     const sql = this.#ctx.storage.sql;
 
@@ -64,6 +65,16 @@ export class ShopObject {
         DurableObjectStorage.layerProtocol({ client: { storage }, readLimit: 200 }),
       ),
     );
+
+    if (new URL(request.url).pathname === "/routed")
+      return Response.json(
+        await Effect.runPromise(
+          routedProof(true).pipe(
+            Effect.scoped,
+            Effect.provide(Protocol.bind(local, routedGroup).pipe(Layer.provideMerge(local))),
+          ),
+        ),
+      );
 
     const host = Protocol.bind(local, Streamsy.group(Shop, Results)).pipe(
       Layer.provideMerge(local),

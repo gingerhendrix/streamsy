@@ -59,6 +59,22 @@ test("runs the shop circuit on local workerd and observes SQLite reads and write
       expect(unit.billing.rowsWritten).toBeGreaterThan(0);
       expect(unit.txids).toHaveLength(1);
     }
+
+    const routed = await miniflare.dispatchFetch("http://shop.test/routed");
+    const routedResult = await routed.text();
+
+    if (routed.status !== 200) throw new Error(routedResult);
+    expect(
+      Schema.decodeSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            routes: Schema.Finite,
+            moved: Schema.Boolean,
+            faults: Schema.Finite,
+          }),
+        ),
+      )(routedResult),
+    ).toEqual({ routes: 3, moved: true, faults: 2 });
   } finally {
     await miniflare.dispose();
   }

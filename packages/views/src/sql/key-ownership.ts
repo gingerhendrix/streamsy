@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Array, Effect, Predicate } from "effect";
 import type { KeyNode } from "../ir/contracts.ts";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
@@ -16,7 +16,7 @@ export const rekey = Effect.fnUntraced(function* (
   store: Store,
   fault: DataFault,
   checked: boolean,
-  stateKey: boolean,
+  routeArity: number | undefined,
   parameter: ExpressionScopes["parameter"],
 ) {
   const before = new Map<string, OwnedEntry>();
@@ -33,9 +33,22 @@ export const rekey = Effect.fnUntraced(function* (
         asRowKey(evaluate(node.key, { row, key: d.key, parameter })),
       );
 
-      const key = stateKey ? String(evaluated) : evaluated;
+      let key = evaluated;
 
-      if (stateKey && key === "") return yield* fault(key, "State key must not be empty");
+      if (routeArity === 0) {
+        key = String(evaluated);
+
+        if (key === "") return yield* fault(key, "State key must not be empty");
+      } else if (routeArity !== undefined) {
+        if (!Array.isArray<typeof evaluated>(evaluated) || evaluated.length !== routeArity + 1)
+          return yield* fault(d.key, "Invalid routed State key");
+        const wireKey = evaluated[routeArity];
+
+        if (wireKey === "" || (!Predicate.isString(wireKey) && !Predicate.isNumber(wireKey)))
+          return yield* fault(d.key, "State key must be a non-empty string or a number");
+        key = [...evaluated.slice(0, routeArity), String(wireKey)];
+      }
+
       const id = encodeRowKey(key);
 
       if (entries.has(id)) return yield* fault(key, "duplicate output key");

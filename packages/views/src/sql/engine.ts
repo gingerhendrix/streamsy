@@ -164,7 +164,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
               store,
               rt.fault(node.id),
               program.checkedKeys.has(node.id),
-              program.stateKeys.has(node.id),
+              program.stateKeys.get(node.id),
               parameter,
             );
             break;

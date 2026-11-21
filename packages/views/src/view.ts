@@ -15,7 +15,7 @@ import {
   type TypedExpression,
   type ValueExpression,
 } from "./expression.ts";
-import type { Expression, JsonObject, JsonValue, SortTerm } from "./ir/contracts.ts";
+import type { Expression, JsonObject, JsonValue, RowKeyPart, SortTerm } from "./ir/contracts.ts";
 
 /** A State declaration, with the same structural contract as StateTable.define. */
 export type State<
@@ -98,6 +98,48 @@ export interface Relation<Row, Inputs extends Input = Input> {
     readonly by: (row: Reference<Row>) => readonly SortTerm[];
     readonly limit: number;
   }) => Relation<Row, Inputs>;
+}
+
+type RouteFields = Readonly<Record<string, ValueExpression<RowKeyPart>>>;
+
+/** A circuit view that supplies explicit route expressions and an optional wire row. */
+export interface RoutedView<Row, Inputs extends Input, By extends RouteFields> extends Pick<
+  Relation<Row, Inputs>,
+  "rowType" | "expression" | "inputs"
+> {
+  readonly routing: { readonly by: By; readonly row: Expression };
+}
+
+export function routed<Row, Inputs extends Input, const By extends RouteFields>(
+  source: Relation<Row, Inputs>,
+  spec: { readonly by: (row: Reference<Row>) => By; readonly row?: never },
+): RoutedView<Row, Inputs, By>;
+export function routed<
+  Row,
+  Inputs extends Input,
+  const By extends RouteFields,
+  Result extends JsonObject,
+>(
+  source: Relation<Row, Inputs>,
+  spec: {
+    readonly by: (row: Reference<Row>) => By;
+    readonly row: (row: Reference<Row>) => TypedExpression<Result>;
+  },
+): RoutedView<Result, Inputs, By>;
+export function routed<Row, Inputs extends Input, By extends RouteFields>(
+  source: Relation<Row, Inputs>,
+  spec: {
+    readonly by: (row: Reference<Row>) => By;
+    readonly row?: (row: Reference<Row>) => Expression;
+  },
+): RoutedView<unknown, Inputs, By> {
+  const { row } = selectors<Row>();
+
+  return {
+    expression: source.expression,
+    inputs: source.inputs,
+    routing: deepFreeze({ by: spec.by(row), row: spec.row?.(row) ?? row }),
+  };
 }
 
 function relation<Row, Inputs extends Input>(

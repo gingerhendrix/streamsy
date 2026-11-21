@@ -15,8 +15,13 @@ import {
   type WakeAt,
 } from "@streamsy/projection";
 import { SqlClient } from "effect/sql";
-import { compilePlan } from "./relation.ts";
-import { keyExpression, parameterReference, type TypedExpression } from "./expression.ts";
+import { compilePlan, type RelationExpression } from "./relation.ts";
+import {
+  keyExpression,
+  parameterReference,
+  type ExpressionValue,
+  type TypedExpression,
+} from "./expression.ts";
 import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
 import { makeEngine, type StateChange } from "./sql/engine.ts";
@@ -31,11 +36,23 @@ import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
 import { encodeRowKey } from "./runtime/key.ts";
-import type { JsonValue, RelationPlan } from "./ir/contracts.ts";
+import {
+  isJsonObject,
+  type Expression,
+  type JsonValue,
+  type RelationPlan,
+} from "./ir/contracts.ts";
 
-type Views = Readonly<Record<string, Pick<Relation<unknown>, "expression" | "inputs" | "rowType">>>;
+interface CircuitView extends Pick<Relation<unknown>, "expression" | "inputs" | "rowType"> {
+  readonly routing?: {
+    readonly by: Readonly<Record<string, Expression>>;
+    readonly row: Expression;
+  };
+}
 
-type Output = Projection.PerGeneration<Input, string>;
+type Views = Readonly<Record<string, CircuitView>>;
+
+type Output = Projection.PerGeneration<Input, string, string>;
 
 type OutputMap = Readonly<Record<string, Output>>;
 
@@ -52,15 +69,36 @@ type ViewInputs<V> = V extends Views ? InputOf<V[keyof V]> : never;
 type InputsOf<V extends ViewMap> = Readonly<Record<string, ViewInputs<V[keyof V]>>>;
 
 type OutputState<O extends Output> =
-  O extends Projection.PerGeneration<infer S, string> ? S : never;
+  O extends Projection.PerGeneration<infer S, string, string> ? S : never;
 
 type CollectionsOf<O extends Output> = OutputState<O>["collections"];
+
+type RouteFits<V extends CircuitView, O extends Output> =
+  O extends Projection.PerGeneration<infer S extends Input, string, infer By>
+    ? [By] extends [never]
+      ? V extends { readonly routing: object }
+        ? never
+        : V
+      : V extends { readonly routing: { readonly by: infer Fields } }
+        ? [keyof Fields, By] extends [By, keyof Fields]
+          ? {
+              [K in By]: K extends keyof Fields & keyof S["paramCodecs"]
+                ? ExpressionValue<Fields[K]> extends S["paramCodecs"][K]["Type"]
+                  ? never
+                  : K
+                : K;
+            }[By] extends never
+            ? V
+            : never
+          : never
+        : never
+    : never;
 
 type Fits<V extends Views, O extends Output> = {
   readonly [K in keyof V]: K extends keyof CollectionsOf<O>
     ? V[K] extends { readonly rowType?: infer Row }
       ? [Row] extends [CollectionsOf<O>[K]["schema"]["Type"]]
-        ? V[K]
+        ? RouteFits<V[K], O>
         : never
       : never
     : never;
@@ -81,8 +119,8 @@ type InvalidStateParams<
 }[Exclude<keyof I["paramCodecs"], Exempt>];
 
 type InvalidParams<C extends StreamRoute.ParamCodecs, I extends Input | Output> =
-  I extends Projection.PerGeneration<infer S extends Input, infer N>
-    ? Extract<N, keyof C> | InvalidStateParams<C, S, N>
+  I extends Projection.PerGeneration<infer S extends Input, infer N, infer By>
+    ? Extract<N | By, keyof C> | InvalidStateParams<C, S, N | By>
     : I extends Input
       ? InvalidStateParams<C, I>
       : never;
@@ -177,6 +215,49 @@ export class ViewFault extends Schema.TaggedError<ViewFault, { readonly brand: u
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}
+
+const rowReference = (...path: string[]): Expression => ({ kind: "reference", scope: "row", path });
+
+const outputExpression = (
+  view: CircuitView,
+  collectionKey: string,
+  routeBy: readonly string[] | undefined,
+): RelationExpression => {
+  const { routing, expression } = view;
+
+  if (routeBy === undefined) {
+    if (routing !== undefined) throw new RangeError("View.routed requires a routed output");
+
+    return { kind: "key", input: expression, key: keyExpression(collectionKey) };
+  }
+
+  if (
+    routing === undefined ||
+    Record.keys(routing.by).length !== routeBy.length ||
+    !Array.every(routeBy, (name) => Record.has(routing.by, name))
+  )
+    throw new RangeError(
+      `Each routed view must supply route expressions for ${Array.join(routeBy, ", ")}`,
+    );
+
+  const routedFields = Record.fromEntries(
+    Array.map(Record.toEntries(routing.by), ([name, value]) => [`route:${name}`, value]),
+  );
+
+  // Keep the route expressions beside the projected row until the output key is assigned.
+  return {
+    kind: "key",
+    input: { kind: "project", input: expression, fields: { ...routedFields, value: routing.row } },
+    key: {
+      kind: "variadic",
+      operator: "key",
+      operands: [
+        ...Array.map(routeBy, (name) => rowReference(`route:${name}`)),
+        rowReference("value", collectionKey),
+      ],
+    },
+  };
+};
 
 /** Same projection binding and generation, independent of the unit's ranges. */
 function namespaceOf(key: ProjectionKey) {
@@ -313,14 +394,27 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
       : { output: resolveViews(definition.views) };
 
   const plans: Record<string, RelationPlan> = {};
-  const targets = new Map<string, { readonly route: string; readonly collection: string }>();
+
+  const targets = new Map<
+    string,
+    {
+      readonly route: string;
+      readonly collection: string;
+      readonly routeBy: readonly string[] | undefined;
+    }
+  >();
+
   const sources = new Map<string, { readonly state: Input; readonly collection: string }>();
 
   const owned = new Set<string>();
 
-  const checkParams = (state: Input, generationParam?: string) => {
+  const checkParams = (state: Input, generationParam?: string, routeBy?: readonly string[]) => {
     for (const name of Record.keys(state.paramCodecs))
-      if (name !== generationParam && !Record.has(definition.params, name))
+      if (
+        name !== generationParam &&
+        !routeBy?.includes(name) &&
+        !Record.has(definition.params, name)
+      )
         throw new RangeError(`Missing circuit parameter ${name}`);
   };
 
@@ -330,8 +424,8 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     if (output === undefined || !Projection.isPerGeneration(output))
       throw new ViewFault({ message: `Circuit output ${route} requires Projection.perGeneration` });
 
-    const { route: state, param } = Projection.generationBinding(output);
-    checkParams(state, param);
+    const { route: state, param, routeBy } = Projection.generationBinding(output);
+    checkParams(state, param, routeBy);
 
     if (owned.has(state.key)) throw new RangeError(`Duplicate output State class ${state.key}`);
     owned.add(state.key);
@@ -352,15 +446,13 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
       if (!Record.has(state.collections, name) || collection === undefined)
         throw new RangeError(`Unknown output collection ${state.key}/${name}`);
 
-      const expression = {
-        kind: "key",
-        input: relation.expression,
-        key: keyExpression(collection.key),
-      } as const;
-
       const planName = JSON.stringify([route, name]);
-      plans[planName] = orderPlanFields(compilePlan(planName, expression, parameters));
-      targets.set(planName, { route, collection: name });
+      const expression = outputExpression(relation, collection.key, routeBy);
+      const plan = compilePlan(planName, expression, parameters);
+      plans[planName] = orderPlanFields(
+        routeBy === undefined ? plan : { ...plan, routeArity: routeBy.length },
+      );
+      targets.set(planName, { route, collection: name, routeBy });
 
       for (const [id, input] of relation.inputs) sources.set(id, input);
     }
@@ -471,28 +563,97 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
 
         const changesOut = yield* engine.process(namespace, changes, unit.params);
-        const entriesByRoute = new Map<string, DurableState.Entry<Input["collections"]>[]>();
+
+        type HandlerOutput = (typeof outputs)[string];
+
+        type Address = Exclude<HandlerOutput, { readonly open: unknown }>;
+
+        const entriesByStream = new Map<
+          string,
+          {
+            readonly route: string;
+            readonly address: Address;
+            readonly entries: DurableState.Entry<Input["collections"]>[];
+          }
+        >();
+
+        const opened = new Map<string, Address>();
 
         for (const change of changesOut) {
           const target = targets.get(change.view);
+          const plan = plans[change.view];
 
-          if (target === undefined) throw new Error(`Missing output for view ${change.view}`);
-          const { collection, route } = target;
+          if (target === undefined || plan === undefined)
+            throw new Error(`Missing output for view ${change.view}`);
+          const { collection, route, routeBy } = target;
+          const output = outputs[route];
           const options = { headers: { txid: unit.key } };
+          let key = String(change.key);
+          let value = change.kind === "upsert" ? change.value : undefined;
+          let address: Address;
+
+          if (output === undefined) throw new Error(`Missing circuit output ${route}`);
+
+          if ("open" in output) {
+            if (routeBy === undefined || !Array.isArray<typeof change.key>(change.key))
+              throw new Error(`Missing route key for view ${change.view}`);
+
+            const parts = change.key.slice(0, plan.routeArity);
+            key = String(change.key[routeBy.length]);
+            const identity = encodeRowKey([route, ...parts]);
+            const known = opened.get(identity);
+
+            if (known === undefined) {
+              const values = Record.fromEntries(Array.zip(routeBy, parts));
+              address = yield* output.open(values).pipe(
+                Effect.catchIf(
+                  (fault) => fault.reason === "invalid-output" && fault.cause instanceof RangeError,
+                  (fault) =>
+                    Effect.fail(
+                      dataFault({ view: change.view, node: plan.output })(
+                        key,
+                        `Cannot route row ${key}. ${fault.message}`,
+                      ),
+                    ),
+                ),
+              );
+              opened.set(identity, address);
+            } else address = known;
+
+            if (value !== undefined) {
+              const row = value.value;
+
+              if (row === undefined || !isJsonObject(row))
+                return yield* dataFault({ view: change.view, node: plan.output })(
+                  key,
+                  "row projection must produce a JSON object",
+                );
+              value = row;
+            }
+          } else address = output;
 
           const entry =
-            change.kind === "upsert"
-              ? DurableState.upsert(collection, change.value, options)
-              : DurableState.remove(collection, String(change.key), options);
+            value === undefined
+              ? DurableState.remove(collection, key, options)
+              : DurableState.upsert(collection, value, options);
 
-          const entries = entriesByRoute.get(route) ?? [];
-          entries.push(entry);
-          entriesByRoute.set(route, entries);
+          const pending = entriesByStream.get(address.id);
+
+          if (pending === undefined)
+            entriesByStream.set(address.id, { route, address, entries: [entry] });
+          else pending.entries.push(entry);
         }
 
-        for (const [route, output] of Record.toEntries(outputs)) {
-          const entries = entriesByRoute.get(route) ?? [];
+        // Keep declaration order for fixed outputs and group each routed stream once.
+        const ordered = Array.groupBy(
+          Array.fromIterable(entriesByStream.values()),
+          ({ route }) => route,
+        );
 
+        for (const { address: output, entries } of Array.flatMap(
+          Record.keys(outputs),
+          (route) => ordered[route] ?? [],
+        )) {
           if (!Array.isReadonlyArrayNonEmpty(entries)) continue;
 
           const service: Effect.Effect<

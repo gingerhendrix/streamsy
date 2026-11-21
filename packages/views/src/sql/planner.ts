@@ -20,7 +20,7 @@ export interface Program {
   readonly stored: ReadonlySet<string>;
   readonly locations: ReadonlyMap<string, { readonly view: string; readonly node: string }>;
   readonly checkedKeys: ReadonlySet<string>;
-  readonly stateKeys: ReadonlySet<string>;
+  readonly stateKeys: ReadonlyMap<string, number>;
 }
 
 export function dependencies(node: RelationNode): readonly string[] {
@@ -128,7 +128,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
   const signatures = new Map<string, string>();
   const outputs: Record<string, string> = {};
   const locations = new Map<string, { view: string; node: string }>();
-  const stateKeys = new Set<string>();
+  const stateKeys = new Map<string, number>();
 
   for (const [name, plan] of Rec.toEntries(views)) {
     const aliases = new Map<string, string>();
@@ -151,7 +151,12 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       const { id: _id, ...definition } = mapped;
       const stateKey = stateOutputKeys && node.kind === "key" && node.id === plan.output;
-      const signature = canonicalJson({ definition, stateKey });
+      const routeArity = stateKey ? plan.routeArity : undefined;
+
+      const signature = canonicalJson(
+        routeArity === undefined ? { definition, stateKey } : { definition, stateKey, routeArity },
+      );
+
       let id = signatures.get(signature);
 
       if (id === undefined) {
@@ -160,7 +165,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
         nodes.push({ ...mapped, id });
         locations.set(id, { view: name, node: node.id });
 
-        if (stateKey) stateKeys.add(id);
+        if (stateKey) stateKeys.set(id, routeArity ?? 0);
       }
 
       aliases.set(node.id, id);
@@ -253,7 +258,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
       if (!sameKey && !identity) checkedKeys.add(node.id);
 
-      if (Arr.every(scopes(node.key), (scope) => scope === "row"))
+      if (!stateKeys.get(node.id) && Arr.every(scopes(node.key), (scope) => scope === "row"))
         keyFields.set(node.id, { expression: node.key, stateKey });
     }
 
