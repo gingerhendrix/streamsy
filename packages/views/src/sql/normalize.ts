@@ -1,9 +1,69 @@
-import { Effect, Schema } from "effect";
+import { Array as Arr, Effect, Predicate, Record, Schema } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { encodeRowKey } from "../runtime/key.ts";
 import type { DataFault } from "./data-fault.ts";
 import type { StateChange } from "./engine.ts";
 import type { Store } from "./store.ts";
+
+/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening -- Keep unvalidated State values intact for the JSON decoder. */
+function omitUndefinedMembers(value: unknown): unknown {
+  const copies = new WeakMap<object, object>();
+  const pending: (() => void)[] = [];
+
+  const copy = (input: unknown): unknown => {
+    if (!Predicate.isObjectOrArray(input)) return input;
+    const existing = copies.get(input);
+
+    if (existing !== undefined) return existing;
+
+    if (Arr.isArray(input)) {
+      const items: unknown[] = [];
+      copies.set(input, items);
+      pending.push(() => {
+        for (let index = 0; index < input.length; index++) items.push(copy(input[index]));
+      });
+
+      return items;
+    }
+
+    const prototype = Reflect.getPrototypeOf(input);
+
+    if (
+      prototype !== null &&
+      prototype !== Object.prototype &&
+      Reflect.getPrototypeOf(prototype) !== null
+    )
+      return input;
+
+    const row = {};
+    copies.set(input, row);
+    pending.push(() => {
+      for (const key of Record.keys(input)) {
+        const member = input[key];
+
+        if (member !== undefined)
+          Object.defineProperty(row, key, {
+            value: copy(member),
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+      }
+    });
+
+    if (prototype !== Object.prototype) Object.setPrototypeOf(row, prototype);
+
+    return row;
+  };
+
+  // Keep cycles and invalid array slots visible to the existing JSON decoder.
+  const result = copy(value);
+
+  for (let populate = pending.pop(); populate !== undefined; populate = pending.pop()) populate();
+
+  return result;
+}
+/* oxlint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening */
 
 /** Normalize State controls without reading another projection's StateTable.
  * Ordinary units touch keys only; resets and snapshot-end may visit a relation.
@@ -65,9 +125,9 @@ export const normalize = Effect.fn("View.normalize")(function* (
     const key = event.key;
 
     if (StreamAddress.isUpsert(event)) {
-      const value = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(event.value).pipe(
-        Effect.mapError((error) => fault(key, error.message)),
-      );
+      const value = yield* Schema.decodeUnknownEffect(Schema.JsonObject)(
+        omitUndefinedMembers(event.value),
+      ).pipe(Effect.mapError((error) => fault(key, error.message)));
 
       pending.set(key, { kind: "upsert", sourceId, key, value });
 

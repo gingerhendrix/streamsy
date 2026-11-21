@@ -177,7 +177,7 @@ Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's di
 
 Closure uses a parent index over the input. An edge or part change recomputes the changed node and descendants within `maxDepth - 1` edges in both the before and after graphs. Reparenting a subtree with `s` nodes from a chain of height `h1` to one of height `h2` can change up to `s * (min(h1, maxDepth) + min(h2, maxDepth))` closure rows. `maxAffectedKeys` checks the number of candidate nodes and counts changed closure keys toward the unit limit. A consumer that reads closure through an arrangement stores those rows in the normal integral. With `part`, each stored row carries `depth` path values, so one descendant carries up to `d * (d + 1) / 2` path values across its closure rows, where `d` is its depth capped at `maxDepth`. An entire untruncated chain holds a cubic number of path values in its height.
 
-Unsupported operators and features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Retained State streams are the source of truth for rebuilding SQL state.
+Unsupported operators and features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Views omits `undefined` members from decoded input objects at every depth and rejects `undefined` array elements. Retained State streams are the source of truth for rebuilding SQL state.
 
 ## Package exports
 
