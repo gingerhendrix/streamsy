@@ -192,6 +192,7 @@ it.live(
           sum: { kind: "aggregate", function: "sum", expression: ref("row", "v") },
           min: { kind: "aggregate", function: "min", expression: ref("row", "v") },
           max: { kind: "aggregate", function: "max", expression: ref("row", "v") },
+          list: { kind: "aggregate", function: "list", expression: ref("row", "v") },
         },
       },
     ]);
@@ -199,6 +200,7 @@ it.live(
     return Effect.gen(function* () {
       yield* migrate();
       const engine = yield* makeEngine({ a: p });
+      expect(engine.program.arrangements.size).toBe(2); // One for sum and one for min, max and list.
 
       expect(
         yield* engine.process("p", [
@@ -212,14 +214,14 @@ it.live(
           view: "a",
           kind: "upsert",
           key: ["g"],
-          value: { group: "g", count: 4, sum: 0, min: -4, max: 8 },
+          value: { group: "g", count: 4, sum: 0, min: -4, max: 8, list: [-4, -4, 8] },
         },
       ]);
       expect((yield* engine.process("p", [del("items", "a"), del("items", "c")]))[0]).toMatchObject(
-        { value: { count: 2, sum: -4, min: -4, max: -4 } },
+        { value: { count: 2, sum: -4, min: -4, max: -4, list: [-4] } },
       );
       expect((yield* engine.process("p", [del("items", "b")]))[0]).toMatchObject({
-        value: { group: "g", count: 1, sum: 0 },
+        value: { group: "g", count: 1, sum: 0, list: [] },
       });
       expect(yield* engine.process("p", [del("items", "d")])).toEqual([
         { view: "a", kind: "delete", key: ["g"] },
@@ -662,7 +664,7 @@ it.live(
 );
 
 it.live(
-  "uses UTF-16 string order for predicates, extrema and top, including surrogate pairs",
+  "uses UTF-16 string order for predicates, ordered aggregates and top, including surrogate pairs",
   () => {
     const items = source("items");
 
@@ -693,6 +695,7 @@ it.live(
           aggregates: {
             first: { kind: "aggregate", function: "min", expression: ref("row", "label") },
             last: { kind: "aggregate", function: "max", expression: ref("row", "label") },
+            labels: { kind: "aggregate", function: "list", expression: ref("row", "label") },
           },
         },
       ]),
@@ -713,7 +716,7 @@ it.live(
       ]),
     };
 
-    const values = ["Z", "a", "ä", "😀", "\ue000"];
+    const values = ["Z", "a", "\ue000", "😀", "ä"];
     const changes = Arr.map(values, (label, i) => up("items", String(i), { id: String(i), label }));
 
     return Effect.gen(function* () {
@@ -728,7 +731,12 @@ it.live(
           view: "extrema",
           kind: "upsert",
           key: ["all"],
-          value: { group: "all", first: "Z", last: "\ue000" },
+          value: {
+            group: "all",
+            first: "Z",
+            last: "\ue000",
+            labels: ["Z", "a", "ä", "😀", "\ue000"],
+          },
         },
       ]);
       expect(

@@ -1,5 +1,10 @@
-import type { Relation } from "./view.ts";
-import { fn, selectors, type TypedExpression } from "./expression.ts";
+import { list, type Relation } from "./view.ts";
+import {
+  fn,
+  selectors,
+  type TypedAggregateExpression,
+  type TypedExpression,
+} from "./expression.ts";
 
 interface FixtureRow {
   readonly id: string;
@@ -34,6 +39,13 @@ declare const fixtureRelation: Relation<FixtureRow>;
 
 // @ts-expect-error filters require boolean expressions
 fixtureRelation.where((row) => row.count);
+
+const counts: TypedAggregateExpression<readonly number[]> = list(x.row.count);
+
+void counts;
+
+// @ts-expect-error list requires a string or number expression
+list(x.row.enabled);
 
 const nested = selectors<{ readonly alias?: { readonly value: { readonly label?: string } } }>();
 

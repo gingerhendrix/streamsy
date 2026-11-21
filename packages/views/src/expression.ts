@@ -355,4 +355,8 @@ export const aggregate = Object.freeze({
     Object.freeze({ kind: "aggregate", function: "min", expression }),
   max: <T extends Ordered>(expression: TypedExpression<T>): TypedAggregateExpression<T> =>
     Object.freeze({ kind: "aggregate", function: "max", expression }),
+  list: <T extends Ordered>(
+    expression: TypedExpression<T>,
+  ): TypedAggregateExpression<readonly T[]> =>
+    Object.freeze({ kind: "aggregate", function: "list", expression }),
 });

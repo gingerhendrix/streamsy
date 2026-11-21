@@ -279,21 +279,27 @@ export const aggregate = Effect.fnUntraced(function* (
         for (const [name, a] of Rec.toEntries(node.aggregates)) {
           if (a.function === "count") row[name] = acc.count;
           else if (a.function === "sum") row[name] = acc.sums[name] ?? 0;
-          else if ((a.function === "min" || a.function === "max") && a.expression) {
+          else if (a.expression) {
+            const expression = a.expression;
+
             const arrangement = findArrangement(program, node.input, expressions, [
-              { expression: a.expression, direction: "ascending" },
+              { expression, direction: "ascending" },
             ]);
 
-            const first = (yield* rt.lookup(arrangement, encoded, prior, {
-              limit: 1,
-              reverse: a.function === "max",
-            }))[0];
-
-            if (first) {
-              const expression = a.expression;
-              row[name] = checkData(fault, first.key, () =>
-                evaluate(expression, { row: first.row, key: first.key, parameter: rt.parameter }),
+            const read = (entry: Entry) =>
+              checkData(fault, entry.key, () =>
+                evaluate(expression, { row: entry.row, key: entry.key, parameter: rt.parameter }),
               );
+
+            if (a.function === "list") {
+              row[name] = Arr.map(yield* rt.lookup(arrangement, encoded, prior), read);
+            } else {
+              const [first] = yield* rt.lookup(arrangement, encoded, prior, {
+                limit: 1,
+                reverse: a.function === "max",
+              });
+
+              if (first) row[name] = read(first);
             }
           } else throw new TypeError(`unsupported aggregate ${a.function}`);
         }

@@ -181,7 +181,7 @@ export function from<
   );
 }
 
-export const { count, sum, min, max } = aggregate;
+export const { count, sum, min, max, list } = aggregate;
 
 export { field, fn, literal } from "./expression.ts";
 

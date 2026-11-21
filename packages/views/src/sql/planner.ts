@@ -188,7 +188,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
     const existing = arrangements.get(signature);
 
-    // A required consumer (top) makes a shared index required; extrema alone skip absent operands.
+    // A required consumer (top) makes a shared index required. Ordered aggregates skip absent operands.
     arrangements.set(
       signature,
       existing === undefined
@@ -286,7 +286,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
         arrange(node.id, node.input, Rec.values(node.groupBy), []);
 
       for (const a of Rec.values(node.aggregates)) {
-        if ((a.function === "min" || a.function === "max") && a.expression)
+        if ((a.function === "min" || a.function === "max" || a.function === "list") && a.expression)
           arrange(
             node.id,
             node.input,

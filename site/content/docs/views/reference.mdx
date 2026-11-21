@@ -41,7 +41,7 @@ import type {
 | `TypedExpression`          | Type                         | Typed expression node with fluent comparison, boolean, numeric, sort, optional, and field operations |
 | `Reference`                | Type                         | Alias for `TypedExpression<T>` passed to operator callbacks                                          |
 | `BooleanExpression`        | Type                         | Alias for `TypedExpression<boolean>`                                                                 |
-| `TypedAggregateExpression` | Type                         | Typed aggregate expression returned by `View.count`, `View.sum`, `View.min`, and `View.max`          |
+| `TypedAggregateExpression` | Type                         | Expression returned by the `View` aggregate functions                                                |
 
 ## `View` namespace
 
@@ -56,6 +56,7 @@ import type {
 | `View.sum`                | Function | Sum a numeric expression in a `groupBy` group                                            |
 | `View.min`                | Function | Minimum ordered (`number \| string`) expression in a `groupBy` group                     |
 | `View.max`                | Function | Maximum ordered (`number \| string`) expression in a `groupBy` group                     |
+| `View.list`               | Function | All values of an ordered expression in a `groupBy` group, with duplicates                |
 | `View.field`              | Function | Select a field whose name overlaps an expression method or member                        |
 | `View.fn`                 | Function | Declare a named, versioned, pure synchronous expression function                         |
 | `View.literal`            | Function | Wrap a JSON value as a `TypedExpression`                                                 |
@@ -160,9 +161,14 @@ declare const min: <T extends number | string>(
 declare const max: <T extends number | string>(
   expression: TypedExpression<T>,
 ) => TypedAggregateExpression<T>;
+declare const list: <T extends number | string>(
+  expression: TypedExpression<T>,
+) => TypedAggregateExpression<readonly T[]>;
 ```
 
 Used inside `relation.groupBy(fields).aggregate(aggregates)`.
+
+`View.list` returns values in ascending order, using numeric order for finite numbers and UTF-16 code-unit order for strings. Numbers precede strings, duplicates are kept, and absent operands are skipped. Empty groups have no output row. When a member changes the list, the aggregate emits the whole array. `maxAffectedKeys` does not bound group size.
 
 ### Expression helpers
 

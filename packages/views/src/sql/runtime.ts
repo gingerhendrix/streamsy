@@ -91,7 +91,7 @@ function indexEntry(
 }
 
 /** Unit-local overlays reconstruct the before image after shared inputs advance.
- * Ordered reads fetch at most limit + changed entries, never the whole partition.
+ * Bounded reads fetch at most limit + changed entries. A list reads its whole group.
  * No cache or payload survives the unit; SQL is authoritative between units.
  */
 export function runtime(

@@ -275,7 +275,8 @@ function recomputeAggregate(
         } else {
           const present = Arr.filter(values, (value): value is JsonValue => !isMissing(value));
 
-          if (present.length > 0)
+          if (aggregate.function === "list") row[name] = present.sort(compareValues);
+          else if (present.length > 0)
             row[name] = present.sort(compareValues).at(aggregate.function === "min" ? 0 : -1)!;
         }
       }
@@ -370,6 +371,10 @@ function compareValues(left: Evaluated, right: Evaluated): number {
 
   if (isMissing(right)) return -1;
 
+  if (typeof left === "number" && Number.isFinite(left) && typeof right === "string") return -1;
+
+  if (typeof left === "string" && typeof right === "number" && Number.isFinite(right)) return 1;
+
   if (
     typeof left === "number" &&
     typeof right === "number" &&
@@ -382,5 +387,5 @@ function compareValues(left: Evaluated, right: Evaluated): number {
     return left < right ? -1 : left > right ? 1 : 0;
 
   if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right);
-  throw new TypeError("order requires finite comparable scalars of one type");
+  throw new TypeError("order requires comparable scalars");
 }

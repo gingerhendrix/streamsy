@@ -14,7 +14,7 @@ import {
   type KeyValue,
   type MultiSet,
 } from "@tanstack/db-ivm";
-import { Array as Arr, Effect, Layer, Record as Rec, Schema } from "effect";
+import { Array as Arr, Effect, Layer, Order as Ord, Record as Rec, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
@@ -136,6 +136,7 @@ function plansFor(
       amount: View.sum(row.amount),
       lowest: View.min(row.amount),
       highest: View.max(row.amount),
+      amounts: View.list(row.amount),
     }));
 
   const top = topByRegion(eligible, descending, limit);
@@ -214,6 +215,15 @@ function tanstack(
       amount: groupByOperators.sum((row: Order) => row.amount),
       lowest: groupByOperators.min((row: Order) => row.amount),
       highest: groupByOperators.max((row: Order) => row.amount),
+      amounts: {
+        preMap: (row: Order) => [row.amount],
+        reduce: (values: [number[], number][]) =>
+          Arr.sort(
+            Arr.flatMap(values, ([value, count]) => Array.from({ length: count }, () => value[0]!)),
+            Ord.Number,
+          ),
+        postMap: (values: number[]) => values,
+      },
     }),
     map(([, row]): RecordByKey => {
       const { lowest, highest, ...rest } = row;

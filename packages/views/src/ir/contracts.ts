@@ -90,7 +90,7 @@ export type Expression =
   | FieldExpression
   | CallExpression;
 
-export type AggregateFunction = "count" | "sum" | "min" | "max";
+export type AggregateFunction = "count" | "sum" | "min" | "max" | "list";
 
 export interface AggregateExpression {
   readonly kind: "aggregate";

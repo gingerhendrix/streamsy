@@ -115,7 +115,7 @@ bun run --cwd packages/views test:workerd
 
 Each unit normalizes input changes using the circuit's own SQL integrals. Numeric State keys use their string wire representation; numeric row fields retain their numeric type. Deletes need no `old_value`. A `reset` retracts the source rows. Snapshots preserve previously visible rows until `snapshot-end`, then retract unseen keys; snapshot bookkeeping persists across units. These controls can visit a whole relation.
 
-The SQL engine shares compatible arrangements within a circuit. It uses affected-key evaluation, differences for `count`/`sum`, and ordered indexes for extrema and top. It coalesces the final differences before output. Output State messages are absolute upserts/deletes and carry `txid: unit.key`. A unit with no changed output rows writes no output messages while still advancing its checkpoint.
+The SQL engine shares compatible arrangements within a circuit. It uses affected-key evaluation, differences for `count`/`sum`, and ordered indexes for extrema, lists and top. It coalesces the final differences before output. Output State messages are absolute upserts/deletes and carry `txid: unit.key`. A unit with no changed output rows writes no output messages while still advancing its checkpoint.
 
 Operator SQL, output appends, plan metadata and the checkpoint commit together in the owner transaction.
 
@@ -133,7 +133,9 @@ Stop and drain old runners before calling `Projection.retire(circuit, params, { 
 
 ## Ordering and limits
 
-String expressions compare lexicographically by UTF-16 code units, without locale comparison, case folding or Unicode normalization. `min`, `max` and `top` follow that contract. Top needs a finite positive bound and the row key as its stable final sort term. It selects a keyed relation, not a ranked result list; StateTable reads order by wire key.
+String expressions compare lexicographically by UTF-16 code units, without locale comparison, case folding or Unicode normalization. `min`, `max`, `list` and `top` follow that contract. Top needs a finite positive bound and the row key as its stable final sort term. It selects a keyed relation, not a ranked result list; StateTable reads order by wire key.
+
+`View.list(expression)` collects a group's string or finite number values in ascending order and keeps duplicates. Numbers precede strings in a mixed group. Absent operands are skipped. A group with no members has no output row. When a member changes the list, the aggregate emits the whole array. `maxAffectedKeys` does not bound group size.
 
 Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
 
