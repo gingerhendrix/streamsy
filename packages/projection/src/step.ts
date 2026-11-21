@@ -18,6 +18,8 @@ export type Emits<O extends import("./outputs.ts").RoutedMap> = {
 
 import type { Streamsy } from "@streamsy/core";
 import { collect } from "./outputs.ts";
+import type { RoutedHandle } from "./routed-outputs.ts";
+import type { DecodedParams } from "./declaration.ts";
 import { Emitted, Accumulated } from "./commit.ts";
 
 /** One adapter invocation is one unit. Per-entry variants thread state and preserve order. */
@@ -26,6 +28,11 @@ export const adapt = (
   key: ProjectionKey,
   state: BoundState<any> | undefined,
   streams: Record<string, Streamsy.Address<unknown, any>>,
+  outputs: Record<
+    string,
+    | Streamsy.Address<unknown, any>
+    | RoutedHandle<Streamsy.Address<unknown, any>, DecodedParams, any>
+  >,
   handler: (...args: any[]) => any,
   batch: Slices<InputMap>,
   unit: Unit<any>,
@@ -35,9 +42,8 @@ export const adapt = (
 ): Effect.Effect<any, any, any> =>
   Effect.gen(function* () {
     if (kind === "process")
-      return yield* Effect.map(
-        handler(batch, unit, { prepared, outputs: streams, attempt }),
-        (result) => (isWakeAt(result) ? result : undefined),
+      return yield* Effect.map(handler(batch, unit, { prepared, outputs, attempt }), (result) =>
+        isWakeAt(result) ? result : undefined,
       );
     let value = state === undefined ? undefined : yield* currentState(key, state, encoded);
 

@@ -14,6 +14,8 @@ export type { DecideSpec } from "./decide.ts";
 
 export type { OutputsContext, ProcessContext } from "./process.ts";
 
+export type { RoutedHandle } from "./routed-outputs.ts";
+
 export type { FollowOptions } from "./follow.ts";
 
 export type { AttachOptions, Attachable } from "./attach.ts";
@@ -38,6 +40,8 @@ export {
   type Identity,
   type Loaded,
   type ProjectionKey,
+  type RouteRecords,
+  type RoutedStreamRecord,
 } from "./checkpoint-store.ts";
 
 export { InvalidBinding, NonRetryable, NotAttached, ProjectionFault } from "./fault.ts";

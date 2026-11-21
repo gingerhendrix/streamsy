@@ -9,4 +9,6 @@ export {
   type ListedBinding,
   type Loaded,
   type ProjectionKey,
+  type RouteRecords,
+  type RoutedStreamRecord,
 } from "./checkpoint-store.ts";

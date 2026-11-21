@@ -11,6 +11,7 @@ import {
   type Common,
   type Inputs,
   type Addresses,
+  type HandlerOutputs,
   type RunningDeclaration,
   type Committing,
   type OutputDeclaration,
@@ -34,9 +35,9 @@ export interface ProcessContext<Prepared = void> {
   readonly attempt: number;
 }
 
-/** The bound address of each declared output, in the context of `prepare` and `process`. */
+/** The address or routed handle of each declared output. Open handles only inside `process`. */
 export interface OutputsContext<O extends RoutedMap> {
-  readonly outputs: Addresses<O>;
+  readonly outputs: HandlerOutputs<O>;
 }
 
 /** Run side effects once per unit, including recorded wakes. Return wakeAt(time) to

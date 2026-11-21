@@ -93,6 +93,29 @@ export interface ListedBinding {
   readonly params: Record<string, string>;
 }
 
+export interface RoutedStreamRecord {
+  readonly output: string;
+  readonly streamId: string;
+}
+
+/** Access the route inventory in the checkpoint owner's transaction. */
+export interface RouteRecords {
+  readonly has: (
+    key: ProjectionKey,
+    output: string,
+    streamId: string,
+  ) => Effect.Effect<boolean, ProjectionFault>;
+  readonly add: (
+    key: ProjectionKey,
+    output: string,
+    streamId: string,
+  ) => Effect.Effect<void, ProjectionFault>;
+  readonly list: (
+    key: ProjectionKey,
+  ) => Effect.Effect<ReadonlyArray<RoutedStreamRecord>, ProjectionFault>;
+  readonly clear: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
+}
+
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /**
@@ -100,6 +123,8 @@ export interface CheckpointStoreApi {
    * checkpoint versions. Each pair appears once, in unspecified order.
    */
   readonly list?: (id: string) => Effect.Effect<ReadonlyArray<ListedBinding>, ProjectionFault>;
+  /** Generation-owned streams opened lazily by routed outputs. */
+  readonly routes?: RouteRecords;
   /** Compare-and-set inside the owner transaction; returns the new token. */
   readonly compareAndSet: (
     key: ProjectionKey,
@@ -250,6 +275,71 @@ const decodeStored = (id: string, encoded: string) =>
     ),
   );
 
+const ROUTED_NAMESPACE = "streamsy.projection.routed.v1";
+
+const routeKeyParts = (key: ProjectionKey) => [
+  ROUTED_NAMESPACE,
+  key.id,
+  String(key.version),
+  String(key.generation),
+  canonicalParams(key.params),
+];
+
+const RouteKeyJson = Schema.fromJsonString(
+  Schema.Tuple([
+    Schema.Literal(ROUTED_NAMESPACE),
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+    Schema.String,
+  ]),
+);
+
+const routeRecords = (store: EncodedStore): RouteRecords => {
+  const entries = (key: ProjectionKey) =>
+    store.list === undefined
+      ? Effect.fail(
+          new ProjectionFault({
+            phase: "checkpoint",
+            reason: "unsupported-composition",
+            message: "This CheckpointStore does not support listing routed outputs",
+          }),
+        )
+      : store.list(`${encodeKey(routeKeyParts(key)).slice(0, -1)},`);
+
+  return {
+    has: (key, output, streamId) =>
+      store
+        .read(encodeKey([...routeKeyParts(key), output, streamId]))
+        .pipe(Effect.map(Option.isSome)),
+    add: (key, output, streamId) =>
+      store.write(encodeKey([...routeKeyParts(key), output, streamId]), "{}"),
+    list: (key) =>
+      Effect.flatMap(entries(key), (rows) =>
+        Effect.forEach(rows, ([slot]) =>
+          Schema.decodeEffect(RouteKeyJson)(slot).pipe(
+            Effect.map(([, , , , , output, streamId]) => ({ output, streamId })),
+            Effect.mapError(
+              (cause) =>
+                new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "invalid-record",
+                  message: `Invalid routed output record for ${key.id}`,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+      ),
+    clear: (key) =>
+      Effect.flatMap(entries(key), (rows) =>
+        Effect.forEach(rows, ([slot]) => store.remove(slot), { discard: true }),
+      ),
+  };
+};
+
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   const list = Effect.fn("Projection.CheckpointStore.list")(function* (id: string) {
     if (store.list === undefined) return yield* unsupportedBindingList();
@@ -337,6 +427,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
 
   return {
     list,
+    routes: routeRecords(store),
     load,
     compareAndSet,
     remove: (key) =>

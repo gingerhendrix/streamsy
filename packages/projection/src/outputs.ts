@@ -7,7 +7,13 @@ import {
   type StreamAddress,
   type Streamsy,
 } from "@streamsy/core";
-import { isDeclaration, type AddressOf, type DecodedParams } from "./declaration.ts";
+import {
+  isDeclaration,
+  type AddressOf,
+  type DecodedParams,
+  type Input,
+  type StreamDeclaration,
+} from "./declaration.ts";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import type { ResolvedOutput } from "./commit/internal.ts";
 import type { InputMap } from "./batch.ts";
@@ -18,10 +24,23 @@ import {
   generationBinding,
   isPerGeneration,
   type GenerationOutputBindings,
+  type PerGeneration,
   type RoutedOutput,
 } from "./per-generation.ts";
+import {
+  routedHandle,
+  routedDefinition,
+  type RoutedDefinition,
+  type RoutedHandle,
+  type RoutedOutputBindings,
+} from "./routed-outputs.ts";
+import type { ProjectionKey } from "./checkpoint-store.ts";
 
 export type RoutedMap = Readonly<Record<string, RoutedOutput>>;
+
+export type StaticOutputMap = Readonly<
+  Record<string, Input | PerGeneration<StreamDeclaration, string>>
+>;
 
 export type Item<T> =
   AddressOf<T> extends { readonly collections: infer C extends StreamAddress.Collections }
@@ -35,13 +54,26 @@ export type Services<O extends RoutedMap> = {
 }[keyof O];
 
 /** Resolve ordinary and accepted outputs with the same parameter sources. */
+type Address = Streamsy.Address<any, any>;
+
+interface ResolvedBindings {
+  readonly streams: Record<string, Address>;
+  readonly accepted: Address | undefined;
+  readonly generationOutputs: ReadonlyMap<string, { readonly shared: boolean }>;
+  readonly routed: ReadonlyMap<string, RoutedDefinition<Streamsy.Any["Identifier"]>>;
+  readonly handlerOutputs: Record<
+    string,
+    Address | RoutedHandle<Address, DecodedParams, Streamsy.Any["Identifier"]>
+  >;
+}
+
 export const resolveOutputs = (
   outputs: RoutedMap,
   acceptedOutput: AcceptedOutput | undefined,
   params: DecodedParams,
-  generation: number,
+  key: ProjectionKey,
   inputs: InputMap,
-) => {
+): ResolvedBindings => {
   const generationOutputs = new Map<string, { readonly shared: boolean }>();
 
   const resolve = (name: string, output: RoutedOutput): Streamsy.Address<any, any> => {
@@ -50,13 +82,26 @@ export const resolveOutputs = (
 
       generationOutputs.set(name, { shared });
 
-      return route.at({ ...params, [param]: generation });
+      return route.at({ ...params, [param]: key.generation });
     }
 
     return isDeclaration(output) ? output.at(params) : output;
   };
 
-  const streams = Record.map(outputs, (output, name) => resolve(name, output));
+  const routed = new Map<string, ReturnType<typeof routedDefinition>>();
+
+  const streams = Record.fromEntries(
+    Array.flatMap(Record.toEntries(outputs), ([name, output]) => {
+      if (isPerGeneration(output) && generationBinding(output).routeBy !== undefined) {
+        routed.set(name, routedDefinition(generationBinding(output).route));
+
+        return [];
+      }
+
+      return [[name, resolve(name, output)] as const];
+    }),
+  );
+
   const accepted = acceptedOutput === undefined ? undefined : resolve(acceptedKey, acceptedOutput);
 
   const addresses =
@@ -74,7 +119,39 @@ export const resolveOutputs = (
   if (Array.some(addresses, (address) => !Predicate.isTagged(address, "Json")))
     throw new RangeError("Projection outputs require JSON or state routes");
 
-  return { streams, accepted, generationOutputs };
+  const occupied = new Set([...inputIds, ...ids]);
+
+  const handles = Record.fromEntries(
+    Array.flatMap(Record.toEntries(outputs), ([name, output]) => {
+      if (!isPerGeneration(output)) return [];
+      const { route, param, routeBy } = generationBinding(output);
+
+      return routeBy === undefined
+        ? []
+        : [
+            [
+              name,
+              routedHandle(
+                name,
+                route,
+                routeBy,
+                { ...params, [param]: key.generation },
+                key,
+                occupied,
+                routed,
+              ),
+            ] as const,
+          ];
+    }),
+  );
+
+  return {
+    streams,
+    accepted,
+    generationOutputs,
+    routed,
+    handlerOutputs: routed.size === 0 ? streams : { ...streams, ...handles },
+  };
 };
 
 export const createOutput = (
@@ -94,7 +171,7 @@ export const createOutput = (
     ),
   );
 
-export interface BoundOutputs<R> extends GenerationOutputBindings {
+export interface BoundOutputs<R> extends GenerationOutputBindings, RoutedOutputBindings<R> {
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, R>>>;
   readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
 }

@@ -13,6 +13,49 @@ import { detailsOf, load, remove, retire, settle, type Result } from "./internal
 
 import { inherit, withPrepare, withAccepted } from "./range.ts";
 import type { ProjectionKey } from "../checkpoint-store.ts";
+import {
+  requireRouteRecords,
+  RoutedOutputs,
+  routedUnit,
+  TransactionRoutedOutputs,
+} from "../routed-outputs.ts";
+
+const removeWithRoutes = (
+  key: ProjectionKey,
+): Effect.Effect<void, ProjectionFault, CheckpointStore | Transaction> =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+    const tx = yield* Transaction;
+
+    if (ownerOf(store.load) !== tx.owner)
+      return yield* new ProjectionFault({
+        phase: "checkpoint",
+        reason: "unsupported-composition",
+        message: `The checkpoint store for ${key.id} does not share the transaction owner`,
+      });
+
+    const records = yield* requireRouteRecords(store, "checkpoint");
+
+    // Load first to serialize with retirement. A tombstone preserves records for close/remove.
+    const live = yield* store.load(key).pipe(
+      Effect.map(({ record }) => Option.isSome(record)),
+      Effect.catchIf(
+        (fault) => fault.reason === "retired-generation",
+        () => Effect.succeed(false),
+      ),
+      Effect.catchIf(
+        (fault) => fault.reason === "invalid-record",
+        () => Effect.succeed(true),
+      ),
+    );
+
+    if (live) {
+      yield* records.clear(key);
+      yield* store.remove(key);
+    }
+
+    return yield* Effect.void;
+  });
 
 const retireInTransaction = (request: RetireRequest) =>
   Effect.gen(function* () {
@@ -36,13 +79,24 @@ export const transaction = withPrepare(
     name: "transaction",
     guarantee: "exactly-once",
     load,
-    remove,
+    remove: (key) =>
+      RoutedOutputs in key
+        ? Transaction.use((tx) => tx.withTransaction(removeWithRoutes(key)))
+        : remove(key),
     retire: retireInTransaction,
     apply: (pending) =>
       Effect.gen(function* () {
         const tx = yield* Transaction;
         const store = yield* CheckpointStore;
         const { outputs, prepare } = detailsOf(pending);
+        const hasRoutes = RoutedOutputs in pending.key;
+
+        if (hasRoutes && ownerOf(store.load) !== tx.owner)
+          return yield* new ProjectionFault({
+            phase: "checkpoint",
+            reason: "unsupported-composition",
+            message: `The checkpoint store for ${pending.key.id} does not share the transaction owner`,
+          });
 
         for (const { address, service } of Record.values(outputs)) {
           if (service.owner !== tx.owner)
@@ -83,6 +137,10 @@ export const transaction = withPrepare(
               Effect.provideService(SqlClient.SqlClient, tx.sql),
               Effect.provideService(CurrentOwner, tx.owner),
               Effect.provideService(TransactionGenerationOutputs, pending.generationOutputs),
+              Effect.provideService(
+                TransactionRoutedOutputs,
+                hasRoutes ? routedUnit(pending.key, store) : undefined,
+              ),
               Effect.catchDefect((defect) =>
                 isForeignOwner(defect)
                   ? Effect.fail(
@@ -145,7 +203,11 @@ export const transactionWithCleanup = (
     ...transaction,
     remove: (key: ProjectionKey) =>
       Transaction.use((tx) =>
-        tx.withTransaction(remove(key).pipe(Effect.andThen(() => cleanup(key, tx.sql)))),
+        tx.withTransaction(
+          (RoutedOutputs in key ? removeWithRoutes(key) : remove(key)).pipe(
+            Effect.andThen(() => cleanup(key, tx.sql)),
+          ),
+        ),
       ),
     retire: (request: RetireRequest) =>
       Transaction.use((tx) =>

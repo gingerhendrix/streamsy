@@ -17,10 +17,14 @@ import { adapt } from "./step.ts";
 import { withParams, type Unit } from "./unit.ts";
 import {
   GenerationOutputs,
+  generationBinding,
+  isPerGeneration,
   validateGenerationParam,
   type DeclaredParams,
+  type GenerationOutputBindings,
   type PerGeneration,
 } from "./per-generation.ts";
+import { RoutedOutputs, type RoutedHandle, type RoutedOutputBindings } from "./routed-outputs.ts";
 
 /** A stream declaration. `.at(params)` resolves it with the projection params. */
 export type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
@@ -34,7 +38,7 @@ export type Input = StreamDeclaration | Streamsy.Address<any, any>;
 export type Inputs = Readonly<Record<string, Input>>;
 
 export type AddressOf<X> =
-  X extends PerGeneration<infer D, string>
+  X extends PerGeneration<infer D, string, string>
     ? ReturnType<D["at"]>
     : X extends StreamDeclaration
       ? ReturnType<X["at"]>
@@ -43,6 +47,23 @@ export type AddressOf<X> =
         : never;
 
 export type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
+
+type HandlerOutput<X> =
+  X extends PerGeneration<infer D, string, infer By>
+    ? [By] extends [never]
+      ? AddressOf<X>
+      : string extends By
+        ? AddressOf<X> | RoutedHandle<AddressOf<X>, DecodedParams, D["Identifier"]>
+        : RoutedHandle<
+            AddressOf<X>,
+            Pick<DeclaredParams<D>, By & keyof DeclaredParams<D>>,
+            D["Identifier"]
+          >
+    : AddressOf<X>;
+
+export type HandlerOutputs<O extends RoutedMap> = {
+  readonly [K in keyof O]: HandlerOutput<O[K]>;
+};
 
 type Invalid<C extends StreamRoute.ParamCodecs, P> = {
   readonly [Name in keyof P]: Name extends keyof StreamRoute.Params<C>
@@ -67,8 +88,8 @@ export type OneWithin<C extends StreamRoute.ParamCodecs, X> =
   InvalidInput<C, X> extends never ? X : never;
 
 type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
-  X extends PerGeneration<infer D, infer N>
-    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+  X extends PerGeneration<infer D, infer N, infer By>
+    ? Extract<N | By, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N | By>>
     : InvalidInput<C, X>;
 
 export type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
@@ -343,11 +364,45 @@ export interface BuildDefinition extends Omit<
   readonly prepare?: (...args: any[]) => Effect.Effect<any, any, any>;
 }
 
-export const build = (kind: Kind, definition: BuildDefinition) => {
+interface Built extends GenerationOutputBindings, RoutedOutputBindings<Streamsy.Any["Identifier"]> {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+  readonly inputs: Addresses<Inputs>;
+  readonly state: BoundState<any> | undefined;
+  readonly streams: Addresses<Inputs>;
+  readonly accepted: Streamsy.Address<any, any> | undefined;
+  readonly commit: Commit.Commit<any, any, any> | typeof Commit.checkpoint;
+  readonly prepare:
+    | ((batch: Slices<InputMap>, unit: Unit) => Effect.Effect<any, any, any>)
+    | undefined;
+  readonly process: (
+    batch: Slices<InputMap>,
+    unit: Unit,
+    encoded?: string,
+    prepared?: unknown,
+    attempt?: number,
+  ) => Effect.Effect<any, any, any>;
+}
+
+export const build = (
+  kind: Kind,
+  definition: BuildDefinition,
+): Declaration<StreamRoute.ParamCodecs, Built, any, any> => {
   const commit = definition.commit ?? Commit.checkpoint;
   const outputs = definition.outputs ?? {};
 
-  for (const output of Record.values(outputs)) validateGenerationParam(output, definition.params);
+  for (const output of Record.values(outputs)) {
+    validateGenerationParam(output, definition.params);
+
+    if (isPerGeneration(output) && generationBinding(output).routeBy !== undefined) {
+      if (kind !== "process") throw new RangeError("Routed outputs require Projection.process");
+
+      if (!supportsPrepare(commit))
+        throw new RangeError("Routed outputs require Commit.transaction");
+    }
+  }
 
   validateAccepted(
     definition.accepted,
@@ -367,11 +422,11 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);
     const inputs = addressesOf(definition.inputs, decoded);
 
-    const { streams, accepted, generationOutputs } = resolveOutputs(
+    const { streams, accepted, generationOutputs, routed, handlerOutputs } = resolveOutputs(
       outputs,
       definition.accepted,
       decoded,
-      key.generation,
+      key,
       inputs,
     );
 
@@ -386,7 +441,7 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
         definition.prepare === undefined
           ? undefined
           : (batch: Slices<InputMap>, unit: Unit) =>
-              definition.prepare!(batch, withParams(unit, decoded), { outputs: streams }),
+              definition.prepare!(batch, withParams(unit, decoded), { outputs: handlerOutputs }),
       process: (
         batch: Slices<InputMap>,
         unit: Unit,
@@ -399,6 +454,7 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
           key,
           state,
           streams,
+          handlerOutputs,
           definition[kind]!,
           batch,
           withParams(unit, decoded),
@@ -410,6 +466,8 @@ export const build = (kind: Kind, definition: BuildDefinition) => {
 
     if (generationOutputs.size > 0)
       Object.assign(bound, { [GenerationOutputs]: generationOutputs });
+
+    if (routed.size > 0) Object.assign(bound, { [RoutedOutputs]: routed });
 
     return bound;
   });

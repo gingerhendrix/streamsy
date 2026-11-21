@@ -79,3 +79,49 @@ export const outputsOnly = Projection.process({
     return Effect.void;
   },
 });
+
+class Routed extends Streamsy.json<Routed>()(
+  "ProcessOutputs/Routed",
+  "process-types/r/:id/:date/g/:gen",
+  {
+    params: { id: Schema.FiniteFromString, date: Schema.String, gen: Schema.FiniteFromString },
+    schema: Schema.String,
+  },
+) {}
+
+const routed = Projection.perGeneration(Routed, "gen", { routeBy: ["date"] });
+
+Projection.process({
+  id: "typed-routed",
+  params: { id: Schema.FiniteFromString },
+  inputs: {},
+  outputs: { routed },
+  commit: Commit.transaction,
+  process: (_batch, _unit, { outputs }) => {
+    const opening: Effect.Effect<
+      ReturnType<typeof Routed.at>,
+      import("@streamsy/projection").ProjectionFault,
+      Routed
+    > = outputs.routed.open({ date: "day" });
+
+    // @ts-expect-error Routed params use their decoded types.
+    void outputs.routed.open({ date: 1 });
+
+    // @ts-expect-error Non-routed params are taken from the binding.
+    void outputs.routed.open({ date: "day", id: 1 });
+
+    return Effect.asVoid(opening);
+  },
+});
+
+const mismatchedParameter = {
+  id: "typed-routed-mismatch",
+  params: { id: Schema.String },
+  inputs: {},
+  outputs: { routed },
+  commit: Commit.transaction,
+  process: () => Effect.void,
+};
+
+// @ts-expect-error Non-routed params must have matching decoded types.
+Projection.process(mismatchedParameter);

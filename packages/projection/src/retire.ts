@@ -1,4 +1,4 @@
-import { Effect, Predicate, Record } from "effect";
+import { Context, Effect, Predicate, Record } from "effect";
 import {
   isStreamsFault,
   type AppendError,
@@ -15,10 +15,11 @@ import { bindAtGeneration, type Declaration } from "./declaration.ts";
 import { ProjectionFault } from "./fault.ts";
 import { boundOutputs, type BoundOutputs } from "./outputs.ts";
 import { GenerationOutputs } from "./per-generation.ts";
+import { currentRouteRecords, RoutedOutputs } from "./routed-outputs.ts";
 
 type StreamMode = "remove" | "close";
 
-interface RetiredOutput {
+export interface RetiredOutput {
   readonly id: string;
   readonly result: "removed" | "closed" | "absent" | "shared";
 }
@@ -26,6 +27,8 @@ interface RetiredOutput {
 export interface Retired {
   readonly record: RetirementStatus;
   readonly outputs: Readonly<Record<string, RetiredOutput>>;
+  /** Exclusively owned streams opened by each routed output. */
+  readonly routed?: Readonly<Record<string, ReadonlyArray<RetiredOutput>>>;
 }
 
 interface Retirable<R, Q> extends ProjectionKey, BoundOutputs<R> {
@@ -88,6 +91,11 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
     const outputs: [string, RetiredOutput][] = [];
     const owned: (ResolvedOutput & { readonly name: string })[] = [];
     const bindings = bound[GenerationOutputs];
+    const routes = bound[RoutedOutputs];
+    const routed = new Map<string, RetiredOutput[]>();
+    const context = yield* Effect.context<R>();
+
+    if (routes !== undefined) for (const name of routes.keys()) routed.set(name, []);
 
     for (const [name, address] of Record.toEntries(boundOutputs(bound))) {
       const binding = bindings?.get(name);
@@ -111,23 +119,57 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
       cleanup: Effect.gen(function* () {
         const owner = yield* CurrentOwner;
 
-        for (const { name, address, service } of owned) {
+        const clean = (address: ResolvedOutput["address"], service: ResolvedOutput["service"]) => {
           if (owner !== undefined && service.owner !== owner)
-            return yield* new ProjectionFault({
-              phase: "checkpoint",
-              reason: "unsupported-composition",
-              message: `Output ${address.id} does not share the transaction owner`,
+            return Effect.fail(
+              new ProjectionFault({
+                phase: "checkpoint",
+                reason: "unsupported-composition",
+                message: `Output ${address.id} does not share the transaction owner`,
+              }),
+            );
+
+          return cleanStream(address, service.wire, mode).pipe(
+            Effect.map((result): RetiredOutput => ({ id: address.id, result })),
+          );
+        };
+
+        for (const { name, address, service } of owned)
+          outputs.push([name, yield* clean(address, service)]);
+
+        if (routes !== undefined) {
+          const records = yield* currentRouteRecords;
+
+          for (const { output, streamId } of yield* records.list(bound)) {
+            const definition = routes.get(output);
+            const results = routed.get(output);
+
+            const invalid = (cause?: unknown) =>
+              new ProjectionFault({
+                phase: "checkpoint",
+                reason: "invalid-record",
+                message: `Cannot restore routed output ${output} at ${streamId}`,
+                cause,
+              });
+
+            const address = yield* Effect.try({
+              try: () => definition?.restore(streamId),
+              catch: invalid,
             });
 
-          const result = yield* cleanStream(address, service.wire, mode);
+            if (address === undefined || results === undefined) return yield* invalid();
+            results.push(yield* clean(address, Context.get(context, address.stream)));
+          }
 
-          outputs.push([name, { id: address.id, result }]);
+          if (mode === "remove") yield* records.clear(bound);
         }
 
         return yield* Effect.void;
       }),
     });
 
-    return { record, outputs: Record.fromEntries(outputs) };
+    const retired = { record, outputs: Record.fromEntries(outputs) };
+
+    return routes === undefined ? retired : { ...retired, routed: Record.fromEntries(routed) };
   });
 };

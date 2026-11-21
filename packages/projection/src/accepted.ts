@@ -33,9 +33,15 @@ export const validateAccepted = (
 
   validateGenerationParam(output, params);
 
-  const { route: accepted, param } = isPerGeneration(output)
+  const {
+    route: accepted,
+    param,
+    routeBy,
+  } = isPerGeneration(output)
     ? generationBinding(output)
-    : { route: output, param: undefined };
+    : { route: output, param: undefined, routeBy: undefined };
+
+  if (routeBy !== undefined) throw new RangeError("accepted does not support routed outputs");
 
   if (accepted.collections !== Streamsy.wakeCollections) {
     // State declarations with the same wake collection schema are valid too.

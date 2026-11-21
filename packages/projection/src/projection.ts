@@ -47,7 +47,9 @@ export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
 
-export { retire, type Retired } from "./retire.ts";
+export { retire, type Retired, type RetiredOutput } from "./retire.ts";
+
+export type { RoutedHandle } from "./routed-outputs.ts";
 
 export {
   generationBinding,

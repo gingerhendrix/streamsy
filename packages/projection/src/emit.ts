@@ -13,7 +13,7 @@ import {
   type Committing,
   type OutputsWithin,
 } from "./declaration.ts";
-import type { RoutedMap } from "./outputs.ts";
+import type { StaticOutputMap } from "./outputs.ts";
 import type { Step, Emits } from "./step.ts";
 import type { Unit } from "./unit.ts";
 
@@ -21,7 +21,7 @@ import type { Unit } from "./unit.ts";
 export function emit<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
-  const O extends RoutedMap,
+  const O extends StaticOutputMap,
   X extends Emits<O>,
   E = never,
   R = never,

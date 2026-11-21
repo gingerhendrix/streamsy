@@ -13,7 +13,7 @@ import {
   type Committing,
   type OutputsWithin,
 } from "./declaration.ts";
-import type { RoutedMap } from "./outputs.ts";
+import type { StaticOutputMap } from "./outputs.ts";
 import type { StateDefinition } from "./state.ts";
 import type { Step, Emits } from "./step.ts";
 import type { Unit } from "./unit.ts";
@@ -21,7 +21,7 @@ import type { Unit } from "./unit.ts";
 type Definition<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
-  O extends RoutedMap,
+  O extends StaticOutputMap,
   A,
   SI,
   P,
@@ -39,7 +39,7 @@ type Definition<
 export function mapAccum<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
-  const O extends RoutedMap,
+  const O extends StaticOutputMap,
   A,
   SI,
   X extends Emits<O>,
@@ -70,7 +70,7 @@ export function mapAccum(definition: Parameters<typeof build>[1]): unknown {
 export function mapAccumBatch<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
-  const O extends RoutedMap,
+  const O extends StaticOutputMap,
   A,
   SI,
   X extends Emits<O>,

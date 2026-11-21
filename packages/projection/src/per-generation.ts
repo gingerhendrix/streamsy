@@ -1,15 +1,24 @@
-import { Context, Record } from "effect";
+import { Array, Context, Record, Result } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Input, StreamDeclaration } from "./declaration.ts";
 import type { ResolvedOutput } from "./commit/internal.ts";
 
 const TypeId = Symbol.for("@streamsy/projection/PerGeneration");
 
-export interface PerGeneration<D extends StreamDeclaration, N extends string> {
-  readonly [TypeId]: { readonly route: D; readonly param: N; readonly shared: boolean };
+export interface PerGeneration<
+  D extends StreamDeclaration,
+  N extends string,
+  By extends string = never,
+> {
+  readonly [TypeId]: {
+    readonly route: D;
+    readonly param: N;
+    readonly shared: boolean;
+    readonly routeBy?: readonly By[];
+  };
 }
 
-export type RoutedOutput = Input | PerGeneration<StreamDeclaration, string>;
+export type RoutedOutput = Input | PerGeneration<StreamDeclaration, string, string>;
 
 export type DeclaredParams<D> =
   D extends StreamRoute.StreamRoute<infer P, infer _A, infer _RD, infer _RE> ? P : {};
@@ -24,18 +33,46 @@ type NumberParams<D, P = DeclaredParams<D>> = {
   string;
 
 /** Bind one numeric output route parameter to the projection's generation. */
-export const perGeneration = <D extends StreamDeclaration, const N extends NumberParams<D>>(
+export function perGeneration<
+  D extends StreamDeclaration,
+  const N extends NumberParams<D>,
+  const By extends Exclude<keyof DeclaredParams<D> & string, N>,
+>(
   route: D,
   param: N,
-  options?: { readonly shared?: boolean },
-): PerGeneration<D, N> => ({ [TypeId]: { route, param, shared: options?.shared ?? false } });
+  options: { readonly routeBy: readonly [By, ...By[]]; readonly shared?: false },
+): PerGeneration<D, N, By>;
+export function perGeneration<D extends StreamDeclaration, const N extends NumberParams<D>>(
+  route: D,
+  param: N,
+  options?: { readonly shared?: boolean; readonly routeBy?: never },
+): PerGeneration<D, N>;
+export function perGeneration<D extends StreamDeclaration, N extends string>(
+  route: D,
+  param: N,
+  options?: { readonly shared?: boolean; readonly routeBy?: readonly string[] },
+): PerGeneration<D, N, string> {
+  const shared = options?.shared ?? false;
+  const routeBy = options?.routeBy;
+
+  return {
+    [TypeId]:
+      routeBy === undefined
+        ? { route, param, shared }
+        : { route, param, shared, routeBy: Object.freeze([...routeBy]) },
+  };
+}
 
 export const isPerGeneration = (
   value: RoutedOutput,
-): value is PerGeneration<StreamDeclaration, string> => TypeId in value;
+): value is PerGeneration<StreamDeclaration, string, string> => TypeId in value;
 
-export const generationBinding = <D extends StreamDeclaration, N extends string>(
-  binding: PerGeneration<D, N>,
+export const generationBinding = <
+  D extends StreamDeclaration,
+  N extends string,
+  By extends string = never,
+>(
+  binding: PerGeneration<D, N, By>,
 ) => binding[TypeId];
 
 export const validateGenerationParam = (
@@ -43,10 +80,36 @@ export const validateGenerationParam = (
   params: StreamRoute.ParamCodecs,
 ): void => {
   if (!isPerGeneration(output)) return;
-  const { param } = generationBinding(output);
+  const { route, param, routeBy, shared } = generationBinding(output);
 
   if (Record.has(params, param))
     throw new RangeError(`Generation-bound parameter ${param} must not be a projection parameter`);
+
+  if (routeBy === undefined) return;
+
+  if (shared) throw new RangeError("Routed outputs cannot be shared");
+
+  if (routeBy.length === 0 || new Set(routeBy).size !== routeBy.length)
+    throw new RangeError("routeBy requires one or more distinct route parameters");
+
+  const names = Array.filterMap(route.template.split("/"), (part) =>
+    part.startsWith(":") ? Result.succeed(part.slice(1)) : Result.fail(undefined),
+  );
+
+  for (const name of routeBy) {
+    if (!names.includes(name))
+      throw new RangeError(`Routed parameter ${name} must be a route parameter`);
+
+    if (name === param || Record.has(params, name))
+      throw new RangeError(
+        `Routed parameter ${name} must not be a generation or projection parameter`,
+      );
+  }
+
+  for (const name of names) {
+    if (name !== param && !routeBy.includes(name) && !Record.has(params, name))
+      throw new RangeError(`Missing projection parameter ${name} for routed output`);
+  }
 };
 
 /** Private metadata on the bound value. */
