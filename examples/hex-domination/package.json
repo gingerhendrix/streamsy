@@ -1,5 +1,5 @@
 {
-  "name": "risk-demo",
+  "name": "hex-domination",
   "version": "0.0.1",
   "private": true,
   "description": "Playable event-sourced Hex Domination on Bun and SQLite, with a local workerd host.",

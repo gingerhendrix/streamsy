@@ -1,5 +1,5 @@
 /**
- * `risk-demo` — deterministic, headless event-sourced game kernel.
+ * `hex-domination` — deterministic, headless event-sourced game kernel.
  *
  * The kernel is the executable specification for the Streamsy Risk demo:
  *  - {@link foldAggregate} folds canonical {@link GameEvent}s into the decision model;

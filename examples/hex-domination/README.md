@@ -9,7 +9,7 @@ From the repository root, install and build the workspace packages. Use a new SQ
 ```bash
 bun install --frozen-lockfile
 bun run build
-DB_PATH="$HOME/hex-domination.sqlite" bun run --cwd examples/risk-demo start
+DB_PATH="$HOME/hex-domination.sqlite" bun run --cwd examples/hex-domination start
 ```
 
 Open <http://127.0.0.1:1339>. Create a game and share its invite link with another browser profile. Join from that profile, then start the game from the host's lobby. To reinforce, select your territories until you have placed the whole pool, then select **Finish reinforcements**.
@@ -19,7 +19,7 @@ The server listens on loopback. Set `PORT` to change the port. If you omit `DB_P
 To watch scripted bots, run:
 
 ```bash
-bun run --cwd examples/risk-demo demo
+bun run --cwd examples/hex-domination demo
 ```
 
 Open the printed spectator URL. The demo creates a disposable database and starts the bots after a short lead-in. Stop it with Ctrl-C.
@@ -30,7 +30,7 @@ The same game also runs as a Cloudflare Worker with one SQLite Durable Object pe
 
 ```bash
 bun run build
-bun run --cwd examples/risk-demo dev:worker
+bun run --cwd examples/hex-domination dev:worker
 ```
 
 Open <http://127.0.0.1:8791>. No Cloudflare account is used. [Workerd host](docs/workerd.md) explains the deployment, the routing, the defence alarm, storage, and the limits of this host.
@@ -48,7 +48,7 @@ See [the agent API](docs/agent-api.md) for the seat bootstrap and command shapes
 Stop the game server first. With the same file that the server used, run:
 
 ```bash
-DB_PATH="$HOME/hex-domination.sqlite" bun run --cwd examples/risk-demo rebuild <game-id>
+DB_PATH="$HOME/hex-domination.sqlite" bun run --cwd examples/hex-domination rebuild <game-id>
 ```
 
 The command replays canonical history into a fresh generation. It compares the candidate's materialized rows and source watermark against the projection checkpoint and the authoritative aggregate. Only then does it commit the active generation pointer in SQLite. A failed candidate stays recorded as failed. The old generation stays active and its stream is retained. Restart the server to serve the verified generation.
@@ -58,10 +58,10 @@ The command replays canonical history into a fresh generation. It compares the c
 ## Verify the app
 
 ```bash
-bun run --cwd examples/risk-demo typecheck
-bun run --cwd examples/risk-demo test
-bun run --cwd examples/risk-demo test:sqlite
-bun run --cwd examples/risk-demo smoke:http
+bun run --cwd examples/hex-domination typecheck
+bun run --cwd examples/hex-domination test
+bun run --cwd examples/hex-domination test:sqlite
+bun run --cwd examples/hex-domination smoke:http
 ```
 
 The HTTP smoke starts the real Bun server on loopback with disposable SQLite state, submits commands, reads the streams, and restarts the process.
@@ -69,5 +69,5 @@ The HTTP smoke starts the real Bun server on loopback with disposable SQLite sta
 To test the Worker host on real local workerd with disposable state, run:
 
 ```bash
-bun run --cwd examples/risk-demo test:workerd
+bun run --cwd examples/hex-domination test:workerd
 ```

@@ -345,7 +345,7 @@ async function main(): Promise<void> {
     assert(decisionAfter.status === 200, "capability verifier lost across restart");
 
     console.log(
-      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/actions SSE/authz/seat-scoped headers + offline rebuild + SQLite restart)",
+      "✓ hex-domination HTTP smoke passed (create/join/start/command/board/agent routes/actions SSE/authz/seat-scoped headers + offline rebuild + SQLite restart)",
     );
   } finally {
     await server?.stop();

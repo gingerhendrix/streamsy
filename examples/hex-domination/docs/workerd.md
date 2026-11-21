@@ -6,7 +6,7 @@ The Worker host runs the same game code as the Bun server. `buildApp`, the strea
 
 ```bash
 bun run build
-bun run --cwd examples/risk-demo dev:worker
+bun run --cwd examples/hex-domination dev:worker
 ```
 
 `dev:worker` builds the SPA into `dist/web` and the Worker into `dist/worker`, then serves both on <http://127.0.0.1:8791>. Set `PORT` to change the port. Durable Object state is kept in `WORKER_STATE`. Its default is `dist/worker-state`, which the next build deletes. Set `DEFENSE_TIMEOUT_MS` to shorten the 15-second defence window for local testing.
@@ -16,10 +16,10 @@ bun run --cwd examples/risk-demo dev:worker
 `alchemy.run.ts` declares the `hex-domination` stack: the `hex-domination-<stage>` Worker, the `GAME` Durable Object namespace for `GameDurableObject`, and `dist/web` as its assets. `deploy` builds the Worker bundle and runs Alchemy on it as it is (`bundle: false`).
 
 ```bash
-bun run --cwd examples/risk-demo deploy --stage prod
+bun run --cwd examples/hex-domination deploy --stage prod
 ```
 
-Only the `prod` stage attaches `hex-domination.streamsy.dev` and turns off `workers.dev`. State is local (`Alchemy.localState()`), so run deploys from the worktree that owns `examples/risk-demo/.alchemy/`. The deployed Worker uses the 15-second defence window. It does not set `DEFENSE_TIMEOUT_MS`.
+Only the `prod` stage attaches `hex-domination.streamsy.dev` and turns off `workers.dev`. State is local (`Alchemy.localState()`), so run deploys from the worktree that owns `examples/hex-domination/.alchemy/`. The deployed Worker uses the 15-second defence window. It does not set `DEFENSE_TIMEOUT_MS`.
 
 ## Routing
 
