@@ -6,7 +6,7 @@ const documents = Cloudflare.DurableObject("Documents", { className: "DocumentOb
 
 export default Alchemy.Stack(
   "yjs-editor",
-  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
   Effect.gen(function* () {
     const stage = yield* Alchemy.Stage;
     const endpoint: Pick<Cloudflare.WorkerProps, "domain" | "workersDev"> = {};
