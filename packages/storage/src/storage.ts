@@ -1,6 +1,7 @@
 import {
   CommitHooks,
   MAX_PRODUCER_ID_LENGTH,
+  OWNER_RECORDS_LIST_UNSUPPORTED,
   OwnerRecords,
   ProjectionMarks,
   attachOwner,
@@ -889,7 +890,7 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
         mysql: () =>
           Effect.fail(
             new StorageFault({
-              operation: "records.list.unsupported",
+              operation: OWNER_RECORDS_LIST_UNSUPPORTED,
               message: "MySQL cannot list owner records because long keys may have been hashed",
               retryable: false,
             }),

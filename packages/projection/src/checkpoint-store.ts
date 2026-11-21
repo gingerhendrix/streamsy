@@ -1,6 +1,11 @@
 import { Array, Context, Effect, Layer, Option, Record, Schema, Semaphore } from "effect";
 import { CommitBoundary, ZERO_OFFSET, type StorageFault } from "@streamsy/core";
-import { OwnerRecords, attachOwner, ownerOf } from "@streamsy/core/internal";
+import {
+  OWNER_RECORDS_LIST_UNSUPPORTED,
+  OwnerRecords,
+  attachOwner,
+  ownerOf,
+} from "@streamsy/core/internal";
 import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import {
@@ -136,7 +141,7 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
                   new ProjectionFault({
                     phase: "load",
                     reason:
-                      cause.operation === "records.list.unsupported"
+                      cause.operation === OWNER_RECORDS_LIST_UNSUPPORTED
                         ? "unsupported-composition"
                         : "storage-failure",
                     message: cause.message,

@@ -1,7 +1,11 @@
 export { CurrentOwner, isForeignOwner, attachOwner, ownerOf } from "./owner.ts";
 
 /** Internal composition contract between storage hosts and the projection checkpoint store. */
-export { OwnerRecords, type OwnerRecordsApi } from "./owner-records.ts";
+export {
+  OWNER_RECORDS_LIST_UNSUPPORTED,
+  OwnerRecords,
+  type OwnerRecordsApi,
+} from "./owner-records.ts";
 
 /** The producer id limit of storage, shared with projection producer ids. */
 export { MAX_PRODUCER_ID_LENGTH } from "./limits.ts";
