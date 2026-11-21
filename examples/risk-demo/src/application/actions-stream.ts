@@ -228,7 +228,7 @@ export function createActionsReader(
         const outcome = await Promise.race([arrival, expiry]);
         return outcome === TIMED_OUT ? null : outcome;
       } finally {
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
       }
     },
     // oxlint-disable-next-line effecttsgo/async-function -- The public reader close contract waits for the Promise-native Web stream teardown.

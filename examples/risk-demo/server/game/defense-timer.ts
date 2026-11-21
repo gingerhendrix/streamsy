@@ -29,6 +29,7 @@
  * the scheduler is injected so they need not rely on real `setTimeout` firing.
  */
 
+import { Predicate } from "effect";
 import type { GameStreams } from "./streams.ts";
 
 import { foldAggregate } from "../../src/domain/aggregate.ts";
@@ -81,8 +82,12 @@ export function createTimeoutScheduler(): TimerScheduler {
         },
         Math.max(0, delayMs),
       );
-      // Never hold the process open for a game nobody is watching.
-      handle.unref?.();
+      // Never hold the process open for a game nobody is watching. Bun and
+      // Node timers have `unref`; Workers timers are plain numbers.
+      // oxlint-disable-next-line typescript/unbound-method -- Only checks the type; the call below keeps the receiver.
+      if (Predicate.hasProperty(handle, "unref") && Predicate.isFunction(handle.unref)) {
+        handle.unref();
+      }
       timers.set(timerId, handle);
     },
     cancel(timerId) {

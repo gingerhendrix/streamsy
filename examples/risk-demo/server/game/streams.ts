@@ -1,6 +1,12 @@
-import { MemoryStorage, Streamsy } from "@streamsy/core";
+/**
+ * Host-neutral stream declarations for Hex Domination.
+ *
+ * Bun (`../persistence/bun.ts`) and the Cloudflare game object
+ * (`../cloudflare/game-object.ts`) bind these same declarations to their own
+ * storage. This module imports no platform storage.
+ */
+import { MemoryStorage, Streamsy, type StorageFault } from "@streamsy/core";
 import { CheckpointStore } from "@streamsy/projection";
-import { BunStorage } from "@streamsy/storage/bun";
 import { Layer, ManagedRuntime, Schema } from "effect";
 import { GameEvent } from "../../src/domain/events.ts";
 import {
@@ -53,19 +59,18 @@ export class BoardStream extends Streamsy.state<BoardStream>()(
   },
 ) {}
 
-const streams = Streamsy.group(GameEvents, PlayerActions, BoardStream);
-const memoryLayer = () =>
-  CheckpointStore.layer.pipe(Layer.provideMerge(MemoryStorage.layer(streams)));
-const bunLayer = (filename: string) =>
-  CheckpointStore.layer.pipe(
-    Layer.provideMerge(BunStorage.layer(streams, { client: { filename } })),
-  );
+/** Every stream one game owns. Each host binds this group to its storage. */
+export const gameStreams = Streamsy.group(GameEvents, PlayerActions, BoardStream);
 
-export type GameStreams = ManagedRuntime.ManagedRuntime<
-  Layer.Success<ReturnType<typeof memoryLayer>>,
-  Layer.Error<ReturnType<typeof bunLayer>>
->;
+/** The services the game, projection, and Serve code need from any host. */
+export type GameStreamServices = CheckpointStore | Streamsy.Host<typeof gameStreams>;
 
-export const memoryStreams = (): GameStreams => ManagedRuntime.make(memoryLayer());
-export const sqliteStreams = (filename: string): GameStreams =>
-  ManagedRuntime.make(bunLayer(filename));
+/** A host-owned runtime over one storage. Both SQLite hosts fail with `StorageFault`. */
+export type GameStreams = ManagedRuntime.ManagedRuntime<GameStreamServices, StorageFault>;
+
+/** Add the checkpoint store to a host storage layer that serves {@link gameStreams}. */
+export const withCheckpoints = <A, E>(storage: Layer.Layer<A, E>) =>
+  CheckpointStore.layer.pipe(Layer.provideMerge(storage));
+
+export const memoryStreams = (): GameStreams =>
+  ManagedRuntime.make(withCheckpoints(MemoryStorage.layer(gameStreams)));

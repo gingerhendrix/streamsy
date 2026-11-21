@@ -53,6 +53,12 @@ export interface App {
   fetch: (request: Request) => Promise<Response>;
   /** Durable defence timers, exposed for restart recovery and for tests. */
   defenseTimers: DefenseTimers;
+  /**
+   * Catch a game's private action streams and active board up to canonical
+   * history. A host calls this after recovery so a crash between a canonical
+   * append and its publication does not wait for the next reader.
+   */
+  publish(gameId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -89,14 +95,16 @@ export function buildApp(deps: AppDeps): App {
     commandService,
     games: deps.stores.games,
     scheduler: deps.scheduler,
-    onResolved: async (gameId) => {
-      await Promise.all([
-        catchUpActions(deps.streams, gameId),
-        materializeBoard(deps.streams, gameId, activeGeneration(gameId)),
-      ]);
-    },
+    onResolved: (gameId) => publish(gameId),
     now,
   });
+
+  async function publish(gameId: string): Promise<void> {
+    await Promise.all([
+      catchUpActions(deps.streams, gameId),
+      materializeBoard(deps.streams, gameId, activeGeneration(gameId)),
+    ]);
+  }
 
   async function authenticate(request: Request): Promise<CapabilityRow | null> {
     const token = bearerToken(request.headers.get("authorization"));
@@ -178,6 +186,7 @@ export function buildApp(deps: AppDeps): App {
   );
   return {
     defenseTimers,
+    publish,
     async close() {
       lifetime.abort();
       defenseTimers.stop();
