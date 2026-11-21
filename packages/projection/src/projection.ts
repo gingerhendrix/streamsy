@@ -40,6 +40,7 @@ export { current } from "./current.ts";
 export { read } from "./snapshot.ts";
 
 export { bindings } from "./bindings.ts";
+
 export { tails, lag, caughtUp, Tails, type InputLag, type Lag } from "./catch-up.ts";
 
 export { decide } from "./decide.ts";
