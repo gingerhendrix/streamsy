@@ -19,6 +19,7 @@ import { CheckpointStore, Commit, Projection, ProjectionWakeup } from "@streamsy
 import { memoryHost } from "./support/memory-host.ts";
 import { eventually } from "./support/eventually.ts";
 import { triggersOf } from "../src/triggers.ts";
+import { encodeKey } from "../src/unit.ts";
 
 class Files extends Streamsy.json<Files>()("Triggers/Files", "folders/:folderId/files", {
   params: { folderId: Schema.String },
@@ -90,6 +91,112 @@ for (const [name, host] of [
 ] as const) {
   const bound = Protocol.bind(host, group).pipe(Layer.provideMerge(host));
 
+  for (const alarm of [false, true]) {
+    layer(Projection.Registry.layer.pipe(Layer.provideMerge(bound)))((it) =>
+      it.effect(
+        `${name}: ${alarm ? "wakeup" : "process"} replays and rescans only its generation`,
+        () =>
+          Effect.gen(function* () {
+            const projectionId = "generation-cursor";
+            const stream = Wake.address({}).id;
+            const prefix = "streamsy.projection.trigger.v1";
+            const legacyKey = encodeKey([prefix, projectionId, stream]);
+            const priorKey = encodeKey([prefix, projectionId, "1", stream]);
+            const currentKey = encodeKey([prefix, projectionId, "2", stream]);
+
+            yield* source("docs");
+            yield* (yield* Wake).create({});
+            const { offset } = yield* request("docs");
+            const records = yield* OwnerRecords;
+
+            yield* records.write(legacyKey, offset);
+            yield* records.write(priorKey, offset);
+
+            const runs: Array<string> = [];
+
+            const projection = Projection.process({
+              id: projectionId,
+              generation: 2,
+              params: { folderId: Schema.String },
+              inputs: { files: Files },
+              commit: Commit.atLeastOnce,
+              process: (_batch, unit) =>
+                Effect.sync(() => {
+                  runs.push(unit.params.folderId);
+                }),
+            });
+
+            const storage = yield* Storage;
+            const reads: Array<string | undefined> = [];
+            const registry = yield* Projection.Registry;
+            const attachOptions = { triggers: [Wake], durable: true };
+
+            const attach = (
+              alarm
+                ? ProjectionWakeup.attach(projection, attachOptions)
+                : Layer.build(Projection.attach(projection, attachOptions)).pipe(
+                    Effect.as(undefined),
+                  )
+            ).pipe(
+              Effect.provideService(Storage, {
+                ...storage,
+                messages: (streamId, range) => {
+                  if (streamId === stream) reads.push(range?.after);
+
+                  return storage.messages(streamId, range);
+                },
+              }),
+            );
+
+            const passed = registry.status.pipe(
+              Effect.map(([runner]) => runner !== undefined && Option.isSome(runner.lastPassAt)),
+            );
+
+            const saved = records.read(currentKey);
+
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const wakeup = yield* attach;
+
+                if (wakeup !== undefined) yield* wakeup.run;
+
+                expect(yield* eventually(passed, (done) => done)).toBe(true);
+                expect(runs).toEqual(["docs"]);
+                expect(reads).toEqual([ZERO_OFFSET]);
+                expect(yield* saved).toEqual(Option.some(offset));
+              }),
+            );
+
+            reads.length = 0;
+            const restarted = yield* attach;
+
+            if (restarted !== undefined) {
+              expect(yield* restarted.next).toEqual(Option.none());
+              yield* restarted.run;
+            } else {
+              yield* registry.retry(projection);
+            }
+
+            expect(yield* eventually(passed, (done) => done)).toBe(true);
+            expect(reads).toEqual([offset]);
+            expect(runs).toEqual(["docs"]);
+
+            reads.length = 0;
+            yield* registry.rescan(projection, Wake);
+
+            if (restarted !== undefined) yield* restarted.run;
+
+            expect(
+              yield* eventually(saved, (position) => Option.contains(position, offset)),
+            ).toEqual(Option.some(offset));
+            expect(reads).toEqual([ZERO_OFFSET]);
+            expect(yield* records.read(priorKey)).toEqual(Option.some(offset));
+            expect(yield* records.read(legacyKey)).toEqual(Option.some(offset));
+          }),
+      ),
+    );
+  }
+
   layer(bound)((it) =>
     it.effect(
       `${name}: trigger cursors are cached after reading and committing, then reload on restart`,
@@ -103,6 +210,7 @@ for (const [name, host] of [
 
           const attach = triggersOf(
             "cached-cursors",
+            1,
             [Wake, OtherWake],
             (id) => Option.some([id, id] as const),
             marks,
@@ -148,6 +256,7 @@ for (const [name, host] of [
 
         const triggers = yield* triggersOf(
           "interrupted-cursor",
+          1,
           [Wake],
           (id) => Option.some([id, id] as const),
           marks,

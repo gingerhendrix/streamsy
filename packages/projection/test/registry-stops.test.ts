@@ -258,7 +258,12 @@ for (const [storageName, local] of [
               const records = yield* OwnerRecords;
 
               const cursor = records.read(
-                encodeKey(["streamsy.projection.trigger.v1", declaration.id, Wake.address({}).id]),
+                encodeKey([
+                  "streamsy.projection.trigger.v1",
+                  declaration.id,
+                  String(declaration.generation),
+                  Wake.address({}).id,
+                ]),
               );
 
               expect(yield* cursor).toEqual(Option.none());

@@ -357,7 +357,14 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR>(
     const triggers =
       options.triggers === undefined || options.triggers.length === 0
         ? undefined
-        : yield* triggersOf(declaration.id, options.triggers, match, marks, host);
+        : yield* triggersOf(
+            declaration.id,
+            declaration.generation,
+            options.triggers,
+            match,
+            marks,
+            host,
+          );
 
     const add = (ids: ReadonlyArray<StreamId>) =>
       Effect.gen(function* () {

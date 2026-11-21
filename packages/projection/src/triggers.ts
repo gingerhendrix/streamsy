@@ -55,6 +55,7 @@ const invalid = (id: StreamId, message: string, cause: unknown) =>
 /** Persistent local ingestion on both hosts; process hosts also ingest and follow other owners. */
 export const triggersOf = <B>(
   projection: string,
+  generation: number,
   declarations: ReadonlyArray<WakeOutput<{}>>,
   match: (id: StreamId) => Option.Option<readonly [string, B]>,
   marks: ProjectionMarksApi,
@@ -105,7 +106,11 @@ export const triggersOf = <B>(
         });
       }
 
-      streams.set(id, encodeKey(["streamsy.projection.trigger.v1", projection, id]));
+      // A missing generation cursor starts at zero, including when only a legacy cursor exists.
+      streams.set(
+        id,
+        encodeKey(["streamsy.projection.trigger.v1", projection, String(generation), id]),
+      );
     }
 
     // A follower waits for a pass or reset after observing a page, rather than

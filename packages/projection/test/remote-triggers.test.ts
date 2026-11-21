@@ -76,9 +76,10 @@ const request = (id: string, wake: typeof Wake | typeof OtherWake = Wake) =>
     );
   });
 
-const declaration = (id: string, seen: Array<string>) =>
+const declaration = (id: string, seen: Array<string>, generation = 1) =>
   Projection.process({
     id,
+    generation,
     params: { id: Schema.String },
     inputs: { source: Source },
     commit: Commit.atLeastOnce,
@@ -90,8 +91,13 @@ const declaration = (id: string, seen: Array<string>) =>
 
 const match = (id: StreamId) => Option.some([id, id] as const);
 
-const cursorKey = (projection: string) =>
-  encodeKey(["streamsy.projection.trigger.v1", projection, Wake.address({}).id]);
+const cursorKey = (projection: string, generation = 1) =>
+  encodeKey([
+    "streamsy.projection.trigger.v1",
+    projection,
+    String(generation),
+    Wake.address({}).id,
+  ]);
 
 const offline = new TransportFault({
   operation: "test.remote",
@@ -125,7 +131,7 @@ for (const [label, local] of [
       const marks = yield* ProjectionMarks;
 
       for (const keep of ["storage", "records", "boundary"] as const) {
-        const triggers = yield* triggersOf("wrapped", [LocalWake], match, marks, "wakeup").pipe(
+        const triggers = yield* triggersOf("wrapped", 1, [LocalWake], match, marks, "wakeup").pipe(
           Effect.provideService(Storage, keep === "storage" ? storage : { ...storage }),
           Effect.provideService(OwnerRecords, keep === "records" ? records : { ...records }),
           Effect.provideService(CommitBoundary, keep === "boundary" ? boundary : { ...boundary }),
@@ -141,7 +147,7 @@ for (const [label, local] of [
 
   for (const durable of [false, true]) {
     it.effect(
-      `${label}: follower wakes without an A commit, resumes its page cursor and ends with scope (${durable})`,
+      `${label}: follower resumes within a generation and replays for a new one (${durable})`,
       () =>
         Effect.gen(function* () {
           yield* source("first");
@@ -216,6 +222,23 @@ for (const [label, local] of [
           );
           expect(polls).toBe(stoppedPolls);
           yield* Scope.close(secondScope, Exit.void);
+
+          const replayed: Array<string> = [];
+          const next = declaration(projection.id, replayed, 2);
+          yield* Layer.build(Projection.attach(next, { durable, triggers: [Wake] }));
+          expect(
+            yield* eventually(
+              Effect.sync(() => replayed.length),
+              (n) => n === 2,
+            ),
+          ).toBe(2);
+          expect(replayed).toEqual(["first", "second"]);
+          expect(yield* records.read(cursorKey(next.id, next.generation))).toEqual(
+            Option.some(appendedLater.offset),
+          );
+          expect(yield* records.read(cursorKey(projection.id))).toEqual(
+            Option.some(appendedLater.offset),
+          );
         }),
     );
   }
@@ -251,7 +274,7 @@ for (const [label, local] of [
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
 
-      const triggers = yield* triggersOf("race", [Wake], match, yield* ProjectionMarks).pipe(
+      const triggers = yield* triggersOf("race", 1, [Wake], match, yield* ProjectionMarks).pipe(
         Effect.provideService(Wake, {
           ...wake,
           wire: {
@@ -299,7 +322,7 @@ for (const [label, local] of [
         let inTransaction = false;
         let reads = 0;
 
-        const triggers = yield* triggersOf("pages", [Wake], match, marks).pipe(
+        const triggers = yield* triggersOf("pages", 1, [Wake], match, marks).pipe(
           Effect.provideService(Wake, {
             ...wake,
             wire: {
@@ -353,7 +376,7 @@ for (const [label, local] of [
       const marks = yield* ProjectionMarks;
       let broken = true;
 
-      const triggers = yield* triggersOf("atomic", [Wake], match, marks).pipe(
+      const triggers = yield* triggersOf("atomic", 1, [Wake], match, marks).pipe(
         Effect.provideService(OwnerRecords, {
           ...records,
           write: (key, value) =>
@@ -579,7 +602,7 @@ const it = {
         yield* request("two", OtherWake);
         const marks = yield* ProjectionMarks;
 
-        const triggers = yield* triggersOf("partial", [Wake, OtherWake], match, marks).pipe(
+        const triggers = yield* triggersOf("partial", 1, [Wake, OtherWake], match, marks).pipe(
           Effect.provideService(Wake, {
             ...wake,
             wire: { ...wake.wire, read: () => Effect.fail(offline) },
@@ -590,7 +613,7 @@ const it = {
         expect((yield* marks.summary("partial", 0)).fresh).toBe(1);
         expect(yield* triggers.next).toBe(false);
 
-        const gone = yield* triggersOf("gone", [Wake], match, marks).pipe(
+        const gone = yield* triggersOf("gone", 1, [Wake], match, marks).pipe(
           Effect.provideService(Wake, {
             ...wake,
             wire: { ...wake.wire, read: (id) => Effect.fail(new StreamGone({ id })) },

@@ -262,6 +262,7 @@ const it = {
 
         const triggers = yield* triggersOf(
           "concurrent-rescan",
+          1,
           [Wake],
           (id) => Option.some([id, id] as const),
           marks,
@@ -303,6 +304,7 @@ const it = {
 
         const restarted = yield* triggersOf(
           "concurrent-rescan",
+          1,
           [Wake],
           (id) => Option.some([id, id] as const),
           marks,
@@ -440,6 +442,7 @@ const it = {
 
       const triggers = yield* triggersOf(
         "rollback-rescan",
+        1,
         [Wake],
         (id) => Option.some([id, id] as const),
         marks,
@@ -493,13 +496,13 @@ const it = {
     Effect.gen(function* () {
       yield* populateWake(1);
       const marks = yield* ProjectionMarks;
-      const initial = yield* triggersOf("deadline-rescan", [Wake], match, marks);
+      const initial = yield* triggersOf("deadline-rescan", 1, [Wake], match, marks);
       yield* initial.read;
       const records = yield* OwnerRecords;
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
 
-      const triggers = yield* triggersOf("deadline-rescan", [Wake], match, marks).pipe(
+      const triggers = yield* triggersOf("deadline-rescan", 1, [Wake], match, marks).pipe(
         Effect.provideService(OwnerRecords, {
           ...records,
           read: (key) =>
