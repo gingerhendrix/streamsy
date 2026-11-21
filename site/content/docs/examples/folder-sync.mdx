@@ -1,60 +1,91 @@
 ---
 title: Folder sync
-description: Files in State streams, versioned edits with parents, live search and local mirrors that retain history.
+description: A multi-client file workspace on Bun and Cloudflare Durable Objects, pairing Durable State streams, SHA-256 blobs, wake-driven FTS5 search, a disk mirror CLI, and an agent filesystem.
 ---
 
-This example is a file workspace. A browser shows live folders, edits text and opens earlier versions. A sync CLI mirrors folders to disk. An agent filesystem exposes them to just-bash and Better FS Tools. Each reader follows the same folder State stream. Writes use a JSON API. Every accepted edit lands with the version it started from as its parent. The last append is the head, and history keeps concurrent edits.
+Folder sync is a collaborative file workspace that runs the **same Streamsy application on two hosts**: Bun (SQLite + local disk blobs) and Cloudflare Workers (Durable Objects + R2). Three kinds of clients follow the exact same folder streams:
 
-The source is in [`examples/folder-sync`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/folder-sync). Its README has the full contract, settings and measurements. Titled excerpts below come from that example. `// ...` marks omitted lines.
+- A **browser UI** (React + TanStack DB) for live folder browsing, text editing, full-text search, and viewing earlier file versions.
+- A **sync CLI** that mirrors selected folders bidirectionally to local disk and resumes queued writes across restarts.
+- An **agent filesystem** exposing synced folders to `just-bash` and Better FS Tools, including index-backed `grep --search`.
+
+Instead of locking files or rejecting stale edits, every write records the version it started from as its `parent`. Concurrent edits both land cleanly—the latest append becomes the head, and the folder's stream retains the full branching history.
+
+The full source lives in [`examples/folder-sync`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/folder-sync). Its README covers the complete HTTP contract, environment settings, and Bun vs. `workerd` measurements.
 
 ## Run it
 
-From the repository root:
+From the repository root, start the Bun server with a writer token and SQLite path:
 
 ```bash
 bun install --frozen-lockfile
 bun run build
-FOLDER_SYNC_WRITER_TOKEN=local-demo-token FOLDER_SYNC_DB=./folder-sync.sqlite bun run --cwd examples/folder-sync start
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token FOLDER_SYNC_DB=./folder-sync.sqlite \
+  bun run --cwd examples/folder-sync start
 ```
 
-Open http://localhost:1339 and enter `local-demo-token` in **Writer token**. Reads are public. Both hosts require the bearer token for writes. Bun keeps streams, owner records and index rows in SQLite. Blobs live in the adjacent `<database>.blobs/` directory. Without `FOLDER_SYNC_DB`, state is transient and blobs use a scoped disk directory.
-
-In another terminal, seed the docs:
-
-```bash
-FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync seed
-```
-
-The seed creates one folder per docs section and `docs/root` for root files. Matching content adds no version. It names the current head as its parent, so reseeding can replace user edits while retaining them in history.
-
-Start these in separate terminals with fresh mirror directories:
-
-```bash
-FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
-FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
-```
-
-Edit `docs/root/tutorial.mdx` in the browser or a writable mirror. The other readers update. Stop Bun, edit a mirror, then restart with the same database. Pending writes resume. Leave a browser draft open while a mirror changes its file, then save the draft. The save lands as the head; history shows both edits with the same parent. **Discard draft and reload** takes the current file.
-
-For local workerd, replace the Bun server command with:
+Or run the Cloudflare Worker locally on Miniflare/`workerd` (persisting Durable Objects and R2 under `.scratch/worker/`, no Cloudflare account required):
 
 ```bash
 FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync dev:worker
 ```
 
-This builds the browser and Worker and starts Miniflare on port 1339. Durable Objects and R2 persist locally under `.scratch/worker/`. `FOLDER_SYNC_WORKER_STATE` changes that directory. Use the same seed and mirror commands. No remote Cloudflare resources are needed.
+Open `http://localhost:1339` and paste `local-demo-token` into **Writer token** (reads are public; writes require the bearer token). In another terminal, seed the docs folders and start two writable disk mirrors:
 
-## State streams, durable versions
+```bash
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync seed
 
-| URL                                  | Collection | Key              |
-| ------------------------------------ | ---------- | ---------------- |
-| `/streams/folders`                   | `folder`   | `folderId`       |
-| `/streams/folders/<folderKey>/files` | `file`     | `path`           |
-| `/streams/wake`                      | `stream`   | source stream id |
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync \
+  --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-a" --write docs/root
 
-These routes use the stock read-only State server. PUT, POST and DELETE get 405. The registry holds folder IDs and titles. A live file upsert holds `path`, `version`, `parent`, `hash`, `size` and `author`. A delete is a tombstone upsert with `path`, `version`, `parent`, `author` and `deleted: true`. Headers carry the operation, txid and server timestamp. Each append holds one change.
+FOLDER_SYNC_WRITER_TOKEN=local-demo-token bun run --cwd examples/folder-sync sync \
+  --server http://localhost:1339 --dir "$PWD/examples/folder-sync/mirror-b" --write docs/root
+```
+
+Edit `docs/root/tutorial.mdx` in the browser or either mirror to watch all clients sync live. Leave a browser draft open while a mirror edits the same file, then save the draft—your save lands as the new head, and file history shows both edits sharing the same parent version.
+
+## Streams, versioned blobs, and dual-host search
+
+### Streams
+
+| Stream       | Kind             | Public URL                           | Collection / Key            | Role                                                         |
+| ------------ | ---------------- | ------------------------------------ | --------------------------- | ------------------------------------------------------------ |
+| `Folders`    | `Streamsy.state` | `/streams/folders`                   | `folder` / `folderId`       | Registry of folder IDs and titles                            |
+| `Files`      | `Streamsy.state` | `/streams/folders/<folderKey>/files` | `file` / `path`             | Per-folder versioned file metadata and delete tombstones     |
+| `FolderWake` | `Streamsy.wake`  | `/streams/wake`                      | `stream` / source stream ID | Single wake stream indexing the tail of every `Files` stream |
+
+Folder IDs can contain slashes (like `docs/root`), so `Files` encodes `:folderId` as hex UTF-8 (`FolderKey`) in stream URLs while API paths percent-encode the ID as one segment. All three stream routes are served read-only (`405` on direct writes).
+
+### Blob-first writes with parent history
+
+File bytes stay out of the stream logs so replays stay light:
+
+1. **Upload content-addressed blobs first.** Clients upload bytes (up to 64 MiB) to `PUT /api/blobs/<sha256>`. Bun writes and syncs blobs to `<db>.blobs/`; Cloudflare streams directly to R2 with SHA-256 verification.
+2. **Commit metadata through `Projection.decide`.** Clients send `PUT` or `DELETE` to `/api/folders/<id>/files/<path>` with `{ txid, author, parent, hash, size }`. `FolderStore` folds `folderView` via `Projection.decide`, verifies the blob exists, checks its 1,024-entry `txid` retry memory (making retries idempotent), skips unchanged hashes, and appends a new monotonic folder `version` (or tombstone upsert with `deleted: true`). `expectedOffset` only serializes appends—it never rejects a stale `parent`.
+
+### Wake-driven FTS5 search across hosts
+
+Search (`/api/search` and `/api/ls`) is powered by a single `Projection.process` (`search`) backed by SQLite FTS5:
+
+- **Two-phase indexing (`prepare` + `process`).** `prepare` streams at most 1 MiB of text per changed blob into a staging table _outside_ the checkpoint transaction so large blobs never bloat transaction hold times or JS memory. `process` then moves the staged text into FTS5 and updates the manifest table atomically under [`Commit.transaction`](/docs/projections/commits#transaction).
+- **Bun vs. Cloudflare wiring.** On Bun, `search` and `filesWake` attach directly to local `Files` commits (`Projection.attach(..., { durable: true })`). On Cloudflare, each folder lives in its own Durable Object (`FOLDERS`) while the registry, `FolderWake`, and FTS5 index live in one `IndexObject` (`INDEX`). Folder objects push wake rows to `IndexObject` over an internal `ObjectLink` (`/__wake`), and `IndexObject` attaches `search` with `triggers: [FolderWake]`—reading `Files` back through a read-only `/__files` link so each failing folder backs off independently. See [Trigger streams](/docs/projections/run#trigger-streams) and [Durable Objects](/docs/servers/cloudflare/objects).
+
+## Inside the workspace
+
+Snippet paths below are relative to `examples/folder-sync`. `// ...` marks omitted lines.
+
+### Streams and wake projection
+
+`server/streams.ts` declares the registry, hex-keyed per-folder file streams, and shared wake stream. `server/wake.ts` publishes every folder commit into `FolderWake`:
 
 ```ts title="server/streams.ts"
+/** Hex UTF-8 is an injective, canonical stream-id segment for opaque folder ids. */
+export const FolderKey = Schema.StringFromHex.check(Schema.makeFilter(Schema.is(FolderId)));
+
+export const Folder = Schema.Struct({ folderId: FolderId, title: Identifier });
+
+export type Folder = typeof Folder.Type;
+
 export class Folders extends Streamsy.state<Folders>()("FolderSync/Folders", "folders", {
   params: {},
   collections: { folder: { schema: Folder, key: "folderId" } },
@@ -64,41 +95,110 @@ export class Files extends Streamsy.state<Files>()("FolderSync/Files", "folders/
   params: { folderId: FolderKey },
   collections: { file: { schema: FileValue, key: "path" } },
 }) {}
+
+/** One row for each folder `Files` stream: its id and tail. Projections write it; clients read. */
+export class FolderWake extends Streamsy.wake<FolderWake>()("FolderSync/FolderWake", "wake", {
+  params: {},
+}) {}
 ```
 
-The owner derives the next positive folder sequence from its folded view and assigns it to every change, including tombstones. The sequence never goes down after deletion or restart. `Projection.decide` appends with the source offset it read, so competing writes fold and decide again. A file's version stays in its value when copied or replayed. Compare versions only for equality on the same path in the same folder. Offsets are read cursors. `expectedOffset` guards the append against a moved tail.
+```ts title="server/wake.ts"
+/** Each folder's `Files` writes give one upsert in the deployment's one wake stream. */
+export const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { folderId: FolderKey },
+  input: Files,
+  output: FolderWake,
+});
+```
 
-Folder IDs are opaque strings, including slashes. API URLs percent-encode the whole ID as one segment. Stream URLs use `FolderKey`, the hex of its UTF-8 bytes. `docs` becomes `646f6373`. IDs have a limit of 100 UTF-16 code units and 249 UTF-8 bytes. File paths are relative POSIX paths; encode each segment separately.
+### Versioned writes with `Projection.decide`
 
-Read from `offset=-1`, consume every page and follow `Stream-Next-Offset`. Live reads support long polling and SSE. A `reset` control clears the folder state, applies changes that follow it in that response and advances the cursor. A 410 clears state and replays from `-1`. A stored reset never sends a reader back to itself.
+`FolderStore` wraps `Projection.decide` over `folderView` to assign monotonic folder versions and periodically checkpoints every `CHECKPOINT_EVERY` (32) landed writes so folds stay fast without checkpointing on every single edit:
 
-## JSON writes with parents
+```ts title="server/folder-store.ts"
+const decide = <A, E>(
+  folderId: string,
+  decision: (view: FolderView) => Effect.Effect<{ value: A; items: Array<FileChangeItem> }, E>,
+) =>
+  Projection.decide(folderView.at({ folderId }), {
+    input: "files",
+    decide: ({ state, offsets }) =>
+      decision(state).pipe(
+        Effect.map(({ value, items }) => ({
+          value,
+          items:
+            items.length === 0
+              ? []
+              : DurableState.changes(Files.at({ folderId }), { offset: offsets.files }, items),
+        })),
+      ),
+  }).pipe(
+    Effect.catchTag("OffsetMismatch", () => Effect.fail(new WriteConflict({ folderId }))),
+    Effect.tap(({ appended }) => (appended ? checkpoint(folderId) : Effect.void)),
+    Effect.map(({ value }) => value),
+    Effect.provideContext(context),
+  );
+```
 
-Every write requires `Authorization: Bearer <writer token>`. Send JSON with `Content-Type: application/json`; JSON bodies have no size limit. Folder creation, file commits and deletes with another content type get 415 on both hosts.
+### Staging blobs in `prepare` for FTS5 search
 
-| Request                                 | Body                                   |
-| --------------------------------------- | -------------------------------------- |
-| `POST /api/folders`                     | `{ txid, folderId, title }`            |
-| `PUT /api/folders/<id>/files/<path>`    | `{ txid, author, parent, hash, size }` |
-| `DELETE /api/folders/<id>/files/<path>` | `{ txid, author, parent }`             |
+`search` uses `prepare` to stream blob prefixes before the transaction opens, and `process` commits FTS5 rows, manifest rows, and the folder's cursor together:
 
-`parent` is the version the edit started from, or `null` for an unseen path. The server records it without comparing it to the current head, so concurrent writes all land. A parent past the folder's latest version gets 400. `If-Match` and `If-None-Match` are unsupported and get 400.
+```ts title="server/search-index.ts"
+/** Each folder's SQL rows and input cursor commit together on the index owner. */
+export const search = Projection.process({
+  id: "folder-index",
+  params: { folderId: FolderKey },
+  inputs: { input: Files },
+  commit: Commit.transaction,
+  prepare: (batch, unit) => prepareIndexChanges(unit.params.folderId, batch.input.items),
+  process: (batch, unit, { prepared }) =>
+    batch.input.gone
+      ? clearIndexFolder(unit.params.folderId)
+      : applyIndexChanges(unit.params.folderId, prepared),
+});
+```
 
-The owner first checks its retry memory of the last 1,024 changes by txid, returning the original result for a repeat. Reusing a txid for another path or change kind gets 400. Next it checks the current hash: identical content returns the current head without appending. Otherwise it assigns a version and appends. Success returns `{ version, parent, txid, hash }` with `ETag: "<version>"`. GET returns blob bytes with that version ETag, or 404; a tombstone returns 404 with `deleted: <version>`.
+### Linking Durable Objects on Cloudflare
 
-Retry network errors or 5xx with the same request. Wait for the answer's txid on the stream; a no-op can return another writer's txid. Deleting an absent path returns `200 {}` with no txid and nothing to wait for. Creating the same folder ID and title is also a no-op. Another title gets 409.
+On Cloudflare, `ObjectLink.make` defines narrow cross-object permissions under `/__` prefixes (blocked with `404` at the public Worker edge), and `IndexObject` wakes `search` from `FolderWake`:
 
-## Upload blobs before committing
+```ts title="worker/links.ts"
+/** Folder objects append wake rows to the index object, which owns the wake stream. */
+export const wakeLink = ObjectLink.make({
+  group: Streamsy.group(FolderWake),
+  prefix: "/__wake",
+  placement: Placement.byKey(() => "index"),
+  // The index object creates the one wake stream at start.
+  access: "append",
+});
 
-All content, including small text, uses a SHA-256 blob hash. The file limit is 64 MiB.
+/** Internal protocol reads preserve missing/gone outcomes for the projection kernel. */
+export const filesLink = ObjectLink.make({
+  group: Streamsy.group(Files),
+  prefix: "/__files",
+  placement,
+  access: "read",
+});
+```
 
-Upload bytes with `PUT /api/blobs/<hash>`, the writer token and `Content-Length`. Success is `200 { "hash": "<hash>" }`. A duplicate writes nothing. A wrong hash gets 400 and an oversized body gets 413. Then commit JSON with the parent, hash and size. A missing blob gets `409 { "error": "blob-missing", "hash": "..." }`; upload and commit again.
+```ts title="worker/index-object.ts"
+export class IndexObject extends StreamsyObject.make<
+  Env,
+  Layer.Success<ReturnType<typeof indexLayer>>,
+  Files
+>({
+  app: IndexApp,
+  layer: indexLayer,
+  links: (env) => [filesLink.client(env.FOLDERS)],
+  wakeups: [ProjectionWakeup.attach(search, { triggers: [FolderWake] })],
+}) {}
+```
 
-HEAD returns the stored size or 404. GET streams immutable bytes. Bun stores blobs on disk and syncs them before acknowledging. The Worker streams straight to R2 with SHA-256 verification. Local workerd requires `Content-Length`; Bun also accepts unknown-length streams. On deployed Cloudflare, the edge supplies a declared length for an upload sent without one. Failed or abandoned commits can leave orphan blobs.
+### Browser and sync CLI
 
-## Browser and sync CLI
-
-The browser uses one `createStreamDB` for the registry and one for the open folder. React reads TanStack DB live queries. A client adapter turns tombstone upserts into State deletes for the live collections. An edit appears optimistically, uploads its blob, sends its base version as `parent` and waits for the response's txid:
+The browser opens one `createStreamDB` for `Folders` and one for the active `Files` stream (adapting tombstone upserts into State deletes for live TanStack DB collections). Edits show optimistically, upload their blob, commit with their base `parent`, and await the returned `txid`:
 
 ```ts title="src/db.ts"
 mutationFn: async ({ file, base, txid, bytes, onAccepted }: EditFile) => {
@@ -108,39 +208,24 @@ mutationFn: async ({ file, base, txid, bytes, onAccepted }: EditFile) => {
 },
 ```
 
-History replays the folder stream and filters by path. Earlier content comes from the blob hash in the saved value. Markdown and MDX display without executing HTML or JSX. Snippets render as escaped text. Drafts stay in memory and are lost on navigation or reload.
+File history simply replays the folder's stream filtered by `path` and fetches earlier blobs by hash.
 
-The CLI stores a cursor per folder and each path's version, remote hash and local hash. It bootstraps by replay, then follows one wake stream. Wake rows select the dirty folders to catch up. Each folder cursor settles before the page's wake cursor, so a restart safely replays unfinished work. A local edit names the version its disk copy came from as `parent`, or `null` when no version was observed. A pulled change installs at the original path; a queued local edit can land afterwards and become the head. History retains both. A delete without an observed version sends no request. Read-only edits are backed up before restoration.
+The **sync CLI** bootstraps each selected folder, then holds a single live connection to `/streams/wake` instead of one connection per folder. Whenever `FolderWake` marks a folder dirty, the CLI pulls that folder's changes and persists the folder cursor _before_ advancing its wake cursor—so restarts safely replay any unfinished work. Local SQLite tables track remote/local hashes and pending uploads under `.folder-sync/content/<hash>`, resuming interrupted writes on restart and stopping with `HistoryRewound` if a server tail ever moves backward.
 
-Before installing resumed files, the CLI compares each saved cursor with a HEAD tail. A tail lexicographically before the cursor stops it with `HistoryRewound`. Resolve the server restore or use a fresh mirror. A reset clears state and keeps the cursor moving; a 410 replays from `-1`.
+The **agent filesystem** (`createAgentFileSystem` in `agent/index.ts`) builds on the same stream readers to mount `/<folderId>/<path>` for `just-bash` and Better FS Tools, adding FTS5-backed `grep --search`.
 
-Pending operations reference immutable files under `.folder-sync/content/<hash>`. SQLite keeps observations and delivery state. Restarts resume those writes. A 401 or 403 stops with pending bytes retained. Inspect rejected commit summaries with `sync rejected --dir <mirror>`. Symlinks, special files and files over 64 MiB are skipped. `--folders` selects folders; `--write` defaults to none. The exported runner gets its folder layout from `folderDirectory(id)`, which must return relative, disjoint roots inside the mirror.
+## Going further
 
-## Agent filesystem
+### Production notes
 
-`createAgentFileSystem({ server, folders, writable, token })` in `agent/index.ts` returns the shared core, just-bash filesystem, `bash` session and Better FS Tools adapter. Files appear at `/<folderId>/<path>`. Discovery follows the registry; file maps follow folder streams. `folderDirectory(id)` uses the CLI's mapping rules. Writable folders default to none.
+- **No State compaction or blob garbage collection.** Bootstrap and history replay every retained folder event, and failed/abandoned uploads can leave orphan blobs with no quota enforcement.
+- **Cross-object folder creation on Cloudflare.** `IndexObject` creates the folder's `Files` stream in `FOLDERS` before registering it in `Folders`; a crash between the two leaves an unlisted empty stream that a retry cleanly registers.
+- **Eventual search consistency.** Search reads lag folder writes by one projection pass; a missing blob keeps file metadata without search text until a later write or rebuild.
+- **Mirror state and auth.** Local mirror SQLite files have no schema migration (use fresh directories when upgrading), and authentication is a single shared bearer token for writes with public reads. See the [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/folder-sync) for full contract details and local Bun vs. `workerd` timings.
 
-Content writes name a version seen by a read or successful write as their parent. An unread path uses `null`, even when listing found it. Deletes may use a listed version without reading the bytes. A stale parent creates a fork in history rather than a refusal. An explicit `absent` or `version` precondition is checked against a fresh snapshot before commit and can fail with `EEXIST` or `ESTALE`, but the check is not atomic with commit. The adapter advertises atomic writes and no compare-and-swap.
+### Related examples
 
-Shell globs use the session snapshot. List again after external edits. Empty directories are session-only. Links, persistent modes and atomic rename are unsupported. Handles buffer whole files. Ordinary grep keeps its usual flags and stdin. `grep --search <fts-query>` uses indexed candidates and confirms matches against file bytes. At 100 candidates it reports possible incompleteness. Requests support cancellation and bounded retries.
-
-## Search follows folder streams
-
-`/api/ls` lists live metadata with optional folder, prefix and glob filters. `/api/search?q=<query>&folder=<id>` searches current text with FTS5, relevance ordering and a 100-hit limit. Bad queries get 400. Snippets are `{ text, match }` segments. Binary and deleted files have no search text. Blob text is capped at 1 MiB. Preparation reads one blob prefix at a time instead of holding every blob's text in memory.
-
-Bun attaches the search projection to local Files commits. A separate attached wake projection publishes folder tails. On the Worker, folder objects publish those rows through an internal ObjectLink. The index object attaches the same search projection with `triggers: [FolderWake]`, so each source id selects its own `folderId` binding, reading Files through a read-only `/__files` link. A failing folder backs off alone. Index rows and consumed source cursors commit together. Every attached projection is durable: source commits mark wake production, and trigger ingestion commits the wake cursor with pending search marks. At startup, unread wake rows or unfinished marks arm the index alarm with no new folder write. Bun also resumes pending marks after restart. Reads are eventually consistent. A missing blob keeps metadata without text and does not stop later changes.
-
-## Measurements and limits
-
-Single local runs used 33 files in 6 folders and warm OS caches. A fresh CLI bootstrap took 0.476 s on Bun and 0.539 s on local workerd. Both made 19 completed GET requests and read 268,760 decoded body bytes. The Worker transferred 76,585 body bytes with gzip. Peak CLI RSS was 113,600 KiB on Bun and 115,416 KiB on the Worker. The earlier Bun version took 0.517 s, 34 requests and 254,248 body bytes. These are observations, not a throughput comparison.
-
-A 32 MiB binary upload and second-client pull took 0.719 s on Bun and 1.266 s on local workerd. Both copies matched SHA-256. The README gives the upload, pull and memory breakdowns, commit IDs and measurement method. Harness memory is not a measurement of workerd memory.
-
-- Bootstrap and history replay every retained event. There is no State compaction.
-- There is no blob orphan sweep, multipart upload or local cache garbage collection. Storage, pending sources and backups have no quota.
-- Old mirror state has no migration. Use fresh directories. The folder stream supplies versions and heads; older unused view checkpoints and cursor tables are not migrated into the current view.
-- A restored missing blob is not reindexed until another write or an index rebuild.
-- Sync scans hash selected files. An editor can still save during the final local read-to-rename window. A stopped delete during an interrupted first install can be restored on restart.
-- Worker creation spans two objects. The folder stream is created before registration; a crash between them can leave an unlisted empty folder, and a create retry registers it.
-- Pending marks cover commits made while the attach runs. A folder written by an older build, or while no attach ran, stays unindexed until its next write.
-- The browser has no phone cache. R2 verification and restart checks run on local workerd. Earlier deployed checks covered the HTTP smoke and clients; the attached indexing and startup catch-up changes have local workerd coverage.
+- [Yjs editor](/docs/examples/yjs-editor) — another Cloudflare Durable Object app using `Placement.byRoute`, `StreamsyObject.make`, and `ProjectionWakeup.attach`.
+- [Doom](/docs/examples/doom) — connects three Durable Object classes with `ObjectLink` and wake projections.
+- [Issue tracker](/docs/examples/issue-tracker) — a smaller Durable State + TanStack DB browser app.
+- [Wake streams guide](/docs/streams/wake) — how `Streamsy.wake`, `Projection.wake`, and `followWake` work.

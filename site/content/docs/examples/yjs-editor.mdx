@@ -1,17 +1,67 @@
 ---
 title: Yjs editor
-description: A collaborative ProseMirror editor on Streamsy and Cloudflare Durable Objects, pairing append-only Yjs update logs with expiring awareness streams and alarm-driven snapshot compaction.
+description: A collaborative ProseMirror editor on Streamsy and Cloudflare Durable Objects, pairing binary Yjs update logs with expiring awareness streams and alarm-driven snapshot compaction.
 ---
 
-Open the [live Yjs editor](https://yjs-editor.streamsy.dev), choose **Create room**, then use **Copy room link** to open that room in a second browser window. Text, selections, cursors, and display names sync as you edit. Rooms are public. Anyone with the link can edit, so keep private data out. Keep editing until a snapshot is built, then open the same link in a third window. It fetches one compacted snapshot and catches up with the updates after it. Each room also links to its raw update stream under `/v1/stream`, which you can inspect directly with `curl`.
+This example is a live collaborative ProseMirror editor built on Streamsy and Cloudflare Durable Objects. Browser peers sync text, selections, cursors, and display names in real time over binary Yjs CRDT streams—and as edits accumulate, a background projection merges updates into snapshots so late-joining peers load fast without replaying the entire edit history.
 
-## Two windows editing, then a third joining
+Try the [live Yjs editor](https://yjs-editor.streamsy.dev): click **Create room**, copy the room link into a second window, and edit in both. Rooms are public (anyone with the link can edit, so avoid private data), and each room links directly to its raw `/v1/stream` update log for inspection with `curl`.
+
+The full source lives in [`examples/yjs-editor`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/yjs-editor) (with the provider in `packages/y-durable-streams`).
+
+## Run it locally
+
+Run the Worker locally on Miniflare/`workerd` from the repository root (no Cloudflare account required):
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/yjs-editor dev:worker
+```
+
+Open `http://127.0.0.1:1340` (override with `PORT` and `YJS_WORKER_STATE`). To trigger a compaction snapshot after just a few keystrokes instead of waiting for 1 MiB of edits, lower `COMPACTION_THRESHOLD`:
+
+```bash
+COMPACTION_THRESHOLD=1500 bun run --cwd examples/yjs-editor dev:worker
+```
+
+Edit across two windows until you pass 1,500 bytes, then open the room link in a third window to watch it load the compacted snapshot and tail only the remaining updates. You can also run the `workerd` integration suite with `bun run --cwd examples/yjs-editor test:worker`.
+
+## Updates, awareness, and snapshot compaction
 
 ![Concept diagram. Peer A posts each Yjs update to the document's .updates stream, and peer B follows that stream with long-polling. Both peers exchange presence through an awareness stream with a one-hour TTL, followed with server-sent events. A compaction fold follows .updates and merges the document into a snapshot after every mebibyte of new updates. A new peer loads the snapshot, then reads only the tail of .updates after it.](/docs/examples/yjs-editor-concept.svg)
 
-Each document uses four kinds of Streamsy stream under `/v1/stream/yjs/:service/docs/:docPath/`: `.updates`, `.snapshots/<offset>_snapshot`, `.awareness/<name>`, and `.awareness-index`.
+Every document maps to four Streamsy streams under `/v1/stream/yjs/:service/docs/:docPath/`:
 
-**Windows one and two sync through `.updates` and `.awareness`.** Each browser creates a `Y.Doc`, attaches an `Awareness` instance, and binds both to ProseMirror via `y-prosemirror` and `YjsProvider`. `connect()` starts syncing the room. The view allows edits only while the provider is connected. Snippet titles are relative to `examples/yjs-editor`. `// ...` marks omitted lines.
+| Stream                         | Format & live mode     | Role                                                                                       |
+| ------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------ |
+| `.updates`                     | Binary lib0, long-poll | Append-only Yjs CRDT document updates; server never resolves conflicts on write.           |
+| `.snapshots/<offset>_snapshot` | Binary, 1 MiB chunks   | Merged `Y.encodeStateAsUpdate` snapshot published by the compaction fold.                  |
+| `.awareness/<name>`            | Binary lib0, SSE       | Ephemeral cursors, selections, and names with `Stream-TTL: 3600` (recreated idempotently). |
+| `.awareness-index`             | JSON                   | Lists named awareness streams so deleting a document removes all of its streams together.  |
+
+### Decoupled compaction and discovery
+
+Snapshot creation and snapshot discovery are intentionally separated so write and join requests stay fast:
+
+- **Alarm-driven compaction (`Projection.fold` + `ProjectionWakeup.attach`).** Every `.updates` commit records a durable pending mark in the same SQLite transaction, waking the Durable Object alarm off the write path. The `compaction` fold tracks only three numbers in checkpoint state (`bytes`, `pending`, and the latest `snapshot` offset). Once `pending` crosses `COMPACTION_THRESHOLD` (1 MiB in production), it loads the prior snapshot into a `Y.Doc`, side-reads `.updates` to the tail, writes the merged snapshot in 1 MiB chunks, deletes the prior snapshot, and commits the new snapshot and fold state in one `Commit.transaction`.
+- **Zero-work discovery (`Projection.read`).** When a third window joins and requests `GET ?offset=snapshot`, the Worker does no Yjs merging—it reads `state.snapshot` straight from the fold checkpoint and returns a `307` redirect to `<offset>_snapshot` (or `-1` if no snapshot exists yet) with `Cache-Control: private, max-age=5`. The peer downloads the snapshot with `stream-next-offset`, then tails only updates after that offset.
+
+Compaction never prunes `.updates`, so lagging peers keep reading without interruption; snapshots optimize join latency and transfer size rather than disk usage.
+
+### Durable Object topology
+
+![Architecture diagram. The browser runs the ProseMirror editor and YjsProvider, and links the raw update stream. A Cloudflare Worker sends /v1/yjs document requests to the DocumentObject named after the document, and /v1/stream reads through router(placement). In the object, the Yjs routes forward to the .updates and .awareness streams and read the compaction fold's state for snapshot discovery and the size budget. Http.routes serves all four streams read-only. The object's alarm runs the compaction fold, which keeps a checkpoint of byte counts and the snapshot offset and publishes a .snapshots stream stored as 1 MiB messages.](/docs/examples/yjs-editor-architecture.svg)
+
+All four streams for a document share one `DocumentObject` via [`Placement.byRoute`](/docs/servers/cloudflare/objects), keeping `.updates`, `.snapshots`, `.awareness*`, and the fold checkpoint in one SQLite database so compaction and document deletion stay transactional. See [Cloudflare alarms and projections](/docs/servers/cloudflare/alarms#projections).
+
+## Inside the editor and Durable Object
+
+Snippet paths below are relative to `examples/yjs-editor`. `// ...` marks omitted lines.
+
+### Binding ProseMirror to `YjsProvider`
+
+Each browser connects a `Y.Doc` and `Awareness` instance to ProseMirror via `y-prosemirror` and `YjsProvider`, allowing edits only while connected:
 
 ```ts title="src/main.ts"
 const doc = new Y.Doc();
@@ -47,19 +97,9 @@ provider.on("error", renderError);
 void provider.connect();
 ```
 
-Local edits produce binary Yjs CRDT updates, which the provider `POST`s to `/v1/yjs/:service/docs/:docPath`. The server appends them to `.updates` as lib0 length-prefixed frames; a producer batch can carry several frames. The other window follows `.updates` with long-polling (`live=true`) and applies each update as it arrives. Because Yjs updates commute, the server never resolves edit conflicts on write.
+### Alarm-driven compaction fold
 
-Cursors, selections, and names travel separately as lib0-framed updates on `.awareness/<name>`, followed over SSE (`live=true`). Awareness streams carry `Stream-TTL: 3600`: an idle stream expires after an hour, and the next `POST` recreates it idempotently. Joining windows do not replay old cursors. Named awareness streams are listed in `.awareness-index` as `{ name, createdAt }` JSON entries so deleting a document removes its updates, snapshot, awareness streams, and fold checkpoint in one transaction.
-
-**Window three joins after a snapshot.** Replaying `.updates` from `-1` gets slower as edits accumulate. Once a background fold has compacted the document, the third window requests `GET ?offset=snapshot`, receives a `307` redirect to `<offset>_snapshot` (or `-1` before any snapshot exists) with `Cache-Control: private, max-age=5`, and reads the merged `Y.encodeStateAsUpdate` payload along with `stream-next-offset`. From there, it tails only the updates after that offset.
-
-Compaction does not prune `.updates`. Update history remains intact for lagging readers, so snapshots reduce transfer and load time for new peers rather than disk usage.
-
-## Background folding and snapshot discovery
-
-Snapshot creation and snapshot discovery are intentionally decoupled.
-
-**Background folding runs on an alarm.** `compaction` is a `@streamsy/projection` fold (`Projection.fold`) over `Updates`. Its `FoldState` keeps only three small values: total folded `bytes`, `pending` bytes since the last snapshot, and the latest `snapshot` offset. When a write commits to `.updates`, a commit hook records a durable pending mark in the same SQLite transaction, and the Durable Object alarm runs the fold off the write request path through `ProjectionWakeup.attach(compaction)`:
+`compaction` tracks total and pending bytes in `FoldState`. Updates already covered by `state.snapshot` still increment `bytes` without re-triggering merges across a backlog, and `retry: { maxAttempts: 5 }` handles transient failures while leaving committed updates intact:
 
 ```ts title="worker/compaction.ts"
 const FoldState = Schema.Struct({
@@ -101,9 +141,9 @@ export const compaction = Projection.fold({
 });
 ```
 
-When the alarm runs under `Commit.transaction` and `pending` reaches `COMPACTION_THRESHOLD` (code default `1024 * 1024`, or 1 MiB), `publishSnapshot` loads the prior snapshot into a `Y.Doc`, side-reads `.updates` to the log's tail, writes the merged bytes in 1 MiB `SNAPSHOT_CHUNK` messages, removes the previous snapshot, and commits the new snapshot and fold state together. Updates already covered by `state.snapshot` still add to `bytes` but not `pending`, preventing repeated merges across a backlog. Compaction failures leave the committed update intact, and the fold allows up to five attempts with backoff.
+### Request-time snapshot discovery
 
-**Discovery reads the checkpoint at request time.** `GET ?offset=snapshot` does no Yjs merging; it reads `snapshot` straight from the fold checkpoint and returns the `307`:
+`GET ?offset=snapshot` reads `compaction`'s checkpoint with `Projection.read` and issues the `307` redirect:
 
 ```ts title="worker/document.ts"
 const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL, id: string) {
@@ -124,13 +164,9 @@ const snapshotDiscovery = Effect.fn("Yjs.snapshotDiscovery")(function* (url: URL
 });
 ```
 
-## Deployment and Durable Object wiring
+### Placement and `DocumentObject` wiring
 
-On Cloudflare, the Alchemy stack deploys one Worker, static assets, and a SQLite Durable Object namespace (`DocumentObject`). Each document ID (`yjs/<service>/docs/<path>`) maps to its own `DocumentObject`, keeping the streams and fold checkpoint together so compaction and document deletion stay transactional.
-
-![Architecture diagram. The browser runs the ProseMirror editor and YjsProvider, and links the raw update stream. A Cloudflare Worker sends /v1/yjs document requests to the DocumentObject named after the document, and /v1/stream reads through router(placement). In the object, the Yjs routes forward to the .updates and .awareness streams and read the compaction fold's state for snapshot discovery and the size budget. Http.routes serves all four streams read-only. The object's alarm runs the compaction fold, which keeps a checkpoint of byte counts and the snapshot offset and publishes a .snapshots stream stored as 1 MiB messages.](/docs/examples/yjs-editor-architecture.svg)
-
-All four stream definitions (`Updates`, `Snapshots`, `Awareness`, and `AwarenessIndex`) share one placement owner so every stream of a document lands in the same Durable Object. The Worker forwards `/v1/yjs/...` requests to that `DocumentObject` by document ID, sends `/v1/stream/...` reads through Streamsy's `router` using this `placement`, and falls back to `env.ASSETS` for the editor app:
+All four document streams map to the same owner name, and `DocumentObject` mounts them read-only under `/v1/stream` alongside `/v1/yjs/*` (stripping headers like `Stream-Closed` on forwarded appends so a disconnecting peer cannot close the room):
 
 ```ts title="worker/placement.ts"
 export const placement = Placement.byRoute([
@@ -140,8 +176,6 @@ export const placement = Placement.byRoute([
   rule({ stream: AwarenessIndex, owner: ({ document }) => document }),
 ]);
 ```
-
-Inside each `DocumentObject`, `StreamsyObject.make` mounts the raw backing streams read-only under `/v1/stream` alongside the `/v1/yjs/*` protocol routes, attaches the `compaction` fold to the object's alarm wakeup, and provides Durable Object storage plus `COMPACTION_THRESHOLD`. When the Yjs routes forward `POST` appends onto Streamsy's `Http.app`, they copy only producer headers and strip headers such as `Stream-Closed` so a disconnecting peer cannot close the shared document:
 
 ```ts title="worker/objects.ts"
 export class DocumentObject extends StreamsyObject.make({
@@ -160,20 +194,16 @@ export class DocumentObject extends StreamsyObject.make({
 }) {}
 ```
 
-## Limits and upstream differences
+## Going further
 
-- **SQLite and memory bounds.** Durable Object SQLite rejects values above 2 MB, so update appends over 1.5 MiB return `413` and snapshots are split into 1 MiB messages. Compaction also loads the whole `Y.Doc` into the object's 128 MB memory limit. The write budget keeps the demo below the document sizes that exhausted the object during earlier tests.
-- **Approximate 8 MiB write budget.** Document `POST` returns `413` (`DOCUMENT_TOO_LARGE`) once folded `bytes` exceeds 8 MiB; reads keep working. Because the budget reads the alarm-updated fold checkpoint rather than the live log tail, writes can land past 8 MiB (a check on the current demo accepted about 8.4 MB before rejecting).
-- **Upstream conformance and reconnect behavior.** Against upstream `yjs-conformance.test.ts` (commit `461b4026`, run on local `workerd` with a 1,500-byte threshold), 59 of 68 tests pass, 3 Node-server tests are skipped, and 6 fail. Four expect a `__ds` snapshot subscription API (`404`). The other two use raw writes to simulate TTL expiry or seed a legacy awareness index. The read-only mount refuses those writes (`405`). To avoid [losing edits on reconnect](https://github.com/durable-streams/durable-streams/issues/413), the editor pauses editing when disconnected and asks you to reload. Room links carry the Nano ID in the URL fragment, and the demo has no authentication, room registry, or offline persistence.
+### Production notes
 
-## Run it locally
+- **Durable Object SQLite and memory bounds.** Durable Object SQLite rejects values over 2 MB, so update appends over 1.5 MiB return `413` and snapshots are chunked into 1 MiB messages. Because compaction loads the full `Y.Doc` inside the object's 128 MB isolate limit, `POST` rejects further writes (`413 DOCUMENT_TOO_LARGE`) once folded `bytes` passes an approximate 8 MiB budget (checked against the alarm-updated checkpoint, so a burst can land slightly above 8 MiB).
+- **Disconnect handling and upstream behavior.** To avoid [losing edits on reconnect](https://github.com/durable-streams/durable-streams/issues/413), the editor pauses editing when disconnected and prompts a reload. Against upstream `yjs-conformance.test.ts` (`461b4026`), 59/68 tests pass (3 Node-only skipped; 6 fail due to an unimplemented `__ds` subscription endpoint and read-only stream mounts returning `405`).
+- **Room access and offline storage.** Room IDs sit in the URL fragment with no auth, room registry, or offline persistence.
 
-Build the workspace packages from the repository root, then run the Worker on local Miniflare/`workerd` (no Cloudflare account required):
+### Related examples
 
-```bash
-bun install
-bun run build
-bun run --cwd examples/yjs-editor dev:worker
-```
-
-Open `http://127.0.0.1:1340`, create a room, and open its copied link in a second window. Type in either window and inspect the room's linked stream. For local runs, `PORT` (default `1340`) and `YJS_WORKER_STATE` (default `examples/yjs-editor/.scratch/worker`) override the listener and state directory. To reach a snapshot with fewer edits, restart the local worker with `COMPACTION_THRESHOLD=1500 bun run --cwd examples/yjs-editor dev:worker`. Make enough edits to cross 1,500 bytes of updates before opening the room link in a third window. The Cloudflare deployment sets its own threshold to 1 MiB in `alchemy.run.ts`. Run the `workerd` integration suite with `bun run --cwd examples/yjs-editor test:worker`.
+- [Doom](/docs/examples/doom) — binary input streams with server-side snapshot projections and native stream forks on Cloudflare Durable Objects.
+- [Folder sync](/docs/examples/folder-sync) — another multi-stream Cloudflare Durable Object app using `Placement.byRoute` and `ProjectionWakeup.attach`.
+- [Cloudflare Durable Objects guide](/docs/servers/cloudflare) — placement, `StreamsyObject.make`, and alarm wakeups.

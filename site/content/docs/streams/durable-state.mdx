@@ -106,7 +106,7 @@ A control passes through `changes` unchanged. With an `offset`, a control that h
 
 ## Conditional writes
 
-A State stream takes `expectedOffset` and `decide` like any other stream. See [Conditional writes](/docs/streams/write#conditional-writes). Pass the offset to `DurableState.changes` as well, so each change records the offset that the append checks. The [issue tracker](/docs/examples/issue-tracker#5-read-fold-append) does this in `IssueTracker.mutate`.
+A State stream takes `expectedOffset` and `decide` like any other stream. See [Conditional writes](/docs/streams/write#conditional-writes). Pass the offset to `DurableState.changes` as well, so each change records the offset that the append checks. The [issue tracker](/docs/examples/issue-tracker#conditional-writes-with-decide) does this in `IssueTracker.mutate`.
 
 ## Read and fold rows
 

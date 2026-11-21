@@ -1,11 +1,18 @@
 ---
 title: Bugsy
-description: Send issue commands to a server that keeps SQL tables, board rows, label counts and a change feed up to date.
+description: An event-sourced issue-tracker backend combining five workspace input streams, transactional SQL tables, and three derived output streams.
 ---
 
-Bugsy is the server side of an issue tracker. You send it commands: create an issue, change its status, assign it. The server stores each command as a fact in a stream. Two projections then keep the rest up to date: SQL tables for the API, and output streams with board cards, label counts and a feed of accepted changes. A client can follow those streams over HTTP. The example has no browser, so this page has no screenshot.
+Real applications rarely need just one view of their events. An issue tracker often needs relational SQL tables for API queries and notification drafts alongside live derived streams so clients can follow board cards, label counts, and accepted transitions over HTTP.
 
-The full source is in [`examples/bugsy`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy).
+Bugsy is a headless issue-tracker server built on five workspace input streams and **two independent projections** running side by side:
+
+- **`issueRows` (`Projection.process` + `Commit.transaction`)** writes relational SQL tables (`issues`, `issue_labels`, `issue_changes`, `notification_drafts`, and catalog tables) atomically in the same transaction as its checkpoint.
+- **`tracker` (`Projection.mapAccumBatch` + `Commit.producer`)** folds the same five inputs into private workspace state and emits three read-only output streams (`Board`, `LabelCounts`, and `Transitions`) plus an ETag-cached summary route.
+
+Commands are validated optimistically with [`Projection.decide`](/docs/projections/state#read-decide-append) over a lightweight in-memory fold (`commandView`). Storage runs on Bun SQLite by default and also supports Postgres and MySQL via `@streamsy/storage`.
+
+The full source lives in [`examples/bugsy`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy).
 
 ## Run it
 
@@ -17,28 +24,61 @@ bun run build
 bun run --cwd examples/bugsy start
 ```
 
-Open http://localhost:1340. The server keeps its data in a SQLite file in `/tmp`. Set `BUGSY_DB` to use a different file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy) lists the other settings and the smoke scripts.
+The server listens on `http://localhost:1340` with a temporary SQLite file in `/tmp`. Set `BUGSY_DB` to choose a persistent SQLite path, or set `STREAMSY_PG_URL` / `STREAMSY_MYSQL_URL` to run on Postgres or MySQL.
 
-## Architecture
+Send a command to the `live` workspace and read the derived board stream:
+
+```bash
+curl -X POST http://localhost:1340/api/workspaces/live/commands \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"create","commandId":"c1","issueId":"i1","projectId":"p1","title":"First issue"}'
+
+curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
+```
+
+You can also run the end-to-end smoke scripts (`bun run smoke:bugsy` and `bun run smoke:bugsy-serve`). See the [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/bugsy) for workspace config, Postgres/MySQL dialect tests, and all settings.
+
+## Five inputs, two independent projections
 
 ![Architecture diagram. A client posts a command to the API route. transact appends one fact to the input streams with expectedOffset. The issueRows projection writes SQLite application tables. The tracker projection writes three output streams. Watchers run both projections when an input changes. Commands fold a value view in memory. Serve routes publish the results read-only.](/docs/examples/bugsy-architecture.svg)
 
-Each number in the diagram is also a section number below.
+Every workspace (`:workspaceId`) owns five input streams, three derived output streams, and three projections:
 
-| Step | What happens                                                         | Streamsy feature                                              | File                               |
-| ---- | -------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------- |
-| 1    | Five streams for each workspace hold the input facts                 | `Streamsy.json`, `Streamsy.state`                             | `server/streams.ts`                |
-| 2    | A command becomes one fact, appended only if the stream did not move | `Projection.decide`                                           | `server/state.ts`                  |
-| 3    | One projection writes the SQL tables in the checkpoint transaction   | `Projection.process`, `Commit.transaction`, `Projection.each` | `server/projection.ts`             |
-| 4    | A second projection writes three output streams and a state value    | `Projection.mapAccumBatch`, `Commit.producer`, `DurableState` | `server/outputs.ts`                |
-| 5    | Startup runs both projections, then watchers are the writers         | `Projection.run`, `Projection.follow`                         | `server/app.ts`, `server/host.ts`  |
-| 6    | Routes serve the inputs, the outputs and a summary                   | `Http.routes`, `Serve.mount`, `Serve.value`, `Serve.route`    | `server/app.ts`, `server/index.ts` |
+### Streams and projections
 
-The code below is from the example. Lines marked `// ...` are left out.
+| Piece                         | Kind                                           | Role                                                                                          |
+| ----------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `Events`                      | `Streamsy.json` input                          | Canonical issue facts (`IssueCreated`, `IssueStatusChanged`, `IssueAssigned`).                |
+| `LabelEvents`                 | `Streamsy.json` input                          | Issue label attach/detach facts.                                                              |
+| `Projects`, `Users`, `Labels` | `Streamsy.state` inputs                        | Workspace catalog tables stored as Durable State streams.                                     |
+| `commandView`                 | `Projection.fold` (on demand)                  | Validates commands and assigns `nextSequence` inside `Projection.decide`.                     |
+| `issueRows`                   | `Projection.process` (`Commit.transaction`)    | Writes the relational SQL tables in the checkpoint transaction.                               |
+| `tracker`                     | `Projection.mapAccumBatch` (`Commit.producer`) | Emits `Board`, `LabelCounts` (`Streamsy.state`), and `Transitions` (`Streamsy.json`) outputs. |
 
-## 1. Declare the input streams
+The two background projections are **completely decoupled**: `tracker` computes board cards, label counts, and transitions purely from the five input streams and its own checkpoint state—it never queries `issueRows`'s SQL tables.
 
-Each workspace has five input streams. Two are JSON streams of facts: issue events and label events. Three are Durable State streams that hold the catalogs: projects, users and labels. All five take the same `workspaceId` parameter.
+Commands append directly to `Events` and return the new `offset` immediately without running either projection synchronously. At startup, the server catches up each configured workspace with [`Projection.run`](/docs/projections/run) and then starts background [`Projection.follow`](/docs/projections/run#follow) watchers—one writer per workspace key, with failures isolated to the failing workspace.
+
+### HTTP surface
+
+| Route                                                       | Served by     | Result                                                   |
+| ----------------------------------------------------------- | ------------- | -------------------------------------------------------- |
+| `POST /api/workspaces/:workspaceId/commands`                | `HttpRouter`  | Validates and appends an issue fact (`409` on conflict)  |
+| `GET /api/workspaces/:workspaceId/status`                   | `Serve.route` | Checkpoint offsets for `issueRows` and `tracker`         |
+| `GET /api/workspaces/:workspaceId/drafts`                   | `Serve.route` | Notification drafts written by `issueRows`               |
+| `/state/workspaces/:workspaceId/issues?offset=-1`           | `Serve.mount` | `Board` Durable State stream (cards keyed by `issueId`)  |
+| `/state/workspaces/:workspaceId/label-counts?offset=-1`     | `Serve.mount` | `LabelCounts` Durable State stream (keyed by `labelId`)  |
+| `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | `Serve.mount` | `Transitions` JSON feed of accepted issue facts          |
+| `/workspaces/:workspaceId/summary`                          | `Serve.value` | Issue, done, label, and project counts with ETag / `304` |
+| `/streams/*`                                                | `Http.routes` | All input and output streams, read-only                  |
+
+## Inside the server
+
+Snippet paths below are relative to `examples/bugsy`. `// ...` marks omitted lines.
+
+### Multi-stream workspace inputs
+
+All five input streams share `{ workspaceId: Identifier }`, keeping every stream for a workspace under `bugsy/:workspaceId/...`:
 
 ```ts title="server/streams.ts"
 const params = { workspaceId: Identifier } as const;
@@ -70,13 +110,11 @@ export const routes = {
 } as const;
 ```
 
-At startup the server creates the five streams for each configured workspace. One Bun SQLite file holds the streams, the projection checkpoints and the application tables.
+See [Declare streams](/docs/streams/declare).
 
-See [Declare streams](/docs/streams/declare) for templates and parameters.
+### Validating commands with `Projection.decide`
 
-## 2. Append a command
-
-`transact` checks the command against `commandView`, a fold of known issues, their status and the next sequence. `Projection.decide` calls `current` to fold the event tail in memory, then calls the decision. It writes no checkpoint. The append to `events` uses the view's offset as `expectedOffset`. A lost race folds and decides again, up to three retries.
+`transact` folds `commandView` in memory without writing a checkpoint, checks that non-create commands target an existing issue, stamps `nextSequence` and `occurredAt`, and appends with `expectedOffset`. Concurrent writes retry automatically before `server/app.ts` maps an exhausted `OffsetMismatch` to HTTP `409`:
 
 ```ts title="server/state.ts"
 export const transact = (workspaceId: string, command: CommandRequest) =>
@@ -128,30 +166,9 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
   }).pipe(Effect.map(({ value: event, offset }) => ({ event, offset })));
 ```
 
-The route turns a conflict that is still there after the retries into a 409:
+### Transactional SQL tables (`issueRows`)
 
-```ts title="server/app.ts"
-    Effect.catchTags({
-      InvalidCommand: () => Effect.succeed(json({ error: "Invalid command" }, { status: 400 })),
-      UnknownIssue: () => Effect.succeed(json({ error: "Unknown issue" }, { status: 400 })),
-      OffsetMismatch: () =>
-        Effect.succeed(json({ error: "Concurrent command conflict" }, { status: 409 })),
-    }),
-```
-
-Send a command with `curl`:
-
-```bash
-curl -X POST http://localhost:1340/api/workspaces/live/commands \
-  -H 'Content-Type: application/json' \
-  --data '{"type":"create","commandId":"c1","issueId":"i1","projectId":"p1","title":"First issue"}'
-```
-
-See [Read, decide, append](/docs/projections/state#read-decide-append) for the recipe.
-
-## 3. Write SQL rows with `issueRows`
-
-`issueRows` uses `Projection.process` with `Commit.transaction` over all five inputs. `Projection.each` calls the handler once for each item, and `entry.input` names the input it came from. The handler writes the application tables with the host's `SqlClient`. The projection commits those writes and the new input offsets in one transaction, so a crash cannot keep one without the other.
+`issueRows` consumes all five inputs with `Projection.process`, `Commit.transaction`, and `Projection.each`. Switching on `entry.input` dispatches each item to its SQL helper on the transaction's `SqlClient`, committing `issues`, `issue_labels`, `issue_changes`, `notification_drafts`, catalog tables, and input offsets together:
 
 ```ts title="server/projection.ts"
 export const issueRows = Projection.process({
@@ -180,13 +197,11 @@ export const issueRows = Projection.process({
 });
 ```
 
-`applyIssue` folds the event into the stored row and writes `issues`, `issue_changes` and, for an assignment, `notification_drafts`. The other cases write `issue_labels` and the three catalog tables. The application creates and migrates these tables. Offsets and encoded state sit in the storage table `streamsy_owner_records`.
+Because the SQL helpers use `sql.onDialectOrElse`, the same projection runs unchanged on SQLite, Postgres, and MySQL. See [Commits](/docs/projections/commits#transaction) and [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables).
 
-See [Commits](/docs/projections/commits) and [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables).
+### Derived output streams (`tracker`)
 
-## 4. Write output streams with `tracker`
-
-`tracker` reads the same five inputs and declares three outputs. `board` and `labelCounts` are keyed rows, published as Durable State. `transitions` is a plain stream of accepted issue facts. The projection also keeps a private state value, the whole workspace, so that each batch can find which cards and counts changed.
+`tracker` uses [`Projection.mapAccumBatch`](/docs/projections/outputs#mapaccumbatch) with `Commit.producer` over the same five inputs. Keeping `WorkspaceState` in checkpoint state lets each batch join issues with project/user names and label memberships, then emit `DurableState.upsert` / `DurableState.remove` only for board cards and label counts that actually changed:
 
 ```ts title="server/outputs.ts"
 export const tracker = Projection.mapAccumBatch({
@@ -211,40 +226,9 @@ export const tracker = Projection.mapAccumBatch({
 });
 ```
 
-The handler returns `DurableState.upsert("board", row)` or `DurableState.upsert("labelCounts", row)` for each card or count that changed, and `DurableState.remove("labelCounts", labelId)` for a deleted label. It uses only the batch and the previous state. It never reads the SQL tables, so the two projections do not depend on each other.
+### Startup catch-up and background watchers
 
-See [Output projections](/docs/projections/outputs) and [State and checkpoints](/docs/projections/state).
-
-## 5. Run both projections
-
-A command returns the event and its input offset. Watchers write the rows and outputs. A client waits on the output before reading its new row. The smoke scripts wait until the status endpoint reports both writers at the event offset.
-
-```ts title="server/app.ts"
-const commands = (workspaces: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const workspaceId = yield* workspace(workspaces);
-    const request = yield* HttpServerRequest.HttpServerRequest;
-
-    const command = yield* request.json.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(CommandRequest)),
-      Effect.mapError(() => new InvalidCommand()),
-    );
-
-    const { event, offset } = yield* transact(workspaceId, command);
-
-    return json({ commandId: command.commandId, event, offset });
-  }).pipe(
-    Effect.catchTags({
-      InvalidCommand: () => Effect.succeed(json({ error: "Invalid command" }, { status: 400 })),
-      UnknownIssue: () => Effect.succeed(json({ error: "Unknown issue" }, { status: 400 })),
-      OffsetMismatch: () =>
-        Effect.succeed(json({ error: "Concurrent command conflict" }, { status: 409 })),
-    }),
-    api,
-  );
-```
-
-At startup the server runs each projection once for each workspace, then watches the inputs. An append to an input on this host runs the projection again.
+In `server/host.ts`, `applicationLayer` prepares the schema, creates the five input streams for each configured workspace, runs both projections once to catch up, and then forks scoped `Projection.follow` watchers:
 
 ```ts title="server/host.ts"
       for (const workspaceId of workspaces) {
@@ -257,13 +241,11 @@ At startup the server runs each projection once for each workspace, then watches
         yield* Projection.follow(outputs).pipe(watchEnded(Projection.key(outputs)));
 ```
 
-`watchEnded` drains each `follow` stream in a fiber that the layer scope owns, and logs how it ended. Each key has one writer. Startup `run` finishes before its watcher starts. The command path never runs a writer. A second writer is a deployment fault detected by a moved checkpoint token. A failure at startup or in a watcher is logged with the projection key. It does not stop the server or the other workspaces.
+Startup `run` finishes before its watcher starts so each workspace key has only one writer, and `startupFailed` / `watchEnded` log failures with the projection key instead of stopping other workspaces. See [Running projections](/docs/projections/run) and [One writer](/docs/projections/run#one-writer).
 
-See [Running](/docs/projections/run) and [Triggers](/docs/projections/run#triggers).
+### Serving outputs, ETag summaries, and clean shutdown
 
-## 6. Serve the results
-
-`Http.routes` serves the input and output streams read-only under `/streams`. `Serve.mount` mounts the output handlers. `Serve.value` serves a small summary from the `tracker` state, with an ETag. `Serve.route` also owns the two JSON reads of the API, so other methods get 405.
+`outputRoutes` mounts `Board`, `LabelCounts`, and `Transitions` read-only with `Serve.mount` and serves `/workspaces/:workspaceId/summary` with [`Serve.value`](/docs/servers/serve#values) (automatic ETags and `304` responses, with count-neutral edits preserving the ETag):
 
 ```ts title="server/app.ts"
 export const workspaceSummary = Effect.gen(function* () {
@@ -283,22 +265,16 @@ export const workspaceSummary = Effect.gen(function* () {
     { contract: "compact-summary-v1" },
   );
 });
+
+export const outputRoutes = Layer.mergeAll(
+  Serve.mount(Board, "/state/workspaces/:workspaceId/issues"),
+  Serve.mount(LabelCounts, "/state/workspaces/:workspaceId/label-counts"),
+  Serve.mount(Transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.route("/workspaces/:workspaceId/summary", workspaceSummary),
+);
 ```
 
-| Route                                                       | Result                                                   |
-| ----------------------------------------------------------- | -------------------------------------------------------- |
-| `/state/workspaces/:workspaceId/issues?offset=-1`           | Board card changes                                       |
-| `/state/workspaces/:workspaceId/label-counts?offset=-1`     | Label count changes                                      |
-| `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts                                     |
-| `/workspaces/:workspaceId/summary`                          | Issue, done, label and project counts, with ETag and 304 |
-
-Read the board from the start:
-
-```bash
-curl 'http://localhost:1340/state/workspaces/live/issues?offset=-1'
-```
-
-`server/index.ts` reads the settings with `Config`, builds the storage Layer for the configured database and launches the server under `BunRuntime.runMain`. On SIGINT or SIGTERM, `Serve.layer` ends live reads before the listener and storage close, and `Serve.teardown` exits 0.
+`server/index.ts` composes the configured SQL storage layer, `app`, and a Bun listener under `Serve.layer` and `Serve.teardown` so live reads drain cleanly on `SIGINT` / `SIGTERM`:
 
 ```ts title="server/index.ts"
 const Server = Layer.unwrap(
@@ -316,14 +292,20 @@ const Server = Layer.unwrap(
 BunRuntime.runMain(Layer.launch(Server), { teardown: Serve.teardown });
 ```
 
-See [Serve application reads](/docs/servers/serve), [Access](/docs/servers/protocol#access) and [Run a process server](/docs/servers/process).
+See [Serve application reads](/docs/servers/serve) and [Clean shutdown](/docs/servers/process#clean-shutdown).
 
-## Limits
+## Going further
 
-- State readers replay from `-1`. There is no snapshot, so replay cost grows with history.
-- The two projections have separate checkpoints. Nothing makes them commit together, and the outputs of `tracker` do not commit together either.
-- The server can accept a command and then fail to project it. Commands have no idempotency key.
-- A failed workspace can serve stale rows and a stale summary until an operator repairs it. A watcher that stops does not restart.
-- Reads do not run projections. An unknown workspace gets 404 on the API and on output streams that do not exist yet. Its summary has zero counts.
-- The `tracker` state holds the whole workspace. It grows with the workspace, and each batch writes it again.
-- The stream routes have no authentication.
+### Production notes
+
+- **Eventual consistency across projections.** `issueRows` and `tracker` maintain separate checkpoints, and `tracker`'s three outputs do not commit atomically with each other. Clients that need read-after-write guarantees should wait for the command's offset on the target output stream (or `/status`).
+- **Command idempotency and watcher recovery.** Commands are accepted before projections run and have no idempotency key; pair with the [Command stream](/docs/examples/command-stream) pattern if callers retry writes. A failed watcher logs and exits rather than auto-restarting, so a broken workspace serves stale rows until repaired (or run under `Projection.attach` with retry policies).
+- **State growth and replay cost.** State output readers replay from `-1` with no snapshots, and `tracker` rewrites its entire `WorkspaceState` on every batch. Larger workspaces need snapshot compaction and narrower state.
+- **Unknown workspaces and auth.** Reads do not trigger projections: an unknown workspace gets `404` on API and missing output streams, and zero counts on `/summary` (the initial `tracker` value). Both `/streams/*` and API routes are unauthenticated—see [Access](/docs/servers/protocol#access) and [Protect the routes](/docs/servers/protocol#protect-the-routes).
+
+### Related examples
+
+- [Todo](/docs/examples/todo) — the single-file introduction to `Projection.decide` and `Projection.fold`.
+- [Hex board](/docs/examples/hex-board) — focuses on whole-value checkpoint folds and SQLite restart tests.
+- [Issue tracker, event sourced](/docs/examples/issue-tracker/event-sourced) — connects an event-sourced server projection to a live React + TanStack DB browser client.
+- [Command stream](/docs/examples/command-stream) — adds caller-key deduplication and accepted receipts for command processing.

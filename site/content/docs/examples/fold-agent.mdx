@@ -1,11 +1,13 @@
 ---
 title: Fold agent
-description: Run an AI agent whose session log lives in a stream, so a session can resume after a crash and two processes cannot both write it.
+description: A CLI AI agent backed by a Streamsy JSON session log that resumes across crashes and fences competing writers with expectedOffset.
 ---
 
-This example is a small command-line agent. You give it a prompt, it answers and can call one tool. Later you can resume the same session from another process, or print its log. [Fold Core](https://www.npmjs.com/package/@humanlayer/fold-core) runs the agent loop. Streamsy stores the session log in one stream. Each append names the end of the log that the writer read, so a stale process cannot add entries after another process has moved on. The example has no browser, so this page has no screenshot.
+When an AI agent runs multi-turn tool loops, keeping conversation history only in memory loses the session on a crash—and letting two processes resume the same session at once corrupts the log with interleaved turns.
 
-The full source is in [`examples/fold-agent`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/fold-agent).
+Fold agent pairs [Fold Core](https://www.npmjs.com/package/@humanlayer/fold-core) with a Streamsy JSON stream as its durable session log. Any process can inspect or resume a session from SQLite after a crash, and every append passes the writer's last-seen offset as `expectedOffset`—acting as a **fencing token** so a stale process can never keep writing after another process resumes the session.
+
+The full source lives in [`examples/fold-agent`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/fold-agent).
 
 ## Run it
 
@@ -17,33 +19,36 @@ bun run build
 bun run --cwd examples/fold-agent start "How long is 'hello'?"
 ```
 
-`start` needs an OpenAI or Anthropic API key, and prints the session's stream id. The log goes to the SQLite file `examples/fold-agent/.data/agent.sqlite`. Set `FOLD_AGENT_DB` to choose another file. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/fold-agent) lists the other settings, including a scripted model that needs no key. Resume or print a session with its stream id:
+`start` uses an OpenAI or Anthropic API key, writes the session to `examples/fold-agent/.data/agent.sqlite` (override with `FOLD_AGENT_DB`), and prints the session's stream ID. Resume or inspect a session from a new process:
 
 ```bash
 bun run --cwd examples/fold-agent resume <stream-id> "What happened?"
 bun run --cwd examples/fold-agent inspect <stream-id>
 ```
 
-## Architecture
+To run the cross-process SQLite fencing and CLI tests offline (using the built-in scripted model, no API key needed):
+
+```bash
+bun run --cwd examples/fold-agent test:unit
+```
+
+## Fencing competing writers with `expectedOffset`
 
 ![Architecture diagram. In process A and process B, a Fold session writes through a Streamsy event log. Both event logs append to one session stream with expectedOffset set to the tail they read. The stream is stored in memory or Bun SQLite. When process B appends first, the next append from process A fails and process A is fenced.](/docs/examples/fold-agent-architecture.svg)
 
-Each number in the diagram is also a section number below.
+Rather than adding distributed locks, the stream's offset check enforces single-writer ownership across processes:
 
-| Step | What happens                                         | Streamsy feature                          | File                                      |
-| ---- | ---------------------------------------------------- | ----------------------------------------- | ----------------------------------------- |
-| 1    | One stream for each session holds the Fold log       | `Streamsy.json`                           | `src/session-log.ts`                      |
-| 2    | The same code opens a memory or a SQLite store       | `MemoryStorage.layer`, `BunStorage.layer` | `src/storage.ts`                          |
-| 3    | Fold writes its log through the Streamsy adapter     | Fold `eventLogSource`                     | `src/cli.ts`, `src/streamsy-event-log.ts` |
-| 4    | A writer reads the log and keeps its tail offset     | `read`                                    | `src/streamsy-event-log.ts`               |
-| 5    | Each append names that tail                          | `append` with `expectedOffset`            | `src/streamsy-event-log.ts`               |
-| 6    | A second process moves the tail and fences the first | `OffsetMismatch`                          | `test/sqlite-restart.test.ts`             |
+1. **One stream per session.** Each session lives at `fold/sessions/:session/events`, validated by Fold's `SessionId` schema so `Sessions.parse` rejects malformed IDs on `resume` and `inspect`.
+2. **Open at the tail.** When `makeEventLog` opens a session (`create` or `resume`), it reads the full log, verifies Fold's sequence numbers, and remembers the stream's tail offset and `nextEntrySeq`.
+3. **Conditional appends fence stale writers.** Every append is serialized locally by a `Semaphore(1)` and passes the stored tail as `expectedOffset`. If another process resumed the session and appended first, Streamsy rejects the stale write with [`OffsetMismatch`](/docs/streams/write#conditional-writes). The adapter marks the writer permanently `fenced` before every append and clears it only on success—so after any failed append, the stale writer refuses further writes until the caller opens a fresh writer from the durable log.
 
-The code below is from the example. Lines marked `// ...` are left out.
+## Inside the agent log
 
-## 1. Declare the session stream
+Snippet paths below are relative to `examples/fold-agent`. `// ...` marks omitted lines.
 
-A session uses one JSON stream, `fold/sessions/<session>/events`. The template parameter uses Fold's `SessionId` schema, so `Sessions.parse` accepts only real session ids. The CLI uses it to check the stream id that you give to `resume` and `inspect`.
+### Session stream and swappable storage
+
+`Sessions` binds one JSON stream per `SessionId`, and `storeLayer` swaps transparently between in-memory and Bun SQLite storage:
 
 ```ts title="src/session-log.ts"
 export class Sessions extends Streamsy.json<Sessions>()(
@@ -52,12 +57,6 @@ export class Sessions extends Streamsy.json<Sessions>()(
   { params: { session: SessionId }, schema: Schema.Json },
 ) {}
 ```
-
-See [Declare streams](/docs/streams/declare).
-
-## 2. Open a store
-
-`storeLayer` gives the same `Sessions` service on the memory host or on Bun SQLite. The CLI uses SQLite, so a session outlives the process. Each command provides the Layer, so the store closes when the command ends.
 
 ```ts title="src/storage.ts"
 export const storeLayer = (options: StoreOptions = {}): Layer.Layer<Sessions, StorageFault> => {
@@ -69,11 +68,11 @@ export const storeLayer = (options: StoreOptions = {}): Layer.Layer<Sessions, St
 };
 ```
 
-See [Choose storage](/docs/storage).
+See [Declare streams](/docs/streams/declare) and [Choose storage](/docs/storage).
 
-## 3. Give Fold the Streamsy log
+### Opening the writer at the tail
 
-Fold owns the loop, the tool calls and the conversation. It asks for an event log, and the example gives it one that is backed by the session stream.
+The CLI hands `streamsyEventLog` to Fold's `startSession` (or `resumeSession` on `resume`). Opening the log reads the stream to its tail and initializes the local sequence counter, semaphore, and `fenced` flag:
 
 ```ts title="src/cli.ts"
 const start = Command.make("start", { prompt: promptArgument }, ({ prompt }) =>
@@ -95,18 +94,6 @@ const start = Command.make("start", { prompt: promptArgument }, ({ prompt }) =>
     // ...
 ```
 
-`resume` works in the same way, with `resumeSession` and `mode: "resume"`. The commands use `effect/cli`, so Ctrl-C interrupts the turn and the store closes.
-
-## 4. Open the writer at the tail
-
-When a writer opens, it reads the whole log. It checks Fold's sequence numbers and keeps two values: the stream offset after the last entry, and the next sequence number.
-
-```ts title="src/session-log.ts"
-export const readHistory = Effect.fn("Fold.readHistory")(function* (params: SessionParams) {
-  return yield* (yield* Sessions).collect(params);
-});
-```
-
 ```ts title="src/streamsy-event-log.ts"
 export const makeEventLog = (options: StreamsyEventLogOptions) =>
   Effect.gen(function* () {
@@ -124,9 +111,9 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     let fenced = false;
 ```
 
-## 5. Append with `expectedOffset`
+### Fenced appends
 
-Each append passes the stored tail as `expectedOffset`. If the stream still ends there, the append succeeds and the writer moves its tail forward. If another writer appended first, the stream answers `OffsetMismatch` and the adapter reports "Fenced". The adapter sets `fenced` before the append and clears it only after a success. After any failed append, the writer refuses to write again. The caller must open a new writer from the durable log.
+Setting `fenced = true` _before_ calling `sessions.append(..., { expectedOffset: tail })` ensures that any failure—whether an `OffsetMismatch` from another process or an unexpected storage error—leaves the writer fenced until a fresh writer reads the committed log:
 
 ```ts title="src/streamsy-event-log.ts"
     const append = Effect.fn("Fold.EventLog.append")((input: LogEntryInput) =>
@@ -151,13 +138,9 @@ Each append passes the stored tail as `expectedOffset`. If the stream still ends
           return entry;
 ```
 
-The semaphore keeps the appends of one writer in order. The offset check works across processes, because it is part of the append in the store.
+### Cross-process fencing test
 
-See [Conditional writes](/docs/streams/write#conditional-writes).
-
-## 6. A second writer fences the first
-
-The test opens a writer in the test process, then runs a second process that resumes the same session and appends. The next append from the first writer fails. The log then has two entries: the session start and the entry from the second process.
+`test/sqlite-restart.test.ts` spawns real worker processes against the same SQLite file to verify that a second process resuming a session fences the first writer on its very next append:
 
 ```ts title="test/sqlite-restart.test.ts"
 it.effect(
@@ -187,12 +170,18 @@ it.effect(
         ).toEqual([0, 1]);
 ```
 
-The other tests run the store contract on memory and SQLite, and drive the real CLI in separate processes with the scripted model. Run them with `bun run --cwd examples/fold-agent test:unit`.
+## Going further
 
-## Limits
+### Production notes
 
-- A writer reads the whole log when it opens, so recovery time grows with the log. There are no snapshots and no retention.
-- If the process stops after a model call and before its append commits, the next turn calls the model again. A provider request in progress is not recovered.
-- A fenced writer stays fenced. The example does not retry or merge. The caller opens a new writer from the log.
-- The example has no HTTP surface. Its SQLite process tests are its smoke tests.
-- `@humanlayer/fold-core` declares an exact Effect `4.0.0` peer. The workspace override pins one Effect `4.1.2` copy for it.
+- **Full-log replay on open.** Opening a writer reads the entire session stream from the start with no snapshots or retention; long-running agent sessions benefit from checkpointed summaries or compaction.
+- **In-flight model calls.** If the process stops after invoking an LLM provider and before committing the turn to the stream, resuming re-runs that turn—in-flight provider calls are not recovered.
+- **Strict fencing by design.** A fenced writer never auto-retries or merges; callers explicitly resume from the durable log to take ownership cleanly.
+- **Local SQLite only.** This example has no HTTP surface, though the same `Sessions` stream can be hosted remotely over [`RemoteStreams`](/docs/servers/remote) with the exact same `expectedOffset` fencing semantics.
+
+### Related examples
+
+- [Hex board](/docs/examples/hex-board) — another CLI/test-driven SQLite restart example using checkpointed folds.
+- [Folder sync](/docs/examples/folder-sync) — exposes synced Durable State folders to agents via `just-bash` and Better FS Tools.
+- [Command stream](/docs/examples/command-stream) — adds caller-key deduplication and accepted receipts for background work.
+- [Conditional writes](/docs/streams/write#conditional-writes) — reference for `expectedOffset` and `OffsetMismatch`.

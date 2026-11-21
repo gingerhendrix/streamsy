@@ -1,4 +1,11 @@
 {
   "title": "Issue tracker",
-  "pages": ["index", "event-sourced", "foldkit", "atom"]
+  "pages": [
+    "index",
+    "---Server variants---",
+    "event-sourced",
+    "---Client variants---",
+    "foldkit",
+    "atom"
+  ]
 }

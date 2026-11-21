@@ -1,12 +1,66 @@
 ---
 title: Memory server
-description: A complete Durable Streams server in a few lines of Streamsy.
+description: A complete Durable Streams HTTP server in nine lines of Streamsy, backed by in-memory storage and swappable to SQLite in one layer.
 ---
 
-This example is a [Durable Streams](https://durablestreams.com/) server with full support
-for the protocol. It keeps every stream in memory, so you need no database to try it.
+Memory server is the smallest complete [Durable Streams](https://durablestreams.com/) server in the repository: nine lines for the server layer plus a Bun HTTP listener, with no database to configure. Use it to exercise the Durable Streams HTTP protocol with `curl` or as a zero-setup local backend when prototyping clients.
 
-## How it works
+The full source lives in [`examples/memory-server`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/memory-server).
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/memory-server start
+```
+
+The server listens on `http://localhost:1337` (override with `PORT`) and mounts streams directly under `/`. Try creating a JSON stream, appending a message, reading from the start, and following live updates:
+
+```bash
+# 1. Create an empty JSON stream (201 Created, Stream-Next-Offset: 0000000000000000_0000000000000000)
+curl -i -X PUT http://localhost:1337/walkthrough/demo \
+  -H 'Content-Type: application/json'
+
+# 2. Append a message (204 No Content, advances Stream-Next-Offset)
+curl -i -X POST http://localhost:1337/walkthrough/demo \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"hello","n":1}'
+
+# 3. Catch up from the start (200 OK, Stream-Up-To-Date: true, ETag)
+curl -i 'http://localhost:1337/walkthrough/demo?offset=-1'
+
+# 4. Wait for the next append with a long poll (append again in another terminal)
+curl -i 'http://localhost:1337/walkthrough/demo?offset=0000000000000001_0000000000000000&live=long-poll'
+
+# 5. Or follow live over Server-Sent Events
+curl -N 'http://localhost:1337/walkthrough/demo?offset=-1&live=sse'
+```
+
+You can also run the automated HTTP smoke suite (which verifies create, append, catch-up, conditional `ETag`/`304`, long polling, SSE, and clean shutdown drain):
+
+```bash
+bun run --cwd examples/memory-server smoke:http
+```
+
+## Full protocol in one layer stack
+
+Four pieces make up the entire server:
+
+- **Dynamic stream paths (`Streamsy.Wildcard`):** `Streamsy.group(Streamsy.Wildcard)` claims every stream ID so clients can create arbitrary streams on the fly without pre-declaring schemas. See [Custom streams](/docs/streams/custom).
+- **Protocol routes (`Http.routes`):** Serves the full Durable Streams HTTP surface—catch-up reads, conditional `ETag`/`304`, long polling, and SSE. Setting `access: "full"` permits create, append, read, and delete over HTTP. See [HTTP protocol](/docs/servers/protocol).
+- **Swappable storage (`MemoryStorage.layer`):** Keeps streams in process memory. Because storage is provided as a standard Effect `Layer`, moving to SQLite or another backend leaves the route definitions unchanged. See [Choose storage](/docs/storage).
+- **Graceful live-read shutdown (`Serve.layer` + `Serve.teardown`):** The Bun listener sets a 60-second `idleTimeout` so 30-second protocol long polls do not time out prematurely. On `SIGINT` or `SIGTERM`, `Serve.layer` answers parked long polls with `204` and ends open SSE responses before closing storage, and `Serve.teardown` exits `0`. See [Clean shutdown](/docs/servers/process#clean-shutdown).
+
+## Inside the server
+
+Snippet paths below are relative to `examples/memory-server`.
+
+### Server layer
+
+`src/server.ts` defines the wildcard group, builds the protocol routes, and provides in-memory storage:
 
 ```ts title="src/server.ts"
 import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
@@ -20,18 +74,33 @@ export const Server = Serve.layer(Http.routes(streams, { access: "full" })).pipe
 );
 ```
 
-`Streamsy.Wildcard` makes the group own every stream id. `Http.routes` serves the
-protocol for that group. With `access: "full"`, any client can create, append to, read,
-and delete a stream. `MemoryStorage.layer` gives the storage.
+### Bun listener and shutdown
 
-The example's `src/index.ts` starts this server on a Bun listener at port 1337. See the
-[full example](https://github.com/gingerhendrix/streamsy/tree/effect/examples/memory-server)
-to run it.
+`src/index.ts` reads `PORT`, configures the Bun listener, and launches `Server` with `Serve.teardown`:
 
-## Use SQLite storage
+```ts title="src/index.ts"
+import { BunRuntime } from "@effect/platform-bun";
+import { Serve } from "@streamsy/serve";
+import { listener } from "@streamsy/serve/bun";
+import { Config, Effect, Layer } from "effect";
+import { Server } from "./server.ts";
 
-The storage is one Layer. To keep your streams after a restart, replace `MemoryStorage.layer`
-with the Bun SQLite Layer:
+const Listener = Layer.unwrap(
+  Effect.map(Config.Port("PORT").pipe(Config.withDefault(1337)), (port) =>
+    listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
+  ),
+);
+
+BunRuntime.runMain(Layer.launch(Server.pipe(Layer.provide(Listener))), {
+  teardown: Serve.teardown,
+});
+```
+
+## Going further
+
+### Persist streams with SQLite
+
+Because storage is one `Layer`, keeping streams across restarts is a one-line swap from `MemoryStorage.layer` to `BunStorage.layer`:
 
 ```diff
 -import { Http, MemoryStorage, Streamsy } from "@streamsy/core";
@@ -48,5 +117,15 @@ with the Bun SQLite Layer:
  );
 ```
 
-The routes do not change. See [Use SQLite](/docs/storage/sqlite) for the SQLite options, and
-[Choose storage](/docs/storage) for the other backends.
+The routes and listener stay identical. See [Use SQLite](/docs/storage/sqlite) for SQLite options and [Choose storage](/docs/storage) for Postgres, MySQL, and Cloudflare Durable Objects.
+
+### Production notes
+
+- **Restrict stream access and add authentication.** `Streamsy.Wildcard` with `access: "full"` lets any caller create, write, or delete any stream. In production, declare explicit stream classes, serve streams read-only (`access: "read"` or [`Serve.mount`](/docs/servers/serve#mount-a-stream)) while routing writes through your own API, and add auth middleware. See [Access](/docs/servers/protocol#access) and [Protect the routes](/docs/servers/protocol#protect-the-routes).
+- **Memory storage is process-local.** Every restart starts with an empty store—use it for local exploration and tests, and swap in a durable storage layer when data must survive restarts.
+
+### Related examples
+
+- [Todo](/docs/examples/todo) — moves from a wildcard server to typed event streams, `Projection.decide`, checkpoints, and a read-only `Serve.mount`.
+- [Issue tracker](/docs/examples/issue-tracker) — combines a Bun SQLite server and Durable State stream with a live React + TanStack DB browser client.
+- [Folder sync](/docs/examples/folder-sync) — deploys the same Streamsy application on both Bun SQLite and Cloudflare Durable Objects + R2.

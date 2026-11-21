@@ -1,77 +1,48 @@
 ---
 title: Examples
-description: Runnable Streamsy applications, grouped by what they show. An example can appear in more than one group.
+description: Runnable Streamsy applications spanning protocol servers, event sourcing, background workers, live browser sync, binary streams, and Cloudflare Durable Objects.
 ---
 
-Each page explains what the app does, how to run it, and which parts of Streamsy it uses. Most examples live in the repository's `examples/` folder. Doom links to its own repository. Some examples appear in more than one group.
+Every example below is a complete, runnable Streamsy application. Each page walks through what the app builds, how its streams and projections fit together, key code excerpts from the repo, and production notes. All examples live under `examples/` except Doom, which has its own repository.
 
-To start, read the [Memory server](/docs/examples/memory-server) for the protocol, then [Todo](/docs/examples/todo) for the smallest app built on events.
+## Where to start
 
-## Run a Durable Streams server
+- **Learn the HTTP protocol:** [Memory server](/docs/examples/memory-server) — a complete Durable Streams server in nine lines, exercised with `curl`.
+- **Event sourcing in one file:** [Todo](/docs/examples/todo) — per-list JSON event streams, `Projection.decide`, and background checkpoints.
+- **Live browser sync:** [Issue tracker](/docs/examples/issue-tracker) — Durable State + optimistic writes with swappable server and client variants.
+- **Try hosted live demos:** [Yjs editor](/docs/examples/yjs-editor) ([yjs-editor.streamsy.dev](https://yjs-editor.streamsy.dev)) and [Doom](/docs/examples/doom) ([doom.streamsy.dev](https://doom.streamsy.dev/)) — binary streams, compaction/snapshots, and Cloudflare Durable Objects.
 
-The [Memory server](/docs/examples/memory-server) is a complete [Durable Streams](https://durablestreams.com/) server in a few lines. It serves every stream over the protocol routes and keeps them in memory. One Layer swap moves the streams to SQLite.
+## All examples
 
-[Folder sync](/docs/examples/folder-sync) runs one app on two hosts. Bun keeps its streams in SQLite. Cloudflare workerd keeps them in Durable Objects, with file blobs in R2.
+The sidebar lists all 13 top-level examples alphabetically:
 
-For the pieces these servers use, see [Choose storage](/docs/storage) and [Servers and clients](/docs/servers).
+| Example                                                       | What it builds                                                                                           | Host & clients                                  |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [Bugsy](/docs/examples/bugsy)                                 | Headless issue-tracker server with five workspace inputs, SQL tables, and three derived output streams   | Bun (SQLite, Postgres, or MySQL)                |
+| [Command stream](/docs/examples/command-stream)               | Local command worker with caller-key deduplication and transactional accepted receipts                   | Bun + SQLite                                    |
+| [Doom](/docs/examples/doom)                                   | Browser Doom recorded as binary input streams with rewind snapshots, native forks, live HUD, and lobby   | Cloudflare Durable Objects + Bun; live demo     |
+| [Durable response](/docs/examples/durable-response)           | Four demos that record a scripted AI response, share it across tabs, and stop it for every reader        | Bun + SQLite; React and Foldkit                 |
+| [Fold agent](/docs/examples/fold-agent)                       | CLI AI agent whose durable session log fences competing writers with `expectedOffset`                    | Bun + SQLite CLI                                |
+| [Folder sync](/docs/examples/folder-sync)                     | Versioned file workspace with SHA-256 blobs, FTS5 search, live browser UI, disk mirror CLI, and agent FS | Bun (SQLite) & Cloudflare (DO + R2); React, CLI |
+| [Hacker News newest](/docs/examples/hackernews-newest-stream) | Live feed of the 50 newest HN stories reconciled into Durable State with conditional appends             | Bun + SQLite; React + TanStack DB               |
+| [Hex board](/docs/examples/hex-board)                         | Strategy game events folded into one checkpointed board record with SQLite restart tests                 | Bun + SQLite test suite                         |
+| [Issue tracker](/docs/examples/issue-tracker)                 | Collaborative issue tracker with optimistic writes, `txid` confirmation, and WIP limits                  | Bun (memory or SQLite); React + TanStack DB     |
+| [Memory server](/docs/examples/memory-server)                 | Minimal wildcard Durable Streams HTTP server with a one-layer SQLite swap                                | Bun (memory)                                    |
+| [Timer stream](/docs/examples/timer-stream)                   | One-shot and cron timers in Durable State multiplexed onto one SQLite due table and shared wake          | Bun + SQLite                                    |
+| [Todo](/docs/examples/todo)                                   | Single-file event-sourced todo HTTP API with background checkpoints and read-only stream mount           | Bun (memory or SQLite)                          |
+| [Yjs editor](/docs/examples/yjs-editor)                       | Collaborative ProseMirror editor with binary Yjs updates, expiring awareness, and alarm compaction       | Cloudflare Durable Objects; live demo           |
 
-## Event sourcing
+**Issue tracker variants:** The [Issue tracker](/docs/examples/issue-tracker) shares one wire contract (`issue-tracker-demo-contract`) across swappable implementations. Swap the server with [Event sourced](/docs/examples/issue-tracker/event-sourced), or swap the browser with [Foldkit](/docs/examples/issue-tracker/foldkit) or [Effect Atom](/docs/examples/issue-tracker/atom).
 
-These apps store what happened instead of the current state. A write appends a domain event to a stream. A projection folds the events into the state that reads need, and a restart resumes each projection from its checkpoint.
+## Browse by Streamsy feature
 
-- [Todo](/docs/examples/todo) is the smallest. All of its code is in one file. Each list is a stream of events, and a read replays a list into its current todos.
-- [Hex board](/docs/examples/hex-board) folds game events into a complete board. The projection saves the board and its checkpoint in one SQLite transaction, so a restarted process reads the board without board tables of its own. Its tests are the example.
-- [Bugsy](/docs/examples/bugsy) turns issue commands into facts, then runs two projections. One writes SQL tables in the checkpoint transaction. The other writes board rows, label counts and a change feed as output streams.
-- [Issue tracker, event sourced](/docs/examples/issue-tracker/event-sourced) replaces the base issue tracker's server with one that appends domain events such as `IssueRenamed`. A projection writes the same rows to the same State stream, so the browser cannot tell the two servers apart.
+Most apps combine several capabilities—use this lookup to jump straight to examples demonstrating a specific feature:
 
-[How projections work](/docs/projections) explains folds, checkpoints and output streams.
-
-## Background work
-
-These two examples are Bun processes with smoke tests and no UI. In each, a projection does the work and writes to SQLite.
-
-- [Command stream](/docs/examples/command-stream) performs a request once for each caller key. An attached process projection runs the effect and appends an accepted receipt, and the caller waits for that receipt. The [command stream guide](/docs/projections/command-streams) covers the pattern and its delivery rules.
-- [Timer stream](/docs/examples/timer-stream) keeps one-shot and cron timers as rows in a State stream. A fire projection keeps a SQLite due table and appends a fact when a timer fires. Every timer in a binding shares one wake, set with `Projection.wakeAt` to the earliest deadline.
-
-## Browser sync
-
-These apps put [Durable State](https://durablestreams.com/durable-state) on the wire. The server writes keyed row changes to a stream. The browser applies those changes to local rows and follows the stream live, so open tabs see new changes without reloading. [Durable State streams](/docs/streams/durable-state) describes the format.
-
-The next three examples use `createStreamDB` from `@durable-streams/state` to replay changes into [TanStack DB](https://tanstack.com/db) collections. React reads those collections with `useLiveQuery`.
-
-In the [Issue tracker](/docs/examples/issue-tracker), the browser shows your edit immediately and posts it to a JSON API. The edit stays faded until the write's txid arrives on the stream. If the server rejects the write, the browser rolls the edit back and shows an error.
-
-[Hacker News newest](/docs/examples/hackernews-newest-stream) follows a server-side poller to show the 50 newest stories. [Folder sync](/docs/examples/folder-sync) shows live folders, file history, and search in the browser. A sync CLI follows the same folder streams to mirror them to disk.
-
-Two issue tracker variants keep the same server and wire format. [Foldkit](/docs/examples/issue-tracker/foldkit) turns each stream read into a Message. Its `update` function folds rows into the Model and handles optimistic writes. The [Effect Atom variant](/docs/examples/issue-tracker/atom) folds changes with `Stream.scan`, exposes live queries as derived atoms, and writes through a typed `HttpApiClient`.
-
-[Doom](/docs/examples/doom) loads a Durable State snapshot and follows updates for the live HUD and lobby. Replaying a game uses a separate stream of binary inputs.
-
-## Binary streams
-
-Use binary streams to follow application-specific data such as game inputs or document updates. Both examples below use snapshots so a reader can skip earlier updates.
-
-[Doom](/docs/examples/doom) records player inputs as bytes. Spectators can replay those inputs to watch live or rewind from a snapshot. A native stream fork lets a player continue from an earlier point without copying the input history.
-
-The [Yjs editor](/docs/examples/yjs-editor) sends binary Yjs updates between browsers editing the same document. A projection merges the updates into a snapshot. A new browser can load the snapshot, then read only the updates that follow it.
-
-## Concurrent writers
-
-These apps append with `expectedOffset`, the stream offset that the writer last read. If another writer moved the stream first, the append fails with `OffsetMismatch`, and the app decides what happens next. [Write](/docs/streams/write) covers conditional appends.
-
-- The [Issue tracker](/docs/examples/issue-tracker) reads the workspace again and retries. A project allows three issues in progress, so two tabs that race for the last place get one success and one rollback.
-- [Hacker News newest](/docs/examples/hackernews-newest-stream) retries the whole poll pass.
-- [Folder sync](/docs/examples/folder-sync) accepts both edits. Each edit records the version it started from as its parent, the last append becomes the head, and the file history keeps both.
-- [Fold agent](/docs/examples/fold-agent) uses the failure as a fence. When a second process resumes a session, the first process can no longer write to it.
-
-## Agents
-
-[Fold agent](/docs/examples/fold-agent) is a command-line AI agent whose session log is a stream. Another process can resume the session after a crash, or print its log.
-
-[Folder sync](/docs/examples/folder-sync) gives agents a filesystem over its folders, for just-bash and Better FS Tools.
-
-[Durable response](/docs/examples/durable-response) records a scripted AI response in a stream backed by SQLite. Two tabs can follow one generation, and **Stop** in either tab aborts it for every reader. The demos cover Effect Atom, Foldkit, AI SDK and TanStack AI.
-
-## The issue tracker variants
-
-The [Issue tracker](/docs/examples/issue-tracker) is a base app with three variants. Each variant changes one side and keeps the product and the wire contract. The [event sourced](/docs/examples/issue-tracker/event-sourced) variant changes the server. The [Foldkit](/docs/examples/issue-tracker/foldkit) and [Effect Atom](/docs/examples/issue-tracker/atom) variants change the browser. Read the base page first, because each variant page shows only what differs.
+- **Event sourcing & projections** ([guide](/docs/projections)): [Todo](/docs/examples/todo), [Hex board](/docs/examples/hex-board), [Bugsy](/docs/examples/bugsy), [Issue tracker, event sourced](/docs/examples/issue-tracker/event-sourced)
+- **Transactional SQL tables & background workers** ([guide](/docs/projections/process)): [Command stream](/docs/examples/command-stream), [Timer stream](/docs/examples/timer-stream), [Bugsy](/docs/examples/bugsy), [Folder sync](/docs/examples/folder-sync)
+- **Durable State & live browser sync** ([guide](/docs/streams/durable-state)): [Issue tracker](/docs/examples/issue-tracker) ([Foldkit](/docs/examples/issue-tracker/foldkit), [Effect Atom](/docs/examples/issue-tracker/atom)), [Hacker News newest](/docs/examples/hackernews-newest-stream), [Folder sync](/docs/examples/folder-sync), [Doom](/docs/examples/doom)
+- **Wake & accepted streams** ([wake](/docs/streams/wake), [accepted](/docs/projections/accepted)): [Command stream](/docs/examples/command-stream), [Timer stream](/docs/examples/timer-stream), [Folder sync](/docs/examples/folder-sync), [Doom](/docs/examples/doom)
+- **Conditional writes & writer fencing** ([guide](/docs/streams/write#conditional-writes)): [Issue tracker](/docs/examples/issue-tracker), [Hacker News newest](/docs/examples/hackernews-newest-stream), [Todo](/docs/examples/todo), [Folder sync](/docs/examples/folder-sync), [Fold agent](/docs/examples/fold-agent)
+- **Binary streams, snapshots & native forks**: [Yjs editor](/docs/examples/yjs-editor), [Doom](/docs/examples/doom)
+- **Cloudflare Durable Objects** ([guide](/docs/servers/cloudflare)): [Folder sync](/docs/examples/folder-sync), [Yjs editor](/docs/examples/yjs-editor), [Doom](/docs/examples/doom)
+- **AI agents & AI responses**: [Fold agent](/docs/examples/fold-agent), [Folder sync](/docs/examples/folder-sync), [Durable response](/docs/examples/durable-response)

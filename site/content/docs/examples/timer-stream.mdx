@@ -1,11 +1,21 @@
 ---
 title: Timer stream
-description: One-shot and cron rows sharing a transactional due table and one checkpointed wake.
+description: Schedule one-shot and cron timers in a Durable State stream, keep active deadlines in SQLite, and multiplex every timer onto one durable wake.
 ---
 
-A State stream records timer rows. A fire projection maintains a SQLite due table and appends fired facts. Many rows share **one wake per binding**: the binding returns `Projection.wakeAt` for the due table's `MIN(due_at)`.
+Applications often need durable timers—sending a reminder next week, expiring a trial, or firing a recurring cron job—that survive process restarts and support cancellation or rescheduling. Creating a separate background worker or alarm per timer gets expensive quickly, while keeping timers in memory loses them on a crash.
 
-## Run
+This example builds a durable timer engine from three Streamsy pieces:
+
+- **Schedules in Durable State.** Callers schedule, reschedule, or cancel timers with keyed upserts and deletes on a [Durable State stream](/docs/streams/durable-state) (`Timers`)—no separate cancel RPC needed.
+- **One shared wake per binding.** A single [process projection](/docs/projections/process#timers) mirrors active deadlines into a SQLite `due_timers` table and returns `Projection.wakeAt` for `MIN(due_at)`, so many timers share one sleeping binding.
+- **Transactional firing.** When the wake fires (`unit.due`), the handler appends facts to `Fired`, removes one-shots, advances cron rows, and schedules the next wake in one [`Commit.transaction`](/docs/projections/commits#transaction).
+
+To keep everything self-contained, the example runs as a single Bun process backed by SQLite. It schedules a one-shot timer about one second ahead, schedules and immediately cancels a second timer, and schedules a recurring seconds-level cron timer—then verifies that the cancelled timer never fires, the one-shot fires once and is removed, and the cron timer fires and advances to its next deadline.
+
+The full source lives in [`examples/timer-stream`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/timer-stream).
+
+## Run it
 
 From the repository root:
 
@@ -13,14 +23,44 @@ From the repository root:
 bun install --frozen-lockfile
 bun run build
 bun run smoke:timer-stream
+```
+
+The smoke script runs the real-time flow and prints `{ oneShot: 1, cancelled: 0, cron: 1, sleepingBindings: 1, timerRows: 2 }`. You can also run the Vitest suite for the same flow:
+
+```bash
 bun run --cwd examples/timer-stream test:unit
 ```
 
-This is a Bun process example with no network, Docker or credentials. Each run creates a fresh SQLite file in a scoped temporary directory under `examples/timer-stream/.data/`. Scope cleanup stops the attachment, closes SQLite and removes the directory on success or failure. The real-time flow has an eight-second timeout. Its `start` script runs the same finite flow.
+Nothing external is required—no network, Docker, or credentials. Each run creates a fresh SQLite database in a scoped temporary directory under `examples/timer-stream/.data/`, then stops the attached projection, closes SQLite, and removes the directory on exit.
 
-## Timer rows and facts
+## Schedules, due rows, and one shared wake
 
-`cron: null` is a one-shot. Cron expressions use UTC. `dueAt` is the next epoch-millisecond deadline. The State stream is the schedule change feed; the due table owns active deadlines. Firing changes the due table and writes a fact without rewriting the source timer row. Upserting a completed one-shot schedules it again.
+The app uses three streams, one attached `Projection.process` worker, and one SQLite table (`due_timers`) sharing the same database.
+
+### Streams
+
+| Stream     | Kind             | Address          | Role                                                                                 |
+| ---------- | ---------------- | ---------------- | ------------------------------------------------------------------------------------ |
+| `Timers`   | `Streamsy.state` | `timers`         | Durable State change feed of `{ id, dueAt, cron }` timer rows (upserts and deletes). |
+| `Fired`    | `Streamsy.json`  | `timer-fired`    | Append-only log of `{ id, dueAt, firedAt }` facts emitted whenever a timer fires.    |
+| `Accepted` | `Streamsy.wake`  | `timer-accepted` | Receipt stream recording the latest `Timers` offset committed into `due_timers`.     |
+
+`Timers` is strictly the schedule change feed, while `due_timers` owns active deadlines. Firing a timer appends a fact to `Fired` and updates `due_timers` without rewriting `Timers`. Upserting a completed one-shot's key in `Timers` schedules it again.
+
+### How timers flow end to end
+
+1. **Schedule, reschedule, or cancel through Durable State.** Callers append keyed changes to `Timers` with `DurableState.changes`. An upsert inserts or updates the timer's deadline and cron expression; a delete removes it. See [Durable State streams](/docs/streams/durable-state).
+2. **Sync the due table and arm the earliest wake.** `fire` is attached with `durable: true` via [`Projection.attach`](/docs/projections/run#attach). Whenever new schedule changes land in `Timers`, `fire` applies them to `due_timers` (including `reset` and snapshot control messages), queries `SELECT MIN(due_at) FROM due_timers`, and returns `Projection.wakeAt(min)`—or `undefined` when the table is empty to clear the wake. Every returned wake replaces the previous one, so cancelling or moving the earliest timer updates the wake immediately. See [Timers](/docs/projections/process#timers) and [Recorded wakes](/docs/projections/run#recorded-wakes).
+3. **Fire due rows inside one transaction.** When the recorded wake time arrives, Streamsy invokes `fire` with an empty input batch and `unit.due` set (`Option.some(deadline)`). The handler selects every row with `due_at <= unit.due.value`, appends a fact to `Fired`, deletes one-shot rows, and updates cron rows to their next deadline. Because `fire` uses [`Commit.transaction`](/docs/projections/commits#transaction), the `due_timers` mutations, `Fired` appends, `Accepted` receipt, checkpoint, and next wake all commit atomically.
+4. **Catch up once after downtime.** If the host wakes up late past several cron ticks, `fire` emits **one** overdue fact (preserving the scheduled `dueAt` alongside the actual `firedAt`) and calls `Cron.next(cron, now)` to advance strictly past `now`. That avoids a burst of missed ticks after a long suspension and ensures the handler never re-arms an already-passed deadline.
+
+## Inside the timer engine
+
+Snippet paths below are relative to `examples/timer-stream`. `// ...` marks omitted lines.
+
+### Streams
+
+A `Timer` row holds its `id`, its next epoch-millisecond deadline `dueAt`, and an optional UTC `cron` expression (`null` for a one-shot). `Timers` is a `Streamsy.state` stream with one `timer` collection keyed by `id`. `Fired` records fired facts, and `Accepted` publishes committed input progress so callers can wait until their schedule change has been applied.
 
 ```ts title="src/streams.ts"
 import { Schema } from "effect";
@@ -47,11 +87,15 @@ export class Accepted extends Streamsy.wake<Accepted>()("Timers/Accepted", "time
 }) {}
 ```
 
-## Fire projection
+See [Declare streams](/docs/streams/declare) and [Accepted stream](/docs/projections/accepted).
 
-The application creates `due_timers (id, due_at, cron, seen)` and the streams before appending schedules. The handler applies State upserts and deletes to the due table. It also handles reset and snapshot controls; `seen` tracks rows retained by a snapshot.
+### Fire projection
 
-A timer-only unit has empty slices and `unit.due` set to its recorded wake time. The handler reads rows due through that time. It removes one-shots and advances cron rows. The fired facts, due-table updates, accepted input progress, checkpoint and next wake commit in the same transaction. Keep all SQL in the handler's fiber on the supplied `SqlClient`.
+`fire` is a `Projection.process` declaration with `inputs: { timers: Timers }`, `outputs: { fired: Fired }`, `accepted: Accepted`, and `commit: Commit.transaction`. Each pass does three things on the transaction's `SqlClient`:
+
+1. Applies incoming `Timers` events to `due_timers`, including Durable State control messages (`reset`, `snapshot-start`, and `snapshot-end` using the `seen` column to drop rows absent from a snapshot).
+2. If `unit.due` is `Option.some`, queries all rows due through `unit.due.value`, appends their fired facts to `outputs.fired`, deletes one-shots, and advances cron rows strictly past `now`.
+3. Queries `MIN(due_at)` and returns `Projection.wakeAt(min)` (or `undefined` if no timers remain).
 
 ```ts title="src/app.ts"
 export const fire = Projection.process({
@@ -109,13 +153,11 @@ export const fire = Projection.process({
 });
 ```
 
-The catch-up policy is **once**: a late wake publishes one overdue fact for each cron row, then `Cron.next(cron, now)` advances strictly beyond now. This avoids a burst of missed occurrences after a long host suspension. Use the fact's `dueAt` to see the deadline that fired and `firedAt` to see when the handler ran. A policy that must publish every missed occurrence needs a loop and a work bound.
+Keep all SQL queries inside the handler's fiber on the supplied `SqlClient` so they run inside the checkpoint transaction. Using `outputs.fired` with `Streams.append` likewise commits the emitted facts in that same transaction.
 
-There is one recorded wake per binding, not one wake per timer row. The due table and its `MIN` select the next row while retaining later rows. Returning nothing when it empties clears the wake. Returning a passed deadline repeatedly can run the handler at pass speed; this handler removes a one-shot or advances cron past now.
+### Scheduling, cancelling, and waiting
 
-## Real-time smoke
-
-Effect 4.1.2's `Cron.parse` accepts six fields including seconds. The smoke schedules a one-shot about one second ahead, a row to cancel at the same time, and a seconds cron with its first deadline computed by `Cron.next`.
+Effect's `Cron.parseUnsafe` accepts six fields including seconds (`"* * * * * *"`). The smoke flow creates `due_timers` and the three streams, appends three timer upserts, and immediately appends a `DurableState.remove` to cancel `"cancelled"` before its deadline:
 
 ```ts title="src/app.ts"
 const flow = Effect.gen(function* () {
@@ -138,16 +180,42 @@ const flow = Effect.gen(function* () {
     DurableState.changes(Timers.at({}), {}, [DurableState.remove("timer", "cancelled")]),
   );
 
+  yield* Streamsy.awaitWake(Accepted, {}, { stream: Timers.at({}).id, offset: cancelled.offset });
   // ...
 });
 ```
 
-The cancellation is a State delete before the deadline. New input runs the handler before its old wake: deleting or moving a row changes the next `MIN`, and the returned wake replaces the previous one. There is no timer cancel API.
+Waiting on `Accepted` confirms that `fire` has processed both appends and updated `due_timers`. The flow then inspects `Projection.Registry` to verify that two active rows (`once` and `cron`) share `1` sleeping binding, waits for both facts to appear on `Fired`, and checks that neither fired early, `cancelled` emitted nothing, `once` was removed from `due_timers`, and `cron` advanced past `cronAt`.
 
-The smoke waits for accepted schedule progress, checks that two due rows share one sleeping binding, then waits for both the one-shot and cron facts. It checks that no fact fired early, the cancelled row emitted nothing, the one-shot emitted once and was removed, and cron's next deadline advanced. The vitest test runs the same real-time flow on fresh storage.
+### Wiring the host
 
-## Host and cost
+`src/host.ts` composes `CheckpointStore.layer` and `Transaction.layer` over one `BunStorage.layerProtocol` SQLite connection so streams, checkpoints, and `due_timers` share a single transaction boundary. `src/app.ts` binds the stream group and attaches `fire` with `durable: true`:
 
-`src/host.ts` provides checkpoints and transactions over a single `BunStorage.layerProtocol`. The app builds `Projection.Registry.layer` and `Projection.attach(fire, { durable: true })` over it before writing schedules. A persistent application keeps the database and initializes its private tables before attaching the runner. This demo creates its private due table for each run; it adds no Streamsy storage migration.
+```ts title="src/app.ts"
+const local = Protocol.bind(Storage, Streamsy.group(Timers, Fired, Accepted)).pipe(
+  Layer.provideMerge(Storage),
+);
 
-`SELECT MIN(due_at)` scans this small due table. Add an application index on `due_at` when the row count calls for one. The source and fired fact streams also grow and need an application retention policy. On Cloudflare the same declaration can run through [ProjectionWakeup.attach](/docs/servers/cloudflare/alarms#projections) when the input, output and SQL transaction share the object's storage owner. Wakes can be late; process waits recheck wall time at least every thirty seconds while a deadline exists. See [Effects](/docs/projections/effects) for retry budgets and host recovery.
+const host = Projection.attach(fire, { durable: true }).pipe(
+  Layer.provideMerge(Projection.Registry.layer),
+  Layer.provideMerge(local),
+);
+```
+
+## Going further
+
+### Production notes
+
+- **Add an index on `due_at`.** `SELECT MIN(due_at)` and `WHERE due_at <= ...` scan `due_timers`. Once you hold more than a handful of active timers, add a SQLite index on `(due_at, id)`.
+- **Plan retention for `Timers` and `Fired`.** Both streams are append-only logs and grow with schedule changes and fired events; add a retention or compaction policy for a long-lived service.
+- **Avoid returning an already-passed deadline.** If a handler returns a `due_at` that is already in the past, the runtime wakes it again immediately. Always delete completed one-shots or advance cron rows strictly past `now` before computing `MIN(due_at)`.
+- **Pick the right cron catch-up policy.** Catching up _once_ prevents a storm of missed ticks after downtime. If your domain requires emitting every missed occurrence, loop over `Cron.next` with a per-pass work cap so each transaction stays bounded.
+- **Timing accuracy and Cloudflare hosting.** Recorded wakes are durable at-or-after deadlines, not hard real-time timers; process hosts recheck wall time at least every 30 seconds while a deadline is armed. The same `fire` declaration runs on Cloudflare Durable Objects via [`ProjectionWakeup.attach`](/docs/servers/cloudflare/alarms#projections) when `Timers`, `Fired`, `Accepted`, and SQLite share one object. See [Effects](/docs/projections/effects) for retry budgets and host recovery.
+- **Keep persistent storage and initialize tables up front.** Replace the temporary directory in `src/host.ts` with a persistent SQLite file, and create `due_timers` and the streams before attaching the runner.
+
+### Related examples
+
+- [Command stream](/docs/examples/command-stream) — another SQLite background worker using `Projection.process`, `Commit.transaction`, and an `Accepted` stream, adding caller-key idempotency with `Projection.decide`.
+- [Bugsy](/docs/examples/bugsy) — scales transactional SQL tables and derived output streams across five input streams.
+- [Yjs editor](/docs/examples/yjs-editor) — runs a background projection on Cloudflare Durable Object alarms with `ProjectionWakeup.attach`.
+- [Process projections guide](/docs/projections/process#timers) — full API reference for `unit.due` and `Projection.wakeAt`.

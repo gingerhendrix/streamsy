@@ -2,24 +2,18 @@
   "title": "Examples",
   "pages": [
     "index",
-    "---Servers---",
-    "memory-server",
-    "---Event sourcing---",
-    "todo",
-    "hex-board",
     "bugsy",
-    "---Background work---",
     "command-stream",
-    "timer-stream",
-    "---Browser sync---",
-    "issue-tracker",
-    "hackernews-newest-stream",
-    "folder-sync",
-    "---Binary streams---",
     "doom",
-    "yjs-editor",
-    "---Agents---",
+    "durable-response",
     "fold-agent",
-    "durable-response"
+    "folder-sync",
+    "hackernews-newest-stream",
+    "hex-board",
+    "issue-tracker",
+    "memory-server",
+    "timer-stream",
+    "todo",
+    "yjs-editor"
   ]
 }

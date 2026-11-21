@@ -1,17 +1,17 @@
 ---
 title: Issue tracker, Effect Atom
-description: The same issue tracker with Effect Atom in React. Live queries become derived atoms, and only a txid on the stream confirms a write.
+description: A client variant of the issue tracker using Effect Atom in React, folding Durable State batches with Stream.scan into derived atoms and writing through HttpApiClient.
 ---
 
-This variant of the [issue tracker](/docs/examples/issue-tracker) keeps the server, the wire contract, the stylesheet and every presentational component. Only `IssueTrackerApp.tsx` and the data layer change. The product is the same, so this page shows only what differs.
+This client variant of the [issue tracker](/docs/examples/issue-tracker) keeps the server, wire contract (`issue-tracker-demo-contract`), stylesheet, and every presentational React component from the base app—swapping out **only** `IssueTrackerApp.tsx` and the data layer.
 
-The page uses `effect/reactivity` and `@effect/atom-react` in place of TanStack DB and `createStreamDB`. The stream read is an atom, each live query is a derived atom, and writes go through the typed `IssueTrackerApi` client.
+It replaces `createStreamDB` and TanStack DB with `effect/reactivity` and `@effect/atom-react`: the workspace stream is folded with `Stream.scan` inside an atom, live queries become derived atoms, and writes go through a typed `HttpApiClient` generated from `IssueTrackerApi`.
 
-The source is in [`examples/issue-tracker-demo-atom`](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo-atom).
+The source lives in [`examples/issue-tracker-demo-atom`](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo-atom).
 
 ## Run it
 
-The page is a Vite app. The base app's server answers `/api` and `/streams`. Run each in its own terminal, from the repository root:
+Vite serves the page and proxies `/api` and `/streams` to the server. Run both from the repository root in separate terminals:
 
 ```bash
 bun install --frozen-lockfile
@@ -20,22 +20,24 @@ bun run --cwd examples/issue-tracker-demo-atom dev:api
 bun run --cwd examples/issue-tracker-demo-atom dev
 ```
 
-Open http://localhost:1338. `dev:api` starts the base server on port 1339, with the base app's settings.
+Open `http://localhost:1338`. `dev:api` starts the base server on port `1339` (honoring `ISSUE_TRACKER_DB`). Set `ISSUE_TRACKER_API` to point at another server variant such as [Event sourced](/docs/examples/issue-tracker/event-sourced).
 
-## What changes
+## What changes from the base app
 
-| Concern           | Base app                                       | This variant                                                  |
-| ----------------- | ---------------------------------------------- | ------------------------------------------------------------- |
-| Stream reader     | `createStreamDB` from `@durable-streams/state` | An atom over `stream()` from `@durable-streams/client`        |
-| Rows in memory    | TanStack DB collections                        | A replica value, folded with `Stream.scan`                    |
-| Derived lists     | Live queries                                   | Derived atoms                                                 |
-| Writes            | `fetch`, and the status as a message           | The `HttpApiClient` for `IssueTrackerApi`, with error tags    |
-| Optimistic writes | `onMutate`, `mutationFn` and `awaitTxId`       | A list of local writes, filtered by the txids on the stream   |
-| Server            | `server/`                                      | The base app's server. Vite serves the page and proxies to it |
+| Concern           | Base app                                       | This variant                                                     |
+| ----------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
+| Stream reader     | `createStreamDB` from `@durable-streams/state` | `Atom.keepAlive` over `stream()` (`@durable-streams/client`)     |
+| Rows in memory    | TanStack DB collections                        | Replica value folded with `Stream.scan`                          |
+| Derived lists     | `useLiveQuery`                                 | Derived atoms (`Atom.make`, `Atom.map`)                          |
+| Writes            | Untyped `fetch` + status string parsing        | Typed `HttpApiClient` for `IssueTrackerApi` with tagged errors   |
+| Optimistic writes | `onMutate`, `mutationFn`, and `awaitTxId`      | Local write list filtered reactively by confirmed stream `txid`s |
+| Server            | `server/`                                      | Reuses the base server behind Vite's proxy                       |
 
-## Live queries become derived atoms
+## Streaming into derived atoms
 
-`src/queries.ts` keeps the name of the base app's file. The read is one atom. `Stream.scan` folds each batch, and `keepAlive` holds the read open for the life of the page:
+Snippet paths below are relative to `examples/issue-tracker-demo-atom`.
+
+`src/queries.ts` keeps the same filename as the base app. One `Atom.keepAlive` stream atom folds incoming workspace batches via `Stream.scan` into a replica holding both confirmed rows and confirmed `txid`s:
 
 ```ts title="src/queries.ts"
 const replicaResultAtom = Atom.keepAlive(
@@ -49,7 +51,7 @@ const replicaResultAtom = Atom.keepAlive(
 );
 ```
 
-Each view is an atom that reads other atoms. The registry recomputes an atom only when a value it read changes, so a new filter sorts the visible issues again and leaves the project list alone:
+Every derived view reads upstream atoms. The atom registry recomputes only what actually changed, so switching the status filter re-sorts visible issues without touching the project list:
 
 ```ts title="src/queries.ts"
 /** The issues of the selected project that pass the filter, last updated first. */
@@ -61,9 +63,9 @@ export const visibleIssuesAtom = Atom.make((get) =>
 export const statusCountsAtom = Atom.map(selectedIssuesAtom, statusCounts);
 ```
 
-## Only the txid confirms a write
+## Derived `txid` confirmation and typed refusals
 
-A write shows at once, faded. An HTTP success changes nothing: the row stays faded until its txid arrives on the stream. Confirmation is a derived value too, so the stream never writes to the list of local writes:
+As in the other variants, an HTTP `2xx` does not confirm an edit—the row stays faded until its `txid` arrives on the stream. Because confirmation is itself a derived atom (`pendingWritesAtom`), the stream reader never mutates `localWritesAtom`:
 
 ```ts title="src/queries.ts"
 export const pendingWritesAtom = Atom.make((get) =>
@@ -76,7 +78,7 @@ export const workspaceAtom = Atom.make((get) =>
 );
 ```
 
-A refusal arrives as a typed error. `WipLimitReached` is the 422 from the work-in-progress rule. `writeAtom` removes the write and shows the server's message, and the derived atoms do the rest of the rollback:
+Writes go through the contract's `HttpApiClient`, so server refusals arrive as typed Effect errors (`WipLimitReached` on `422`, `Conflict` on `409`, etc.). On refusal, `writeAtom` filters the `txid` out of `localWritesAtom` and shows a notice, and the derived atoms roll the UI back automatically:
 
 ```ts title="src/writes.ts"
 const refusal = (workspaceId: string, pending: PendingWrite) =>
@@ -87,20 +89,26 @@ const refusal = (workspaceId: string, pending: PendingWrite) =>
       WipLimitReached: ({ error }) => Effect.succeedSome(error),
 ```
 
-## Why not `Atom.optimistic`
+### Why not `Atom.optimistic` or `AtomHttpApi.mutation`
 
-We tested `Atom.optimistic` and `Atom.optimisticFn` first, with each transition held open until its txid arrived. They hold a write open, and that causes three problems:
+Two built-in helpers were tried first and proved a poor fit for Durable State sync:
 
-- While any transition is open, the atom hides changes to its source. Rows from another tab do not show until every write has finished.
-- With two writes open, a refused write stays on the page until the other write finishes.
-- When the last transition succeeds, the atom refreshes its source. A stream atom then opens a new read from the start of the stream.
+- **`Atom.optimistic` / `Atom.optimisticFn`** hold transitions open until `txid` arrives, which hides updates arriving from other tabs during an open write, keeps a refused write visible until sibling writes finish, and refreshes the source atom on completion—restarting the stream from offset `-1`.
+- **`AtomHttpApi.mutation`** keeps one fiber per endpoint, so a second `issues.update` call interrupts the first in-flight request.
 
-`AtomHttpApi.mutation` does not fit either. It keeps one fiber for each endpoint, so a second call on `issues.update` aborts the first request. `writeAtom` is a `runtime.fn` with `concurrent: true` that calls the client directly.
+Instead, `writeAtom` uses `atomRuntime.fn(..., { concurrent: true })` and reads `AtomRegistry.AtomRegistry` from context (because a concurrent second call retires the first call's `get` context, where `get.set` would silently no-op on rollback).
 
-`concurrent` has a trap of its own. A later call retires the `get` of a running call, and `get.set` on a retired context does nothing. `writeAtom` takes the registry from the `AtomRegistry` service, so a rollback still lands.
+## Going further
 
-## Limits
+### Production notes
 
-- `Atom`, `@effect/atom-react` and the HTTP API modules carry `@stability unstable` tags. A later Effect release can break this page.
-- The production JavaScript is 705 kB, 217 kB with gzip. This includes Effect's HTTP client and Schema. The base app built with the same Vite version is 914 kB, 270 kB with gzip.
-- An accepted write has no timeout. It stays faded for as long as the reader cannot reach the stream. The base app's `awaitTxId` gives up and rolls back.
+- **Unstable Effect APIs.** `Atom`, `@effect/atom-react`, and the HTTP API modules carry `@stability unstable` tags and may change across Effect releases.
+- **No confirmation timeout.** An accepted write stays faded as long as the stream reader cannot reach the server; unlike TanStack DB's `awaitTxId`, it does not time out and roll back automatically.
+- **Bundle size.** Production JS is ~705 kB (~217 kB gzip) including Effect's HTTP client and Schema, compared to ~914 kB (~270 kB gzip) for the base TanStack DB app built with the same Vite version.
+- Server-side persistence and auth notes from the [base issue tracker](/docs/examples/issue-tracker#going-further) also apply.
+
+### Related examples
+
+- [Issue tracker (base)](/docs/examples/issue-tracker) — the shared contract, server, and TanStack DB client.
+- [Foldkit](/docs/examples/issue-tracker/foldkit) — another client variant using the Elm architecture on Effect.
+- [Event sourced](/docs/examples/issue-tracker/event-sourced) — server variant you can proxy this client against via `ISSUE_TRACKER_API`.
