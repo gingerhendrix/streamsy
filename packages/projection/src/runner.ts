@@ -400,6 +400,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
       if (Option.isSome(loaded.record)) return false;
 
       if ((binding[GenerationOutputs]?.size ?? 0) > 0) {
+        // Reading the heads fails with history-unavailable before outputs exist for a lost input.
         yield* tails(binding);
         yield* createOutputs(binding);
       }
