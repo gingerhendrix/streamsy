@@ -34,6 +34,49 @@ const aggregateItem = (id: string, v?: number) =>
 
 const rankedItem = (id: string, v: number, group = "g") => up("items", id, { id, v, group });
 
+it.live("orders mixed View.list values the same way as the full recompute", () => {
+  const Item = Schema.Struct({
+    id: Schema.String,
+    value: Schema.Union([Schema.Finite, Schema.String]),
+  });
+
+  class Items extends Streamsy.state<Items>()("ViewsTest/MixedList", "mixed-list", {
+    params: {},
+    collections: { item: { schema: Item, key: "id" } },
+  }) {}
+
+  const items = View.from(Items, "item");
+  const grouped = items
+    .groupBy(() => ({ group: View.literal("all") }))
+    .aggregate((row) => ({ values: View.list(row.value) }));
+  const list = compilePlan("list", grouped.expression);
+  const sourceId = JSON.stringify([Items.key, "item"]);
+  const values = ["2", 10, "\ue000", -3.5, 2, "😀", "10", -3.5];
+  const rows = Arr.map(values, (value, index) => {
+    const id = String(index);
+
+    return { key: id, row: { id, value } };
+  });
+
+  return Effect.gen(function* () {
+    yield* migrate();
+    const engine = yield* makeEngine({ list });
+    const output = new Map<string, string>();
+    const changes = Arr.map(rows, ({ key, row }) => up(sourceId, key, row));
+    materialize(output, yield* engine.process("mixed-list", changes));
+
+    const expected = fullRecompute({ plan: list, sources: { [sourceId]: rows } });
+    expect(expected.rows.map(({ row }) => row.values)).toEqual([
+      [-3.5, -3.5, 2, 10, "10", "2", "😀", "\ue000"],
+    ]);
+    expect(output).toEqual(
+      new Map(
+        Arr.map(expected.rows, (entry) => [identity("list", entry.key), canonicalJson(entry.row)]),
+      ),
+    );
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+});
+
 it.live(
   "normalizes repeated keys, suppresses net no-ops, and restores using SQL after recompiling",
   () => {
