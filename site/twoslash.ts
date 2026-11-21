@@ -44,12 +44,15 @@ export const snippetTwoslashOptions = () => ({
   cwd: snippetsPackage,
   compilerOptions: snippetCompilerOptions,
   handbookOptions: { noStaticSemanticInfo: true },
-  extraFiles: Record.fromEntries(
-    Array.map(sharedModules, (name) => [
-      name,
-      readFileSync(join(snippetsPackage, "src", name), "utf8"),
-    ]),
-  ),
+  extraFiles: {
+    ...Record.fromEntries(
+      Array.map(sharedModules, (name) => [
+        name,
+        readFileSync(join(snippetsPackage, "src", name), "utf8"),
+      ]),
+    ),
+    "views-shop-streams.ts": readFileSync("../examples/views-shop/src/streams.ts", "utf8"),
+  },
 });
 
 /**

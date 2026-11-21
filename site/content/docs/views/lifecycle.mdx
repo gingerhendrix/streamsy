@@ -43,7 +43,11 @@ When readers must stay on a live, complete stream while the new plan rebuilds an
 
 Use **two distinct circuit ids and two distinct generation numbers**:
 
-```ts no-twoslash
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Layer, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { View } from "@streamsy/views";
@@ -156,7 +160,11 @@ When a downstream circuit reads an upstream circuit's generation-addressed outpu
 
 Because a projection checkpoint records each input's stream id, repinning a downstream circuit to upstream generation 2 while keeping the downstream circuit at generation 1 fails at `load` with `identity-mismatch`. Raise the downstream circuit's `generation` at the same time so it replays from the start of the new upstream stream into its own new output stream:
 
-```ts no-twoslash
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";

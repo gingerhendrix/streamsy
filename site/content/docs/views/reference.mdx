@@ -3,7 +3,7 @@ title: Reference
 description: Root exports, the View namespace, Relation operators, expression methods, fault classes, and exported types in @streamsy/views.
 ---
 
-```ts no-twoslash
+```ts
 import { PlanChanged, PlanCheckFailed, View, ViewDataFault, ViewFault } from "@streamsy/views";
 import type {
   BooleanExpression,
@@ -68,7 +68,11 @@ import type {
 
 ### `View.from`
 
-```ts no-twoslash
+```ts
+import type { StreamAddress } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Relation, State } from "@streamsy/views";
+// ---cut---
 declare function from<
   Codecs extends StreamRoute.ParamCodecs,
   C extends StreamAddress.Collections,
@@ -131,7 +135,11 @@ Declaration-time checks:
 
 ### `View.migrate`
 
-```ts no-twoslash
+```ts
+import type { Effect } from "effect";
+import type { SqlClient, SqlError } from "effect/sql";
+import type { ViewFault } from "@streamsy/views";
+// ---cut---
 declare const migrate: (
   sql: SqlClient.SqlClient,
 ) => Effect.Effect<void, ViewFault | SqlError.SqlError>;
@@ -141,7 +149,9 @@ Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_
 
 ### Aggregates
 
-```ts no-twoslash
+```ts
+import type { TypedAggregateExpression, TypedExpression } from "@streamsy/views";
+// ---cut---
 declare const count: () => TypedAggregateExpression<number>;
 declare const sum: (expression: TypedExpression<number>) => TypedAggregateExpression<number>;
 declare const min: <T extends number | string>(
@@ -156,7 +166,10 @@ Used inside `relation.groupBy(fields).aggregate(aggregates)`.
 
 ### Expression helpers
 
-```ts no-twoslash
+```ts
+import type { TypedExpression } from "@streamsy/views";
+type JsonValue = Parameters<typeof import("@streamsy/views").View.literal>[0];
+// ---cut---
 declare function field<T, K extends keyof Exclude<T, undefined> & string>(
   expression: TypedExpression<T>,
   name: K,
@@ -242,7 +255,9 @@ Methods available on `TypedExpression<T>` depend on `T`:
 
 ### `PlanChanged`
 
-```ts no-twoslash
+```ts
+import { NonRetryable } from "@streamsy/projection";
+// ---cut---
 interface PlanChanged {
   readonly _tag: "ViewPlanChanged";
   readonly namespace: string;
@@ -254,7 +269,9 @@ interface PlanChanged {
 
 ### `ViewDataFault`
 
-```ts no-twoslash
+```ts
+import { NonRetryable } from "@streamsy/projection";
+// ---cut---
 interface ViewDataFault {
   readonly _tag: "ViewDataFault";
   readonly view: string;
@@ -267,7 +284,7 @@ interface ViewDataFault {
 
 ### `ViewFault`
 
-```ts no-twoslash
+```ts
 interface ViewFault {
   readonly _tag: "ViewFault";
   readonly message: string;
@@ -277,7 +294,7 @@ interface ViewFault {
 
 ### `PlanCheckFailed`
 
-```ts no-twoslash
+```ts
 interface PlanCheckFailed {
   readonly _tag: "PlanCheckFailed";
   readonly issues: ReadonlyArray<{
@@ -303,7 +320,10 @@ interface PlanCheckFailed {
 
 ### `CircuitError`
 
-```ts no-twoslash
+```ts
+import type { ProjectionFault } from "@streamsy/projection";
+import type { PlanChanged, ViewDataFault, ViewFault } from "@streamsy/views";
+// ---cut---
 type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
 ```
 

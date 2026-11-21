@@ -193,7 +193,11 @@ In the first unit's transaction, `Commit.transaction` creates each wrapped outpu
 
 For a long-lived Bun process, migrate once at startup and attach the circuit (and any output `StateTable`) with `Projection.attach`:
 
-```ts no-twoslash
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
