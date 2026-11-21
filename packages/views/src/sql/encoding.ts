@@ -1,5 +1,6 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
+import { encodeRowKey } from "../runtime/key.ts";
 import type { Entry } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */
@@ -37,8 +38,12 @@ export function orderKey(
   let result = "";
 
   for (const term of terms) {
+    const expression = term.expression;
+
     const value = scalarKey(
-      evaluate(term.expression, { row: entry.row, key: entry.key, parameter }),
+      expression.kind === "reference" && expression.scope === "key" && expression.path.length === 0
+        ? encodeRowKey(entry.key)
+        : evaluate(expression, { row: entry.row, key: entry.key, parameter }),
     );
 
     result += term.direction === "ascending" ? value : invert(value);

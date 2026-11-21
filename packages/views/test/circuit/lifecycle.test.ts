@@ -14,7 +14,7 @@ import { PlanChanged, View } from "../../src/index.ts";
 import { storeFor } from "../../src/sql/store.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
-import { canonicalJson } from "../../src/runtime/key.ts";
+import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import { host } from "./support/host.ts";
 import {
@@ -431,6 +431,7 @@ it.live("reordering view declarations preserves the plan and SQL identities", ()
         topOrder: views.topOrder,
         goldOrder: views.goldOrder,
         customerTotals: views.customerTotals,
+        lineage: views.lineage,
       },
     });
 
@@ -503,6 +504,10 @@ it.live("numeric wire keys, reset and snapshots across units follow State semant
         DurableState.upsert("row", { id: 2, n: 20 }),
       ]),
     ).toEqual([1, 2]);
+    const metadata = (yield* state).circuits[0]!;
+    const store = storeFor(sql, metadata.namespace);
+    expect(yield* store.get("r0", encodeRowKey(asRowKey(1)))).toBeUndefined();
+    expect(yield* store.get("r0", encodeRowKey("1"))).toEqual({ key: "1", row: { id: 1, n: 10 } });
     expect(
       yield* append([StreamAddress.snapshotStart(), DurableState.upsert("row", { id: 1, n: 11 })]),
     ).toEqual([1, 2]);

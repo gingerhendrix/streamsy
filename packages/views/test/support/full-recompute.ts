@@ -1,5 +1,6 @@
 import {
   isJsonObject,
+  type ClosureNode,
   type Expression,
   type GroupedAggregateNode,
   type JsonObject,
@@ -179,13 +180,16 @@ function evaluateRelations(
               ["l", node.left],
               ["r", node.right],
             ] as const,
-            ([tag, input]) =>
-              Arr.map(rows(relations, input), ({ key, row }) => ({
+            ([tag, relation]) =>
+              Arr.map(rows(relations, relation), ({ key, row }) => ({
                 key: [tag, encodeRowKey(key)],
                 row,
               })),
           ),
         );
+        break;
+      case "closure":
+        relations.set(node.id, recomputeClosure(node, rows(relations, node.input), parameters));
         break;
       case "top-n": {
         const result = recomputeTop(node, rows(relations, node.input), parameters);
@@ -310,6 +314,54 @@ function recomputeAggregate(
   );
 }
 
+function recomputeClosure(
+  node: ClosureNode,
+  input: readonly StateRow[],
+  parameter: NonNullable<ExpressionScopes["parameter"]>,
+): readonly StateRow[] {
+  const byKey = new Map<string, StateRow>();
+  const frontier = new Map<string, { ancestor: string; path: readonly JsonValue[] }>();
+
+  for (const entry of input) {
+    if (typeof entry.key !== "string") throw new TypeError("closure requires string row keys");
+    byKey.set(entry.key, entry);
+    frontier.set(entry.key, { ancestor: entry.key, path: [] });
+  }
+
+  const seen = new Set<string>();
+  const output: StateRow[] = [];
+
+  for (let depth = 1; depth <= node.maxDepth && frontier.size > 0; depth++) {
+    for (const [descendant, { ancestor, path }] of frontier) {
+      const entry = byKey.get(ancestor);
+      const scopes = { row: entry?.row, key: ancestor, parameter };
+      const parent = entry === undefined ? undefined : evaluateOptional(node.parent, scopes);
+
+      if (parent === undefined || isMissing(parent) || parent === descendant) {
+        frontier.delete(descendant);
+        continue;
+      }
+
+      if (typeof parent !== "string") throw new TypeError("closure requires string parent keys");
+      const key = [encodeRowKey(descendant), encodeRowKey(parent)];
+      const identity = encodeRowKey(key);
+
+      if (seen.has(identity)) {
+        frontier.delete(descendant);
+        continue;
+      }
+
+      seen.add(identity);
+      const parts = node.part === undefined ? [] : [evaluate(node.part, scopes), ...path];
+      const row = { node: descendant, ancestor: parent, depth };
+      output.push({ key, row: node.part === undefined ? row : { ...row, path: parts } });
+      frontier.set(descendant, { ancestor: parent, path: parts });
+    }
+  }
+
+  return output;
+}
+
 function recomputeTop(
   node: TopNNode,
   input: readonly StateRow[],
@@ -333,8 +385,12 @@ function recomputeTop(
     const partition = partitions.get(identity) ?? { key, rows: [] };
     partition.rows.push({
       entry,
-      sort: Arr.map(node.orderBy, (term) =>
-        evaluate(term.expression, { row: entry.row, key: entry.key, parameter: parameters }),
+      sort: Arr.map(node.orderBy, ({ expression }) =>
+        expression.kind === "reference" &&
+        expression.scope === "key" &&
+        expression.path.length === 0
+          ? encodeRowKey(entry.key)
+          : evaluate(expression, { row: entry.row, key: entry.key, parameter: parameters }),
       ),
     });
     partitions.set(identity, partition);

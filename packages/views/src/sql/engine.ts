@@ -4,7 +4,7 @@ import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, RelationPlan } from "../ir/contracts.ts";
 import { compile, type Program } from "./planner.ts";
-import { accepts, aggregate, concat, join, linear, top } from "./operators.ts";
+import { accepts, aggregate, closure, concat, join, linear, top } from "./operators.ts";
 import { delta, runtime, type Delta, type Deltas } from "./runtime.ts";
 import { checkData, dataFault, ViewDataFault } from "./data-fault.ts";
 import { rekey } from "./key-ownership.ts";
@@ -174,6 +174,9 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
             break;
           case "concat":
             changes = concat(node, rt);
+            break;
+          case "closure":
+            changes = yield* closure(node, program, rt);
             break;
           case "grouped-aggregate":
             changes = yield* aggregate(node, program, rt, store);

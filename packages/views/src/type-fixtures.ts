@@ -1,4 +1,4 @@
-import { list, type Relation } from "./view.ts";
+import { key, list, type Relation } from "./view.ts";
 import {
   fn,
   selectors,
@@ -54,6 +54,30 @@ const doubled: Relation<{ doubled: number }> = fixtureRelation.selectRow((row) =
 );
 
 void doubled;
+
+const lineage: Relation<{
+  readonly node: string;
+  readonly ancestor: string;
+  readonly depth: number;
+  readonly path?: readonly number[];
+}> = fixtureRelation.closure({
+  parent: (row) => row.assigneeId,
+  part: (row) => row.count,
+  maxDepth: 3,
+});
+
+fixtureRelation
+  .select((row) => ({ node: row.id, depth: row.count }))
+  .concat(lineage)
+  .top({ partitionBy: (row) => row.node, by: (row) => [row.depth.asc(), key.asc()], limit: 1 });
+
+fixtureRelation.closure({ parent: (row) => row.id, maxDepth: 3 });
+
+// @ts-expect-error numeric parent fields must be converted to wire keys
+fixtureRelation.closure({ parent: (row) => row.count, maxDepth: 3 });
+
+// @ts-expect-error closure requires an explicit depth bound
+fixtureRelation.closure({ parent: (row) => row.assigneeId });
 
 // @ts-expect-error a row projection must return a JSON object
 fixtureRelation.selectRow((row) => row.id);

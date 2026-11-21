@@ -121,11 +121,19 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
     tier: i % 2 === 0 ? "gold" : "silver",
   }));
 
-  const orders = Array.makeBy(100, (i) => ({
-    orderId: `o${String(i).padStart(3, "0")}`,
-    customerId: `c${Math.floor(i / 10)}`,
-    total: i + 1,
-  }));
+  const orders = Array.makeBy(100, (i) => {
+    const row = {
+      orderId: `o${String(i).padStart(3, "0")}`,
+      customerId: `c${Math.floor(i / 10)}`,
+      total: i + 1,
+    };
+
+    if (i === 1) return { ...row, parentOrderId: "o000" };
+
+    if (i === 2) return { ...row, parentOrderId: "o001" };
+
+    return row;
+  });
 
   for (const row of customers) customerRows.set(row.customerId, row);
 
@@ -138,7 +146,7 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
     ]),
   );
   yield* run("load");
-  const order = { orderId: "o000", customerId: "c0", total: 250 };
+  const order = { orderId: "o000", customerId: "c0", total: 250, parentOrderId: "external" };
   orderRows.set(order.orderId, order);
   yield* input.append(
     params,
@@ -180,9 +188,20 @@ export const proof = Effect.fn("ViewsTest.proof")(function* (measure: Measure = 
   if (before.nextOffset !== after.nextOffset || noop.units !== 1)
     throw new Error("No-op output was appended");
 
+  // Replay the retained inputs, including the reparent and its later retraction.
+  const rebuilt = circuit(2).at(params);
+  yield* Projection.run(rebuilt);
+  const rebuiltTable = Table.at({ ...params, generation: rebuilt.generation });
+  yield* Projection.run(rebuiltTable);
+  const original = yield* Table.at(outputParams).list("lineage");
+  const replayed = yield* rebuiltTable.list("lineage");
+
+  if (original.rows.length !== 3 || canonicalJson(original.rows) !== canonicalJson(replayed.rows))
+    throw new Error("Closure replay differs from the incremental generation");
+
   return {
     units,
-    rows: { goldOrder: 50, customerTotals: 10, topOrder: 30 },
+    rows: { goldOrder: 50, customerTotals: 10, topOrder: 30, lineage: 3 },
     noopUnits: noop.units,
   };
 });

@@ -267,6 +267,8 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
 
     if (node.kind === "top-n") arrange(node.id, node.input, node.partitionBy ?? [], node.orderBy);
 
+    if (node.kind === "closure") arrange(node.id, node.input, [node.parent], []);
+
     if (node.kind === "grouped-aggregate") {
       if (Arr.every(Rec.keys(node.groupBy), (field) => !Rec.has(node.aggregates, field)))
         keyFields.set(node.id, {

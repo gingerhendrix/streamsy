@@ -7,6 +7,7 @@ export const Order = Schema.Struct({
   orderId: Schema.String,
   customerId: Schema.String,
   total: Schema.Finite,
+  parentOrderId: Schema.optionalKey(Schema.String),
 });
 
 export const Customer = Schema.Struct({
@@ -49,6 +50,16 @@ export class Results extends Streamsy.state<Results>()(
         key: "customerId",
       },
       topOrder: { schema: Order, key: "orderId" },
+      lineage: {
+        schema: Schema.Struct({
+          id: Schema.String,
+          node: Schema.String,
+          ancestor: Schema.String,
+          depth: Schema.Finite,
+          path: Schema.Array(Schema.String),
+        }),
+        key: "id",
+      },
     },
   },
 ) {}
@@ -86,7 +97,21 @@ export const topOrders = orders.top({
   limit: 3,
 });
 
-export const views = { goldOrder: goldOrders, customerTotals, topOrder: topOrders };
+const lineageId = View.fn("order-lineage-id", 1, (node: string, ancestor: string) =>
+  JSON.stringify([node, ancestor]),
+);
+
+const lineage = orders
+  .closure({ parent: (row) => row.parentOrderId, part: (row) => row.orderId, maxDepth: 3 })
+  .select((row) => ({
+    id: lineageId(row.node, row.ancestor),
+    node: row.node,
+    ancestor: row.ancestor,
+    depth: row.depth,
+    path: View.field(row, "path").unwrap(),
+  }));
+
+export const views = { goldOrder: goldOrders, customerTotals, topOrder: topOrders, lineage };
 
 export const changedViews = { ...views, goldOrder: goldOrders.where((row) => row.total.gt(5)) };
 

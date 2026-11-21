@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Record as Rec } from "effect";
+import { Array as Arr, Effect, Predicate, Record as Rec } from "effect";
 import {
   evaluate,
   evaluateOptional,
@@ -8,6 +8,7 @@ import {
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import {
   isJsonObject,
+  type ClosureNode,
   type ConcatNode,
   type JsonObject,
   type JsonValue,
@@ -102,6 +103,122 @@ export function concat(node: ConcatNode, rt: Runtime): Deltas {
 
   return result;
 }
+
+export const closure = Effect.fnUntraced(function* (
+  node: ClosureNode,
+  program: Program,
+  rt: Runtime,
+) {
+  const fault = rt.fault(node.id);
+  const byParent = findArrangement(program, node.input, [node.parent], []);
+
+  const lookupOptions =
+    rt.fanOutReadLimit === undefined ? undefined : { limit: rt.fanOutReadLimit };
+
+  const stringKey = (key: RowKey) => {
+    if (!Predicate.isString(key)) throw fault(key, "closure requires string row keys");
+
+    return key;
+  };
+
+  const edge = (key: string, row: JsonObject | undefined) => {
+    if (row === undefined) return null;
+
+    return checkData(fault, key, () => {
+      const scopes = { row, key, parameter: rt.parameter };
+      const parent = evaluateOptional(node.parent, scopes);
+
+      if (isMissing(parent) || parent === key) return null;
+
+      if (!Predicate.isString(parent)) throw fault(key, "closure requires string parent keys");
+
+      if (node.part === undefined) return { parent };
+
+      const part = evaluateOptional(node.part, scopes);
+
+      return isMissing(part) ? { parent } : { parent, part };
+    });
+  };
+
+  const dirty = new Set<string>();
+
+  for (const change of rt.changes.get(node.input)?.values() ?? []) {
+    const key = stringKey(change.key);
+
+    if (canonicalJson(edge(key, change.before)) !== canonicalJson(edge(key, change.after))) {
+      dirty.add(key);
+      rt.checkFanOut?.(node.id, dirty.size, key);
+    }
+  }
+
+  // A multi-source walk per image visits each node first via the closest dirty ancestor.
+  const affected = new Set(dirty);
+
+  for (const before of [true, false]) {
+    const seen = new Set(dirty);
+    let frontier = Arr.map([...dirty], (key) => ({ key, trigger: key }));
+
+    for (let depth = 1; depth < node.maxDepth && frontier.length > 0; depth++) {
+      const next: typeof frontier = [];
+
+      for (const { key, trigger } of frontier) {
+        const children = yield* rt.lookup(byParent, canonicalJson([key]), before, lookupOptions);
+
+        for (const child of children) {
+          const childKey = stringKey(child.key);
+
+          if (seen.has(childKey)) continue;
+          seen.add(childKey);
+          affected.add(childKey);
+          rt.checkFanOut?.(node.id, affected.size, trigger);
+          next.push({ key: childKey, trigger });
+        }
+      }
+
+      frontier = next;
+    }
+  }
+
+  const ancestors = (key: string, before: boolean, output: Entry[]) =>
+    Effect.gen(function* () {
+      const encodedNode = encodeRowKey(key);
+      const visited = new Set([key]);
+      const path: JsonValue[] = [];
+      let current = key;
+
+      for (let depth = 1; depth <= node.maxDepth; depth++) {
+        const entry = yield* rt.get(node.input, encodeRowKey(current), before);
+        const next = edge(current, entry?.row);
+
+        if (next === null || visited.has(next.parent)) break;
+
+        const { parent, part } = next;
+        const row = { node: key, ancestor: parent, depth };
+
+        if (node.part !== undefined) {
+          if (part === undefined) throw fault(current, "closure path part is absent");
+          path.unshift(part);
+        }
+
+        output.push({
+          key: [encodedNode, encodeRowKey(parent)],
+          row: node.part === undefined ? row : { ...row, path: [...path] },
+        });
+        visited.add(parent);
+        current = parent;
+      }
+    });
+
+  const before: Entry[] = [];
+  const after: Entry[] = [];
+
+  for (const key of affected) {
+    yield* ancestors(key, true, before);
+    yield* ancestors(key, false, after);
+  }
+
+  return difference(before, after, fault);
+});
 
 export const join = Effect.fnUntraced(function* (
   node: Extract<RelationNode, { kind: "inner-join" | "left-join" }>,

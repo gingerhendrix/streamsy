@@ -160,6 +160,14 @@ export interface ConcatNode extends RelationNodeBase {
   readonly right: string;
 }
 
+export interface ClosureNode extends RelationNodeBase {
+  readonly kind: "closure";
+  readonly input: string;
+  readonly parent: Expression;
+  readonly part?: Expression;
+  readonly maxDepth: number;
+}
+
 export interface GroupedAggregateNode extends RelationNodeBase {
   readonly kind: "grouped-aggregate";
   readonly input: string;
@@ -183,6 +191,7 @@ export type RelationNode =
   | InnerJoinNode
   | LeftJoinNode
   | ConcatNode
+  | ClosureNode
   | GroupedAggregateNode
   | TopNNode;
 

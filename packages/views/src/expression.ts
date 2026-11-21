@@ -115,6 +115,8 @@ export type Reference<T> = TypedExpression<T>;
 
 export type BooleanExpression = TypedExpression<boolean>;
 
+export type ValueExpression<T> = Expression & { readonly [ExpressionType]: T };
+
 const unary = <T>(operator: UnaryOperator, operand: Expression): TypedExpression<T> =>
   decorate<T>(Object.freeze({ kind: "unary", operator, operand }));
 
@@ -258,7 +260,7 @@ export function fn<
   version: number,
   implementation: (...args: Args) => Result,
 ): (
-  ...operands: { readonly [K in keyof Args]: Expression & { readonly [ExpressionType]: Args[K] } }
+  ...operands: { readonly [K in keyof Args]: ValueExpression<Args[K]> }
 ) => TypedExpression<Result> {
   if (name.trim().length === 0 || !Number.isSafeInteger(version) || version < 1)
     throw new RangeError("View.fn requires a name and a positive integer version");

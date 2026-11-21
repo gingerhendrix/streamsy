@@ -48,10 +48,10 @@ test("runs the shop circuit on local workerd and observes SQLite reads and write
     const result = Schema.decodeSync(Schema.fromJsonString(Result))(text);
     expect(result.noopUnits).toBe(1);
     expect(Array.map(result.units, ({ name, outputChanges }) => [name, outputChanges])).toEqual([
-      ["load", 90],
-      ["single-order", 4],
+      ["load", 93],
+      ["single-order", 7],
       ["customer-rename", 10],
-      ["100-changes", 91],
+      ["100-changes", 94],
     ]);
 
     for (const unit of result.units) {

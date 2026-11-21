@@ -13,8 +13,9 @@ import {
   type Reference,
   type TypedAggregateExpression,
   type TypedExpression,
+  type ValueExpression,
 } from "./expression.ts";
-import type { Expression, JsonObject, SortTerm } from "./ir/contracts.ts";
+import type { Expression, JsonObject, JsonValue, SortTerm } from "./ir/contracts.ts";
 
 /** A State declaration, with the same structural contract as StateTable.define. */
 export type State<
@@ -58,6 +59,19 @@ export interface Relation<Row, Inputs extends Input = Input> {
   readonly concat: <Other, OtherInputs extends Input>(
     other: Relation<Other, OtherInputs>,
   ) => Relation<Row | Other, Inputs | OtherInputs>;
+  readonly closure: <Part extends JsonValue | undefined = undefined>(spec: {
+    readonly parent: (row: Reference<Row>) => ValueExpression<string | undefined>;
+    readonly part?: (row: Reference<Row>) => ValueExpression<Part>;
+    readonly maxDepth: number;
+  }) => Relation<
+    {
+      readonly node: string;
+      readonly ancestor: string;
+      readonly depth: number;
+      readonly path?: readonly Exclude<Part, undefined>[];
+    },
+    Inputs
+  >;
   readonly join: <Right, Other extends Input, Alias extends string>(
     other: Relation<Right, Other>,
     spec: {
@@ -131,6 +145,16 @@ function relation<Row, Inputs extends Input>(
         { kind: "concat", left: expression, right: other.expression },
         combineInputs(other.inputs),
       ),
+    closure: (spec) => {
+      const node = {
+        kind: "closure",
+        input: expression,
+        parent: spec.parent(row),
+        maxDepth: spec.maxDepth,
+      } as const;
+
+      return relation(spec.part === undefined ? node : { ...node, part: spec.part(row) }, inputs);
+    },
     join: (other, spec) => {
       const { combined, ...joined } = join(other, spec);
 
@@ -198,7 +222,11 @@ export const { count, sum, min, max, list } = aggregate;
 
 export { field, fn, literal } from "./expression.ts";
 
-export const { key } = selectors<never>();
+const { key: compositeKey, keyRef } = selectors<never>();
+
+export const key = Object.assign(compositeKey, {
+  asc: (): SortTerm => ({ expression: keyRef, direction: "ascending" }),
+});
 
 export { circuit, migrate } from "./circuit.ts";
 

@@ -3,11 +3,13 @@ import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Exit, Order, Record as Rec, Schema } from "effect";
 import { SqlClient, Statement } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
-import { View } from "../../src/index.ts";
+import { View, ViewDataFault } from "../../src/index.ts";
+import { collectPlanIssues } from "../../src/check.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
+import { circuitPlanHash } from "../../src/plan.ts";
 import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
-import type { JsonObject, RelationNode } from "../../src/ir/contracts.ts";
+import type { ClosureNode, JsonObject, RelationNode } from "../../src/ir/contracts.ts";
 import { scalarKey } from "../../src/sql/encoding.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
@@ -33,6 +35,247 @@ const aggregateItem = (id: string, v?: number) =>
   up("items", id, v === undefined ? { id, group: "g" } : { id, group: "g", v });
 
 const rankedItem = (id: string, v: number, group = "g") => up("items", id, { id, v, group });
+
+const closureNode = (maxDepth: number): ClosureNode => ({
+  kind: "closure",
+  id: "closure",
+  input: "nodes",
+  parent: ref("row", "parent"),
+  part: ref("row", "part"),
+  maxDepth,
+});
+
+const edge = (id: string, parent: string, part = id) => up("nodes", id, { id, parent, part });
+
+const expectedPath = (node: string, ancestor: string, ...path: string[]) => ({
+  view: "lineage",
+  kind: "upsert",
+  key: [encodeRowKey(node), encodeRowKey(ancestor)],
+  value: { node, ancestor, depth: path.length, path },
+});
+
+const lineagePlan = (node: ClosureNode) => plan("lineage", [source("nodes"), node]);
+
+const removedPath = (node: string, ancestor: string) => ({
+  view: "lineage",
+  kind: "delete",
+  key: [encodeRowKey(node), encodeRowKey(ancestor)],
+});
+
+it("checks closure depth, expression scopes and string keys and hashes the closure spec", () => {
+  for (const maxDepth of [-1, 0, 0.5, Infinity, NaN]) {
+    expect(collectPlanIssues(lineagePlan(closureNode(maxDepth)))).toMatchObject([
+      { code: "invalid-closure-depth", path: "nodes[1].maxDepth" },
+    ]);
+  }
+
+  expect(
+    collectPlanIssues(
+      lineagePlan({ ...closureNode(1), parent: ref("left", "p"), part: ref("right", "name") }),
+    ),
+  ).toMatchObject([
+    { code: "invalid-expression-scope", path: "nodes[1].parent" },
+    { code: "invalid-expression-scope", path: "nodes[1].part" },
+  ]);
+
+  expect(
+    collectPlanIssues(lineagePlan({ ...closureNode(1), parent: View.literal(42) })),
+  ).toMatchObject([{ code: "invalid-closure-key", path: "nodes[1].parent" }]);
+  expect(
+    collectPlanIssues(
+      plan("lineage", [
+        source("nodes"),
+        { kind: "key", id: "composite", input: "nodes", key: keyExpression(["id", "parent"]) },
+        { ...closureNode(1), input: "composite" },
+      ]),
+    ),
+  ).toMatchObject([{ code: "invalid-closure-key", path: "nodes[2].input" }]);
+
+  const node = closureNode(1);
+  const hash = (closure: ClosureNode) => circuitPlanHash({ lineage: lineagePlan(closure) });
+  expect(hash(node)).not.toBe(hash(closureNode(2)));
+  expect(hash(node)).not.toBe(hash({ ...node, part: View.literal("part") }));
+  expect(hash(node)).not.toBe(hash({ ...node, parent: View.literal("root") }));
+});
+
+it.live(
+  "closure incrementally updates paths on edge edits and keeps absent parents as ancestors",
+  () =>
+    Effect.gen(function* () {
+      yield* migrate();
+
+      const engine = yield* makeEngine({
+        lineage: lineagePlan(closureNode(3)),
+      });
+
+      const run = (changes: readonly StateChange[]) => engine.process("closure", changes);
+
+      expect(yield* run([edge("b", "a"), edge("c", "b")])).toEqual([
+        expectedPath("b", "a", "b"),
+        expectedPath("c", "b", "c"),
+        expectedPath("c", "a", "b", "c"),
+      ]);
+      expect(yield* run([edge("d", "c")])).toEqual([
+        expectedPath("d", "c", "d"),
+        expectedPath("d", "b", "c", "d"),
+        expectedPath("d", "a", "b", "c", "d"),
+      ]);
+      expect(yield* run([edge("d", "b")])).toEqual([
+        removedPath("d", "c"),
+        expectedPath("d", "b", "d"),
+        expectedPath("d", "a", "b", "d"),
+      ]);
+      expect(yield* run([del("nodes", "d")])).toEqual([
+        removedPath("d", "b"),
+        removedPath("d", "a"),
+      ]);
+      expect(yield* run([edge("b", "a", "B")])).toEqual([
+        expectedPath("b", "a", "B"),
+        expectedPath("c", "a", "B", "c"),
+      ]);
+      expect(yield* run([up("nodes", "b", { id: "b", parent: "a", part: "B", other: 1 })])).toEqual(
+        [],
+      );
+      expect(yield* run([edge("b", "z", "B")])).toEqual([
+        removedPath("b", "a"),
+        removedPath("c", "a"),
+        expectedPath("b", "z", "B"),
+        expectedPath("c", "z", "B", "c"),
+      ]);
+      expect(yield* run([del("nodes", "b")])).toEqual([
+        removedPath("b", "z"),
+        removedPath("c", "z"),
+      ]);
+      expect(yield* run([edge("b", "z", "B")])).toEqual([
+        expectedPath("b", "z", "B"),
+        expectedPath("c", "z", "B", "c"),
+      ]);
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.live("closure stops at self parents, cycles and the depth limit", () => {
+  const { part: _part, ...withoutPart } = closureNode(64);
+
+  const cases = [
+    {
+      changes: [
+        edge("a", "b"),
+        edge("b", "a"),
+        up("nodes", "self", { id: "self", parent: "self" }),
+      ],
+      paths: [expectedPath("a", "b", "a"), expectedPath("b", "a", "b")],
+    },
+    {
+      changes: [edge("b", "c"), edge("c", "a"), edge("tail", "c")],
+      paths: [
+        expectedPath("a", "b", "a"),
+        expectedPath("a", "c", "b", "a"),
+        expectedPath("b", "c", "b"),
+        expectedPath("b", "a", "c", "b"),
+        expectedPath("c", "a", "c"),
+        expectedPath("c", "b", "a", "c"),
+        expectedPath("tail", "c", "tail"),
+        expectedPath("tail", "a", "c", "tail"),
+        expectedPath("tail", "b", "a", "c", "tail"),
+      ],
+    },
+    {
+      changes: [up("nodes", "a", { id: "a" })],
+      paths: [
+        expectedPath("b", "c", "b"),
+        expectedPath("b", "a", "c", "b"),
+        expectedPath("c", "a", "c"),
+        expectedPath("tail", "c", "tail"),
+        expectedPath("tail", "a", "c", "tail"),
+      ],
+    },
+  ];
+
+  return Effect.gen(function* () {
+    yield* migrate();
+
+    const engine = yield* makeEngine({
+      lineage: lineagePlan(closureNode(3)),
+    });
+
+    const current = new Map<string, string>();
+
+    for (const { changes, paths } of cases) {
+      materialize(current, yield* engine.process("cycle", changes));
+      expect(current).toEqual(
+        new Map(
+          Arr.map(paths, ({ key, value }) => [identity("lineage", key), canonicalJson(value)]),
+        ),
+      );
+    }
+
+    for (const maxDepth of [3, 64]) {
+      const chain = yield* makeEngine({
+        lineage: lineagePlan({ ...withoutPart, maxDepth }),
+      });
+
+      const changes = Arr.makeBy(maxDepth + 2, (i) => edge(String(i + 1), String(i)));
+      const last = String(maxDepth + 2);
+
+      const rows = Arr.filter(
+        yield* chain.process(`chain-${maxDepth}`, changes),
+        (change) => change.kind === "upsert" && change.value.node === last,
+      );
+
+      expect(rows).toHaveLength(maxDepth);
+      expect(rows.at(-1)).toMatchObject({ value: { node: last, ancestor: "2", depth: maxDepth } });
+      expect(rows.at(-1)).not.toHaveProperty("value.path");
+    }
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+});
+
+it.live("closure rolls back an absent path part and a subtree beyond maxAffectedKeys", () =>
+  Effect.gen(function* () {
+    yield* migrate();
+    const sql = yield* SqlClient.SqlClient;
+
+    const lineage = plan("lineage", [
+      source("nodes"),
+      closureNode(3),
+      { kind: "top-n", id: "all", input: "closure", orderBy: [View.key.asc()], limit: 100 },
+    ]);
+
+    const engine = yield* makeEngine({ lineage }, false, 8);
+    const run = (changes: readonly StateChange[]) => engine.process("bounded", changes);
+
+    const readState = Effect.gen(function* () {
+      return [
+        yield* sql`SELECT * FROM streamsy_view_integrals ORDER BY relation, row_key`,
+        yield* sql`SELECT * FROM streamsy_view_arrangements ORDER BY arrangement, index_key, row_key`,
+      ];
+    });
+
+    for (let i = 0; i < 9; i++) yield* run([edge(`child-${i}`, "root")]);
+    const before = yield* readState;
+
+    const absent = yield* run([up("nodes", "child-0", { id: "child-0", parent: "root" })]).pipe(
+      Effect.flip,
+    );
+
+    expect(absent).toBeInstanceOf(ViewDataFault);
+    expect(absent).toMatchObject({
+      node: "closure",
+      key: "child-0",
+      reason: "closure path part is absent",
+    });
+    expect(yield* readState).toEqual(before);
+
+    const overflow = yield* run([edge("root", "outside")]).pipe(Effect.flip);
+    expect(overflow).toBeInstanceOf(ViewDataFault);
+    expect(overflow).toMatchObject({
+      node: "closure",
+      key: "root",
+      reason: expect.stringContaining("maxAffectedKeys (8)"),
+    });
+    expect(yield* readState).toEqual(before);
+    expect(yield* run([edge("child-0", "other")])).toHaveLength(2);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
 
 it.live("concat preserves same-key rows from both sides, including composite keys", () => {
   const p = plan("concat", [
@@ -77,12 +320,15 @@ it.live("orders mixed View.list values the same way as the full recompute", () =
   }) {}
 
   const items = View.from(Items, "item");
+
   const grouped = items
     .groupBy(() => ({ group: View.literal("all") }))
     .aggregate((row) => ({ values: View.list(row.value) }));
+
   const list = compilePlan("list", grouped.expression);
   const sourceId = JSON.stringify([Items.key, "item"]);
   const values = ["2", 10, "\ue000", -3.5, 2, "😀", "10", -3.5];
+
   const rows = Arr.map(values, (value, index) => {
     const id = String(index);
 
@@ -97,7 +343,7 @@ it.live("orders mixed View.list values the same way as the full recompute", () =
     materialize(output, yield* engine.process("mixed-list", changes));
 
     const expected = fullRecompute({ plan: list, sources: { [sourceId]: rows } });
-    expect(expected.rows.map(({ row }) => row.values)).toEqual([
+    expect(Arr.map(expected.rows, ({ row }) => row.values)).toEqual([
       [-3.5, -3.5, 2, 10, "10", "2", "😀", "\ue000"],
     ]);
     expect(output).toEqual(

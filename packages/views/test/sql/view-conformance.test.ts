@@ -14,9 +14,12 @@ import {
   type KeyValue,
   type MultiSet,
 } from "@tanstack/db-ivm";
-import { Array as Arr, Effect, Layer, Order as Ord, Record as Rec, Schema } from "effect";
+import { Array as Arr, Effect, Layer, Option, Order as Ord, Record as Rec, Schema } from "effect";
 import { SqlClient } from "effect/sql";
-import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { normalize } from "../../src/sql/normalize.ts";
+import { dataFault } from "../../src/sql/data-fault.ts";
+import { storeFor } from "../../src/sql/store.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";
@@ -24,6 +27,7 @@ import { compilePlan } from "../../src/relation.ts";
 import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import { identity, materialize } from "./support.ts";
+import { SqliteClient } from "@effect/sql-sqlite-bun";
 
 const Order = Schema.Struct({
   id: Schema.String,
@@ -436,5 +440,228 @@ it.live(
         }
       }
     }).pipe(Effect.provide(host)),
+  120_000,
+);
+
+const GraphNode = Schema.Struct({
+  id: Schema.String,
+  parent: Schema.optionalKey(Schema.String),
+  part: Schema.Finite,
+  other: Schema.Finite,
+});
+
+const Member = Schema.Struct({ id: Schema.String, group: Schema.String, ref: Schema.String });
+
+class Graph extends Streamsy.state<Graph>()("Conformance/Graph", "graph", {
+  params: {},
+  collections: { node: { schema: GraphNode, key: "id" }, member: { schema: Member, key: "id" } },
+}) {}
+
+type GraphEntry = DurableState.Entry<typeof Graph.collections>;
+
+function closurePlans(maxDepth: number) {
+  const nodes = View.from(Graph, "node");
+  const members = View.from(Graph, "member");
+  const lineage = nodes.closure({ parent: (row) => row.parent, part: (row) => row.part, maxDepth });
+
+  const direct = members.select((row) => ({
+    group: row.group,
+    ref: row.ref,
+    ancestor: row.ref,
+    depth: View.literal(0),
+  }));
+
+  const inherited = members
+    .join(lineage, { as: "lineage", on: (member, row) => member.ref.eq(row.ancestor) })
+    .select((row) => ({
+      group: row.group,
+      ref: row.lineage.node,
+      ancestor: row.lineage.ancestor,
+      depth: row.lineage.depth,
+      path: View.field(row.lineage, "path"),
+    }));
+
+  return {
+    lineage: compilePlan("lineage", lineage.expression),
+    nearest: compilePlan(
+      "nearest",
+      direct.concat(inherited).top({
+        partitionBy: (row) => [row.group, row.ref],
+        by: (row) => [row.depth.asc(), View.key.asc()],
+        limit: 1,
+      }).expression,
+    ),
+  };
+}
+
+function editNodes(
+  state: DurableState.Rows<typeof Graph.collections>,
+  size: number,
+  random: ReturnType<typeof seeded>,
+): GraphEntry[] {
+  const nodes = new Map(state.node);
+
+  const edits: GraphEntry[] = Arr.makeBy(1 + random(4), () => {
+    const id = String(random(size));
+    const previous = nodes.get(id);
+    const node = previous ?? { id, part: random(100), other: 0 };
+    const operation = random(8);
+
+    if (operation === 0) {
+      nodes.delete(id);
+
+      return DurableState.remove("node", id);
+    }
+
+    const { parent: _parent, ...root } = node;
+
+    const alternatives = [
+      { ...node, parent: String(random(size)) },
+      { ...node, parent: "external" },
+      { ...node, parent: id },
+      root,
+      { ...node, part: node.part + 1 },
+      { ...node, other: node.other + 1 },
+      { ...node, parent: String(random(size)) },
+    ];
+
+    const next = alternatives[operation - 1]!;
+    nodes.set(id, next);
+
+    return DurableState.upsert("node", next);
+  });
+
+  if (random(3) === 0) {
+    const group = random(2) === 0 ? "a" : "b";
+    const ref = String(random(size));
+    const id = JSON.stringify([group, ref]);
+    edits.push(
+      random(2) === 0
+        ? DurableState.remove("member", id)
+        : DurableState.upsert("member", { id, group, ref }),
+    );
+  }
+
+  return edits;
+}
+
+it.live(
+  "matches the full recompute for incremental closure and nearest membership in seeded forests",
+  () =>
+    Effect.gen(function* () {
+      yield* migrate();
+      const sql = yield* SqlClient.SqlClient;
+      const nodeSource = canonicalJson([Graph.key, "node"]);
+      const memberSource = canonicalJson([Graph.key, "member"]);
+
+      // Closure and concat use the full-recompute oracle. The TanStack plan above uses a different operator set.
+      for (let seed = 1; seed <= 50; seed++) {
+        const random = seeded(seed);
+        const chain = seed > 48;
+        const size = chain ? 66 + random(5) : 5 + random(36);
+        const maxDepth = chain ? 64 : [1, 2, 3, 5, 64][seed % 5]!;
+        const namespace = `closure-${seed}`;
+        const plans = closurePlans(maxDepth);
+        const engine = yield* makeEngine(plans);
+        const store = storeFor(sql, namespace);
+
+        const sourceRelation = (id: string) => {
+          const source = Arr.findFirst(
+            engine.program.nodes,
+            (node) => node.kind === "source" && node.sourceId === id,
+          );
+
+          return Option.getOrThrowWith(source, () => new Error(`Missing source ${id}`)).id;
+        };
+
+        const nodeRelation = sourceRelation(nodeSource);
+        const memberRelation = sourceRelation(memberSource);
+        const fault = dataFault({ view: "closure", node: "normalize" });
+        const actual = new Map<string, string>();
+        let state = DurableState.materialized(Graph);
+        let unit = 0;
+
+        const apply = (entries: readonly GraphEntry[]) =>
+          Effect.gen(function* () {
+            const events = DurableState.changes(Graph.at({}), {}, entries);
+            const snapshotOpen = state.snapshot !== undefined;
+
+            const nodeChanges = yield* normalize(
+              store,
+              nodeSource,
+              nodeRelation,
+              "node",
+              fault,
+              events,
+              snapshotOpen,
+            );
+
+            const memberChanges = yield* normalize(
+              store,
+              memberSource,
+              memberRelation,
+              "member",
+              fault,
+              events,
+              snapshotOpen,
+            );
+
+            materialize(
+              actual,
+              yield* engine.process(namespace, [...nodeChanges, ...memberChanges]),
+            );
+            state = DurableState.materialize(state, events);
+
+            const sources = {
+              [nodeSource]: Arr.map([...state.rows.node], ([key, row]) => ({ key, row })),
+              [memberSource]: Arr.map([...state.rows.member], ([key, row]) => ({ key, row })),
+            };
+
+            const expected = new Map<string, string>();
+            const label = `seed=${seed}, unit=${unit++}`;
+
+            for (const [name, plan] of Rec.toEntries(plans))
+              for (const { key, row } of fullRecompute({ plan, sources }).rows)
+                expected.set(identity(name, key), canonicalJson(row));
+
+            expect(actual, label).toEqual(expected);
+            const integral = yield* store.rows(engine.program.outputs.lineage!);
+            expect(
+              new Map(
+                Arr.map(integral, ({ key, row }) => [identity("lineage", key), canonicalJson(row)]),
+              ),
+              label,
+            ).toEqual(new Map(Arr.filter([...expected], ([id]) => id.startsWith("lineage/"))));
+          });
+
+        yield* apply([
+          ...Arr.makeBy(size, (index) => {
+            const node = { id: String(index), part: index, other: 0 };
+
+            if (index === 0 || (!chain && random(4) === 0))
+              return DurableState.upsert("node", node);
+
+            return DurableState.upsert("node", {
+              ...node,
+              parent: String(chain ? index - 1 : random(index)),
+            });
+          }),
+          DurableState.upsert("member", { id: '["a","0"]', group: "a", ref: "0" }),
+          DurableState.upsert("member", { id: '["a","external"]', group: "a", ref: "external" }),
+          DurableState.upsert("member", { id: '["b","0"]', group: "b", ref: "0" }),
+        ]);
+
+        for (let step = 0; step < 20; step++) {
+          const edits = editNodes(state.rows, size, random);
+
+          if (step === 5 && seed % 2 === 0) edits.unshift(StreamAddress.snapshotStart());
+
+          if (step === 7 && state.snapshot !== undefined) edits.push(StreamAddress.snapshotEnd());
+
+          if (step === 12 && seed % 3 === 0) edits.unshift(StreamAddress.reset());
+          yield* apply(edits);
+        }
+      }
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
   120_000,
 );

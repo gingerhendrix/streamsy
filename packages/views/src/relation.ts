@@ -1,5 +1,6 @@
 import { Record as Rec } from "effect";
 import type {
+  ClosureNode,
   ConcatNode,
   FilterNode,
   GroupedAggregateNode,
@@ -13,7 +14,7 @@ import type {
   TopNNode,
 } from "./ir/contracts.ts";
 
-type UnaryNode = FilterNode | ProjectNode | KeyNode | GroupedAggregateNode | TopNNode;
+type UnaryNode = FilterNode | ProjectNode | KeyNode | GroupedAggregateNode | TopNNode | ClosureNode;
 
 type UnaryRelation<Node extends UnaryNode = UnaryNode> = Node extends UnaryNode
   ? Omit<Node, "id" | "input"> & { readonly input: RelationExpression }

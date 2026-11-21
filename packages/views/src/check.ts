@@ -1,4 +1,4 @@
-import { Schema, Record as Rec, Array as Arr } from "effect";
+import { Schema, Record as Rec, Array as Arr, Predicate } from "effect";
 import type {
   Expression,
   ReferenceScope,
@@ -15,6 +15,8 @@ export const PlanIssueCode = Schema.Literals([
   "aggregate-shape-mismatch",
   "undeclared-parameter",
   "invalid-top-limit",
+  "invalid-closure-depth",
+  "invalid-closure-key",
   "unstable-top-order",
   "unsupported-sql-plan",
 ]);
@@ -48,9 +50,12 @@ export function collectPlanIssues(plan: RelationPlan): readonly PlanIssue[] {
   };
 
   const aliases = new Set<string>();
+  const nonStringKeys = new Set<string>();
 
   for (const [nodeIndex, node] of plan.nodes.entries()) {
     const path = `nodes[${nodeIndex}]`;
+
+    if (hasNonStringKey(node, nonStringKeys)) nonStringKeys.add(node.id);
 
     for (const [expressionPath, expression] of expressionsOf(node)) {
       checkExpression(
@@ -116,6 +121,27 @@ export function collectPlanIssues(plan: RelationPlan): readonly PlanIssue[] {
     }
 
     if (node.kind === "top-n") checkTop(node, path, add);
+
+    if (node.kind === "closure") {
+      if (!Number.isInteger(node.maxDepth) || node.maxDepth <= 0)
+        add(
+          "invalid-closure-depth",
+          `${path}.maxDepth`,
+          "closure maxDepth must be a positive integer",
+          node.id,
+        );
+
+      if (nonStringKeys.has(node.input))
+        add("invalid-closure-key", `${path}.input`, "closure requires string row keys", node.id);
+
+      if (!couldBeString(node.parent))
+        add(
+          "invalid-closure-key",
+          `${path}.parent`,
+          "closure requires string parent keys",
+          node.id,
+        );
+    }
   }
 
   issues.sort((left, right) =>
@@ -143,6 +169,13 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
       return [["on", node.on]];
     case "concat":
       return [];
+    case "closure":
+      return node.part === undefined
+        ? [["parent", node.parent]]
+        : [
+            ["parent", node.parent],
+            ["part", node.part],
+          ];
     case "grouped-aggregate":
       return [
         ...Arr.map(
@@ -163,6 +196,41 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
           (expression, index) => [`partitionBy[${index}]`, expression] as const,
         ),
       ];
+  }
+}
+
+function hasNonStringKey(node: RelationNode, known: ReadonlySet<string>): boolean {
+  switch (node.kind) {
+    case "source":
+      return node.stateKey !== true && !couldBeString(node.key);
+    case "key":
+      return !couldBeString(node.key);
+    case "filter":
+    case "project":
+    case "top-n":
+      return known.has(node.input);
+    default:
+      return true;
+  }
+}
+
+function couldBeString(expression: Expression): boolean {
+  switch (expression.kind) {
+    case "literal":
+      return Predicate.isString(expression.value);
+    case "reference":
+    case "call":
+    case "field":
+      return true;
+    case "unary":
+      return expression.operator === "unwrap" && couldBeString(expression.operand);
+    case "binary":
+      return (
+        expression.operator === "or-else" &&
+        (couldBeString(expression.left) || couldBeString(expression.right))
+      );
+    default:
+      return false;
   }
 }
 
