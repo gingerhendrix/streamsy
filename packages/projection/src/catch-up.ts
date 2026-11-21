@@ -1,9 +1,8 @@
-import { Array, Effect, Option, Queue, Record, Schedule, Schema, Stream } from "effect";
+import { Array, Effect, Record, Schedule, Schema } from "effect";
 import { Offset, StreamId, compare, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputMap, type InputServices } from "./batch.ts";
 import { restore, type Identity } from "./checkpoint-store.ts";
 import { ProjectionFault } from "./fault.ts";
-import { Registry } from "./registry.ts";
 import type { Readable } from "./snapshot.ts";
 
 const Tail = Schema.Struct({ stream: StreamId, offset: Offset, closed: Schema.Boolean });
@@ -139,7 +138,8 @@ const measure = Effect.fnUntraced(function* <Inputs extends InputMap, Q>(
     inputEntries(projection.inputs),
     Effect.fnUntraced(function* ([name, address]) {
       const committed = record.inputs[name];
-      const target = targets[name];
+      // SAFETY: `tails` produced the targets, or `validateTails` matched every input name.
+      const target = targets[name]!;
 
       if (!isOffset(committed))
         return yield* new ProjectionFault({
@@ -147,14 +147,6 @@ const measure = Effect.fnUntraced(function* <Inputs extends InputMap, Q>(
           reason: "invalid-record",
           input: name,
           message: `Stored offset for ${name} is not a valid offset`,
-        });
-
-      if (target === undefined)
-        return yield* new ProjectionFault({
-          phase: "load",
-          reason: "identity-mismatch",
-          input: name,
-          message: `Missing tail for ${name}`,
         });
 
       if (verifyHeads) {
@@ -202,46 +194,14 @@ export const caughtUp = Effect.fn("Projection.caughtUp")(function* <Inputs exten
   projection: Checkpointed<Inputs, Q>,
   targets?: Tails,
 ): Effect.fn.Return<void, ProjectionFault, Q | InputServices<Inputs>> {
-  const registry = yield* Effect.serviceOption(Registry);
-
-  const wakeups = yield* Option.match(registry, {
-    onNone: () => Effect.void,
-    onSome: Effect.fnUntraced(function* (service) {
-      // Acquire the subscription before capturing heads or loading the checkpoint.
-      const pull = yield* Stream.toPull(service.events);
-      const queue = yield* Queue.sliding<void>(1);
-
-      yield* Stream.fromPull(Effect.succeed(pull)).pipe(
-        Stream.runForEach(() => Queue.offer(queue, undefined)),
-        Effect.forkScoped,
-      );
-
-      return queue;
-    }),
-  });
-
   const fixed =
     targets === undefined ? yield* tails(projection) : yield* validateTails(projection, targets);
 
-  const check = measure(projection, fixed, true);
-
-  if (wakeups === undefined)
-    return yield* check.pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(pollInterval),
-        while: (progress) => !progress.caughtUp,
-      }),
-      Effect.asVoid,
-    );
-
-  const wake = Queue.take(wakeups).pipe(
-    Effect.timeoutOrElse({ duration: pollInterval, orElse: () => Effect.void }),
-  );
-
-  return yield* check.pipe(
+  return yield* measure(projection, fixed, true).pipe(
     Effect.repeat({
-      while: (progress) => (progress.caughtUp ? Effect.succeed(false) : Effect.as(wake, true)),
+      schedule: Schedule.spaced(pollInterval),
+      while: (progress) => !progress.caughtUp,
     }),
     Effect.asVoid,
   );
-}, Effect.scoped);
+});

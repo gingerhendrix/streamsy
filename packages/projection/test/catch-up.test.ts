@@ -1,20 +1,9 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import {
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  PubSub,
-  Queue,
-  Schema,
-  Stream,
-} from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { CheckpointStore, Commit, Projection, RunnerEvent } from "@streamsy/projection";
+import { CheckpointStore, Commit, Projection } from "@streamsy/projection";
 import { TestClock } from "effect/testing";
 import { withFamilies } from "./support/families.ts";
 import { memoryHost } from "./support/memory-host.ts";
@@ -278,7 +267,7 @@ layer(host)((it) => {
     }),
   );
 
-  it.effect("polls without a registry, keeps the implicit target fixed and is interruptible", () =>
+  it.effect("polls, keeps the implicit target fixed and is interruptible", () =>
     Effect.gen(function* () {
       const params = { id: "poll" };
       const bound = declaration.at(params);
@@ -310,69 +299,5 @@ layer(host)((it) => {
       const exit = yield* Fiber.await(cancelled);
       expect(Exit.hasInterrupts(exit)).toBe(true);
     }),
-  );
-});
-
-layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
-  it.effect(
-    "subscribes before checking and uses even unrelated events only to reread the checkpoint",
-    () =>
-      Effect.gen(function* () {
-        const params = { id: "registry-wake" };
-        const bound = declaration.at(params);
-        const source = yield* Source;
-        yield* source.create(params);
-        yield* source.append(params, ["one"]);
-        const fixed = yield* Projection.tails(bound);
-        const registry = yield* Projection.Registry;
-        const events = yield* PubSub.unbounded<RunnerEvent>();
-        const subscribed = yield* Deferred.make<void>();
-        const checks = yield* Queue.unbounded<void>();
-
-        const waiting = {
-          ...bound,
-          commit: {
-            load: (key: Parameters<typeof bound.commit.load>[0]) =>
-              Effect.gen(function* () {
-                expect(yield* Deferred.isDone(subscribed)).toBe(true);
-                const loaded = yield* bound.commit.load(key);
-                yield* Queue.offer(checks, undefined);
-
-                return loaded;
-              }),
-          },
-        };
-
-        const waiter = yield* Projection.caughtUp(waiting, fixed).pipe(
-          Effect.provideService(Projection.Registry, {
-            ...registry,
-            events: Stream.fromPull(
-              PubSub.subscribe(events).pipe(
-                Effect.tap(() => Deferred.succeed(subscribed, undefined)),
-                Effect.map(PubSub.takeAll),
-              ),
-            ).pipe(Stream.scoped),
-          }),
-          Effect.forkScoped,
-        );
-
-        const noise = RunnerEvent.Ran({
-          projection: "unrelated",
-          params,
-          wakeAt: Option.none(),
-          status: "caught-up",
-          units: 1,
-          offsets: { source: fixed.source.offset },
-        });
-
-        yield* Queue.take(checks);
-        yield* PubSub.publish(events, noise);
-        yield* Queue.take(checks);
-        expect(waiter.pollUnsafe()).toBeUndefined();
-
-        yield* Projection.pass(bound);
-        yield* PubSub.publish(events, noise);
-        yield* Fiber.join(waiter);
-      }),
   );
 });
