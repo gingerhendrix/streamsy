@@ -23,6 +23,7 @@ import { storeFor } from "../../src/sql/store.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";
+import { collectPlanIssues } from "../../src/check.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
@@ -458,6 +459,21 @@ class Graph extends Streamsy.state<Graph>()("Conformance/Graph", "graph", {
 }) {}
 
 type GraphEntry = DurableState.Entry<typeof Graph.collections>;
+
+it("compiles a join shared by both concat branches once", () => {
+  const members = View.from(Graph, "member");
+
+  const joined = members.leftJoin(View.from(Graph, "node"), {
+    as: "agent",
+    on: (member, agent) => member.ref.eq(agent.id),
+  });
+
+  const selected = joined.select((row) => ({ ref: row.ref }));
+  const plan = compilePlan("shared", joined.concat(selected).expression);
+
+  expect(Arr.filter(plan.nodes, (node) => node.kind === "left-join")).toHaveLength(1);
+  expect(collectPlanIssues(plan)).toEqual([]);
+});
 
 function closurePlans(maxDepth: number) {
   const nodes = View.from(Graph, "node");

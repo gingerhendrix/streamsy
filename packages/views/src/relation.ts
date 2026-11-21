@@ -39,9 +39,10 @@ export function compilePlan(
 ): RelationPlan {
   const nodes: RelationNode[] = [];
   const sources = new Set<string>();
+  const shared = new Map<RelationExpression, string>();
   let index = 0;
 
-  const walk = (relation: RelationExpression): string => {
+  const walk = (relation: RelationExpression, reuse = false): string => {
     if (relation.kind === "source") {
       const id = relation.sourceId;
 
@@ -53,16 +54,33 @@ export function compilePlan(
       return id;
     }
 
+    if (reuse) {
+      const previous = shared.get(relation);
+
+      if (previous !== undefined) return previous;
+    }
+
+    const id = addNode(relation, reuse);
+
+    if (reuse) shared.set(relation, id);
+
+    return id;
+  };
+
+  const addNode = (relation: Exclude<RelationExpression, { kind: "source" }>, reuse: boolean) => {
     if ("left" in relation) {
-      const left = walk(relation.left);
-      const right = walk(relation.right);
+      // Concat branches can reuse the same joined input. Preserve existing plan
+      // identities by sharing nodes only inside those branches.
+      const shareBranches = reuse || relation.kind === "concat";
+      const left = walk(relation.left, shareBranches);
+      const right = walk(relation.right, shareBranches);
       const id = `${name}/${relation.kind}/${index++}`;
       nodes.push({ ...relation, id, left, right });
 
       return id;
     }
 
-    const input = walk(relation.input);
+    const input = walk(relation.input, reuse);
     const kind = relation.kind === "top-n" ? "top" : relation.kind;
     const id = `${name}/${kind}/${index++}`;
     nodes.push({ ...relation, id, input });
