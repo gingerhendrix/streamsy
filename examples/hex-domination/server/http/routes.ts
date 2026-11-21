@@ -611,7 +611,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     {
       method: "GET",
       pattern: "/",
-      handler: () => json({ name: "risk-demo", ok: true }),
+      handler: () => json({ name: "hex-domination", ok: true }),
     },
     {
       method: "GET",

@@ -1,7 +1,7 @@
 /**
  * `hex-domination` — deterministic, headless event-sourced game kernel.
  *
- * The kernel is the executable specification for the Streamsy Risk demo:
+ * The kernel is the executable specification for the Streamsy Hex Domination demo:
  *  - {@link foldAggregate} folds canonical {@link GameEvent}s into the decision model;
  *  - {@link decide} validates commands against that fold and resolves randomness
  *    exactly once into recorded events;

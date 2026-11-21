@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
 /* oxlint-disable effecttsgo/crypto-random-uuid, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/new-promise, effecttsgo/node-builtin-import -- This Bun demo executable directly owns random command ids, HTTP/timing, subprocess lifecycle, terminal output, and Node filesystem/process adapters. */
 /**
- * One-command, watchable Risk demo.
+ * One-command, watchable Hex Domination demo.
  *
  * Bootstraps missing workspace builds, launches the real SQLite-backed server,
  * creates a two-player `Hex Domination` game, and lets the existing HTTP-only
@@ -248,7 +248,7 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
 async function run(): Promise<void> {
   await ensureWorkspaceDists();
 
-  const dbPath = join(tmpdir(), `streamsy-risk-demo-${crypto.randomUUID()}.sqlite`);
+  const dbPath = join(tmpdir(), `streamsy-hex-domination-${crypto.randomUUID()}.sqlite`);
   const port = await findFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const server = Bun.spawn(["bun", "server/index.ts"], {
@@ -337,7 +337,7 @@ async function run(): Promise<void> {
     server.kill("SIGTERM");
     await server.exited.catch(() => {});
     for (const path of [dbPath, `${dbPath}-shm`, `${dbPath}-wal`]) rmSync(path, { force: true });
-    console.log("\nStreamsy Risk demo stopped; temporary SQLite data removed.");
+    console.log("\nStreamsy Hex Domination demo stopped; temporary SQLite data removed.");
   }
 }
 

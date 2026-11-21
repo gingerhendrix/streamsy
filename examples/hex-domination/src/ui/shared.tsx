@@ -90,7 +90,7 @@ export function customStyle(style: CustomStyle): CustomStyle {
   return style;
 }
 
-export const STORAGE_KEY = "risk-demo-identity";
+export const STORAGE_KEY = "hex-domination-identity";
 
 export function loadIdentity(): Identity | null {
   try {

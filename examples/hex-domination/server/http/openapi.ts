@@ -946,7 +946,7 @@ function errorResponse(description: string) {
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
-    title: "Streamsy Risk demo — command & capability API",
+    title: "Streamsy Hex Domination — command & capability API",
     version: "1.0.0",
     description:
       "Event-sourced Hex Domination. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection over a procedural hex map with two-stage combat and timed defence interrupts.",
