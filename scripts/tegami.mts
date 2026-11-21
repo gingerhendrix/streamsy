@@ -46,7 +46,6 @@ const paper = tegami({
     "@streamsy/docs-snippets",
     "@streamsy/issue-tracker-demo-contract",
     "@streamsy/test-support",
-    "@streamsy/views",
     "@streamsy/y-durable-streams",
     "bugsy",
     "fold-agent-example",
@@ -71,6 +70,7 @@ const paper = tegami({
     "@streamsy/projection": { group: "streamsy" },
     "@streamsy/serve": { group: "streamsy" },
     "@streamsy/storage": { group: "streamsy" },
+    "@streamsy/views": { group: "streamsy" },
   },
   plugins: [
     github({
