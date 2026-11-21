@@ -29,13 +29,13 @@ The signatures use types that have no exported name, such as `Common`, `Addresse
 
 Every constructor takes the fields of `Common`:
 
-| Field        | Meaning                                                                                                                                               |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | The projection name. It is part of the checkpoint key                                                                                                 |
-| `version`    | The declared version. The default is `1`                                                                                                              |
-| `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                              |
-| `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                   |
-| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                             |
+| Field        | Meaning                                                                                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | The projection name. It is part of the checkpoint key                                                                                                                                              |
+| `version`    | The declared version. The default is `1`                                                                                                                                                           |
+| `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                                                                           |
+| `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                                                                |
+| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                                                                          |
 | `accepted`   | Optional wake class, with or without `Projection.perGeneration`, for accepted input offsets. Requires `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
 
 Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a subset of `params` with the same types. `Projection.perGeneration` supplies one output route parameter from the projection's `generation`. Omit that parameter from `params`. The compiler rejects a field with incompatible params. A fixed address takes no params from the projection. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
@@ -83,13 +83,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -382,13 +383,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -786,13 +788,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -1083,13 +1086,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -1401,13 +1405,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -1719,13 +1724,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -2023,13 +2029,14 @@ type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
 type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
 // The address after `at` binds the params.
-type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
-  ? ReturnType<D["at"]>
-  : X extends StreamDeclaration
-    ? ReturnType<X["at"]>
-    : X extends Streamsy.Address<any, any>
-      ? X
-      : never;
+type AddressOf<X> =
+  X extends Projection.PerGeneration<infer D, string>
+    ? ReturnType<D["at"]>
+    : X extends StreamDeclaration
+      ? ReturnType<X["at"]>
+      : X extends Streamsy.Address<any, any>
+        ? X
+        : never;
 type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
@@ -2280,19 +2287,19 @@ declare function wake<
 >(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W>;
 ```
 
-| Type                                              | Meaning                                                                                      |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `Input`, `Inputs`                                 | A stream declaration or a fixed address, and a record of them by name                        |
-| `RoutedOutput`, `RoutedMap`                       | A stream declaration, fixed address, or `Projection.PerGeneration` wrapper, and a record of them by name |
-| `AddressOf`, `Addresses`                          | The addresses of inputs or outputs after `at` binds the params                               |
-| `Common`                                          | The fields that every constructor takes                                                      |
-| `Within`, `OneWithin`                             | Check that each input route param is a projection param of the same type                     |
+| Type                                              | Meaning                                                                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `Input`, `Inputs`                                 | A stream declaration or a fixed address, and a record of them by name                                       |
+| `RoutedOutput`, `RoutedMap`                       | A stream declaration, fixed address, or `Projection.PerGeneration` wrapper, and a record of them by name    |
+| `AddressOf`, `Addresses`                          | The addresses of inputs or outputs after `at` binds the params                                              |
+| `Common`                                          | The fields that every constructor takes                                                                     |
+| `Within`, `OneWithin`                             | Check that each input route param is a projection param of the same type                                    |
 | `OutputsWithin`, `OneOutputWithin`                | Apply the param check to output routes, accounting for the parameter supplied by `Projection.perGeneration` |
-| `AcceptedOutput`                                  | A wake class or a wake class wrapped with `Projection.perGeneration`                        |
-| `Item`, `Services`                                | The item type of one output, and the stream services of all outputs                          |
-| `RunningDeclaration`                              | The declaration that `fold` and `process` return                                             |
-| `OutputDeclaration`, `AccumulatingDeclaration`    | The declarations with outputs. Their bound projection also has `streams`                     |
-| `Executable`, `BoundState`                        | The bound projection that the runners take, and its state with `initial` bound to the params |
-| `WakeOutput`, `WakeDefinition`, `WakeDeclaration` | The output, definition, and result of `Projection.wake`                                      |
+| `AcceptedOutput`                                  | A wake class or a wake class wrapped with `Projection.perGeneration`                                        |
+| `Item`, `Services`                                | The item type of one output, and the stream services of all outputs                                         |
+| `RunningDeclaration`                              | The declaration that `fold` and `process` return                                                            |
+| `OutputDeclaration`, `AccumulatingDeclaration`    | The declarations with outputs. Their bound projection also has `streams`                                    |
+| `Executable`, `BoundState`                        | The bound projection that the runners take, and its state with `initial` bound to the params                |
+| `WakeOutput`, `WakeDefinition`, `WakeDeclaration` | The output, definition, and result of `Projection.wake`                                                     |
 
 `WakeOutput<P>` is the exported type for a `Streamsy.wake` class. Its type parameter is the decoded params; omitting it accepts any wake class. `WakeOutput<{}>` is the fixed-address variant used by `AttachOptions.triggers`.

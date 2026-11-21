@@ -331,13 +331,13 @@ same<Pending<void>, Real.Pending<void>>(true);
 
 `apply` takes a `Pending`: a unit that is ready to commit.
 
-| Field               | Meaning                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `key`               | The checkpoint key                                                                                                |
-| `unit`              | The unit, with the encoded params                                                                                 |
-| `loaded`            | The record and the token that the runner loaded before it read the unit                                           |
-| `next`              | The record to save after the unit: the new offsets, and the state from before the unit                            |
-| `run`               | The Effect that runs the handler. It fails with `HandlerFailed`, and the runner unwraps the handler error from it |
+| Field               | Meaning                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `key`               | The checkpoint key                                                                                                   |
+| `unit`              | The unit, with the encoded params                                                                                    |
+| `loaded`            | The record and the token that the runner loaded before it read the unit                                              |
+| `next`              | The record to save after the unit: the new offsets, and the state from before the unit                               |
+| `run`               | The Effect that runs the handler. It fails with `HandlerFailed`, and the runner unwraps the handler error from it    |
 | `generationOutputs` | Resolved generation-addressed outputs by name, including the accepted stream when it uses `Projection.perGeneration` |
 
 To save the state, put the `encoded` field of a `Folded` or `Accumulated` result into `next` as `state`.
