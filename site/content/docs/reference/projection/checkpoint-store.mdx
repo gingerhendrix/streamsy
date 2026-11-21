@@ -59,6 +59,9 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
   "@streamsy/core/internal/OwnerRecords",
   {
     readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly list: (
+      prefix: string,
+    ) => Effect.Effect<ReadonlyArray<readonly [key: string, encoded: string]>, StorageFault>;
     readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
     readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
   }
@@ -97,6 +100,10 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
+  readonly list?: (
+    id: string,
+    generation?: number,
+  ) => Effect.Effect<ReadonlyArray<Record<string, string>>, ProjectionFault>;
   readonly compareAndSet: (
     key: ProjectionKey,
     ifToken: string,
@@ -115,6 +122,7 @@ same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
 `CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
 
 - `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`. A retirement tombstone fails with phase `load` and reason `retired-generation`.
+- `list`, when available, returns unique encoded params with live checkpoints for the id. The optional generation filter spans checkpoint versions. MySQL cannot list historical keys that may have been shortened.
 - `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key. A retirement tombstone fails with phase `load` and reason `retired-generation`.
 - `remove` deletes the live record of `key`. It ignores absent records and retirement tombstones.
 - `retire` is optional. It replaces a live or absent record with a tombstone and returns `"retired"`. If the tombstone already exists, it returns `"already-retired"`.
@@ -149,6 +157,9 @@ import type * as Checkpoint from "@streamsy/projection/checkpoint";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 interface EncodedStore {
+  readonly list?: (
+    prefix: string,
+  ) => Effect.Effect<ReadonlyArray<readonly [key: string, encoded: string]>, ProjectionFault>;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
@@ -162,7 +173,7 @@ same<EncodedStore, Checkpoint.EncodedStore>(true);
 
 `EncodedStore` is a store of encoded strings by key, which [`fromStore`](#fromstore) turns into a checkpoint store. Only `@streamsy/projection/checkpoint` exports it.
 
-`read` returns `None` for a key with no value. `withTransaction` must run `body` so that no other write to the same key happens between its read and its write. `remove` ignores a key with no value.
+`read` returns `None` for a key with no value. If provided, `list` returns a snapshot of the entries with keys that begin with the exact prefix. `withTransaction` must run `body` so that no other write to the same key happens between its read and its write. `remove` ignores a key with no value.
 
 ## Keys and records
 

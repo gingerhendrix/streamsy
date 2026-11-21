@@ -151,6 +151,9 @@ interface OwnerRecords extends Context.ServiceClass.Shape<
   "@streamsy/core/internal/OwnerRecords",
   {
     readonly read: (key: string) => Effect.Effect<Option.Option<string>, StorageFault>;
+    readonly list: (
+      prefix: string,
+    ) => Effect.Effect<ReadonlyArray<readonly [key: string, encoded: string]>, StorageFault>;
     readonly write: (key: string, encoded: string) => Effect.Effect<void, StorageFault>;
     readonly remove: (key: string) => Effect.Effect<void, StorageFault>;
   }
