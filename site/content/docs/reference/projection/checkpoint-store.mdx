@@ -103,6 +103,9 @@ interface CheckpointStoreApi {
     record: CheckpointRecord,
   ) => Effect.Effect<string, ProjectionFault>;
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
+  readonly retire?: (
+    key: ProjectionKey,
+  ) => Effect.Effect<"retired" | "already-retired", ProjectionFault>;
 }
 // ---cut-after---
 same<CheckpointStoreApi, Real.CheckpointStoreApi>(true);
@@ -111,9 +114,10 @@ same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
 
 `CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
 
-- `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`.
-- `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key.
-- `remove` deletes the record of `key`. It ignores a key with no record.
+- `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`. A retirement tombstone fails with phase `load` and reason `retired-generation`.
+- `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key. A retirement tombstone fails with phase `load` and reason `retired-generation`.
+- `remove` deletes the live record of `key`. It ignores absent records and retirement tombstones.
+- `retire` is optional. It replaces a live or absent record with a tombstone and returns `"retired"`. If the tombstone already exists, it returns `"already-retired"`.
 
 A storage failure fails each call with reason `storage-failure`.
 

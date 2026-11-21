@@ -19,7 +19,8 @@ import {
   type ProjectionKey,
   type Unit,
 } from "@streamsy/projection";
-import type { CommitBoundary, StreamAddress } from "@streamsy/core";
+import type { CommitBoundary, StreamAddress, StreamsFault } from "@streamsy/core";
+import type { Reader, Writer } from "@streamsy/core/protocol";
 import type { Cause, Data, Effect, Layer, Pipeable } from "effect";
 import type { SqlClient } from "effect/sql";
 ```
@@ -293,6 +294,8 @@ A Commit with a result type that does not fit a constructor fails at the `commit
 ```ts
 // ---cut-start---
 import type { Effect } from "effect";
+import type { StreamAddress, StreamsFault } from "@streamsy/core";
+import type { Reader, Writer } from "@streamsy/core/protocol";
 import { Commit as Real } from "@streamsy/projection";
 import type {
   CheckpointRecord,
@@ -310,6 +313,16 @@ interface Pending<Result, Provides = never> {
   readonly loaded: Loaded;
   readonly next: CheckpointRecord;
   readonly run: Effect.Effect<Result, HandlerFailed, Provides>;
+  readonly generationOutputs?: ReadonlyMap<string, ResolvedOutput>;
+}
+
+interface ResolvedOutput {
+  readonly address: StreamAddress.StreamAddress<unknown>;
+  readonly generation?: { readonly shared: boolean } | undefined;
+  readonly service: {
+    readonly owner: object;
+    readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
+  };
 }
 // ---cut-after---
 same<Pending<Folded<number>, string>, Real.Pending<Folded<number>, string>>(true);
@@ -318,13 +331,14 @@ same<Pending<void>, Real.Pending<void>>(true);
 
 `apply` takes a `Pending`: a unit that is ready to commit.
 
-| Field    | Meaning                                                                                                           |
-| -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `key`    | The checkpoint key                                                                                                |
-| `unit`   | The unit, with the encoded params                                                                                 |
-| `loaded` | The record and the token that the runner loaded before it read the unit                                           |
-| `next`   | The record to save after the unit: the new offsets, and the state from before the unit                            |
-| `run`    | The Effect that runs the handler. It fails with `HandlerFailed`, and the runner unwraps the handler error from it |
+| Field               | Meaning                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `key`               | The checkpoint key                                                                                                |
+| `unit`              | The unit, with the encoded params                                                                                 |
+| `loaded`            | The record and the token that the runner loaded before it read the unit                                           |
+| `next`              | The record to save after the unit: the new offsets, and the state from before the unit                            |
+| `run`               | The Effect that runs the handler. It fails with `HandlerFailed`, and the runner unwraps the handler error from it |
+| `generationOutputs` | Resolved generation-addressed outputs by name, including the accepted stream when it uses `Projection.perGeneration` |
 
 To save the state, put the `encoded` field of a `Folded` or `Accumulated` result into `next` as `state`.
 

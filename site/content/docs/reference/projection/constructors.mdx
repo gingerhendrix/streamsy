@@ -36,9 +36,9 @@ Every constructor takes the fields of `Common`:
 | `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                              |
 | `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                   |
 | `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                             |
-| `accepted`   | Optional wake class for accepted input offsets. Requires `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
+| `accepted`   | Optional wake class, with or without `Projection.perGeneration`, for accepted input offsets. Requires `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
 
-Each stream declaration in `inputs` and `outputs` must declare a subset of `params`, with the same types. When one does not, the type of its field becomes `never`, and the compiler rejects the definition. A fixed address takes no params from the projection.
+Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a subset of `params` with the same types. `Projection.perGeneration` supplies one output route parameter from the projection's `generation`. Omit that parameter from `params`. The compiler rejects a field with incompatible params. A fixed address takes no params from the projection. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
 ## Constructors
 
@@ -70,27 +70,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -117,12 +123,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -223,6 +237,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -248,7 +263,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -291,7 +306,7 @@ declare function fold<
   R = never,
   P = never,
   Q = CheckpointStore,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -354,27 +369,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -401,12 +422,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -507,6 +536,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -532,7 +562,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -590,7 +620,7 @@ declare function process<
   Prepared = void,
   PE = never,
   PR = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
   A = void,
@@ -632,7 +662,7 @@ declare function process<
   Prepared = void,
   PE = never,
   PR = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
   A = void,
@@ -743,27 +773,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -790,12 +826,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -896,6 +940,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -921,7 +966,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -964,7 +1009,7 @@ declare function emit<
   R = never,
   P = never,
   Q = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -989,7 +1034,7 @@ same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 
 `emit` declares a projection that maps each entry to output items. The runner calls the `emit` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order. The handler returns an [`Emits`](/docs/reference/projection/declarations#emits) object, or an Effect of it. The projection keeps no state.
 
-- `outputs` names the output streams: stream declarations, fixed addresses, or both. Each output must be a JSON or State stream.
+- `outputs` names the output streams. Each entry can be a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each output must be a JSON or State stream.
 - The `Emits` object holds an array of items for each output name. A missing name emits nothing. For a name that `outputs` does not declare, the compiler reports an error on `undeclaredOutput`.
 - `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` appends in the SQL transaction of the checkpoint.
 - `at` throws a `RangeError` when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
@@ -1025,27 +1070,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -1072,12 +1123,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -1178,6 +1237,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -1203,7 +1263,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -1248,7 +1308,7 @@ declare function mapAccum<
   R = never,
   P = never,
   Q = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -1328,27 +1388,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -1375,12 +1441,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -1481,6 +1555,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -1506,7 +1581,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -1551,7 +1626,7 @@ declare function mapAccumBatch<
   R = never,
   P = never,
   Q = never,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -1631,27 +1706,33 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -1678,12 +1759,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -1784,6 +1873,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -1809,7 +1899,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -1847,7 +1937,7 @@ declare function wake<
   C extends StreamRoute.ParamCodecs,
   const I extends Input,
   const O extends WakeOutput,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
 >(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W>;
 // ---cut-after---
 type Shown = typeof wake<C0, typeof Drafts, typeof UserWake>;
@@ -1919,28 +2009,34 @@ import {
 } from "@streamsy/projection";
 import { Drafts, Notes, Workspace } from "./notes-streams.ts";
 import { same, type Flat } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // ---cut-end---
 // A stream declaration. `at` resolves it with the projection params.
 type StreamDeclaration = StreamRoute.StreamRoute<any, any> &
   Streamsy.Any & { readonly at: (params: any) => Streamsy.Address<any, any> };
 
-// One input or output: a stream declaration, or a fixed address.
+// An input is a stream declaration or a fixed address.
 type Input = StreamDeclaration | Streamsy.Address<any, any>;
 type Inputs = Readonly<Record<string, Input>>;
-type RoutedMap = Inputs;
+type RoutedOutput = Input | Projection.PerGeneration<StreamDeclaration, string>;
+type RoutedMap = Readonly<Record<string, RoutedOutput>>;
 
-// The address of each input after `at` binds the params.
-type AddressOf<X> = X extends StreamDeclaration
-  ? ReturnType<X["at"]>
-  : X extends Streamsy.Address<any, any>
-    ? X
-    : never;
-type Addresses<I extends Inputs> = { readonly [K in keyof I]: AddressOf<I[K]> };
+// The address after `at` binds the params.
+type AddressOf<X> = X extends Projection.PerGeneration<infer D, string>
+  ? ReturnType<D["at"]>
+  : X extends StreamDeclaration
+    ? ReturnType<X["at"]>
+    : X extends Streamsy.Address<any, any>
+      ? X
+      : never;
+type Addresses<I extends RoutedMap> = { readonly [K in keyof I]: AddressOf<I[K]> };
 
 // The fields that every constructor takes. `Within` makes an input `never` when
 // its params are not projection params of the same type.
-type AcceptedServices<W> = W extends StreamDeclaration ? Services<{ accepted: W }> : never;
-type AcceptedResult<Result, W> = W extends WakeOutput
+type AcceptedOutput = WakeOutput | Projection.PerGeneration<WakeOutput, string>;
+type AcceptedServices<W> = W extends AcceptedOutput ? Services<{ accepted: W }> : never;
+type AcceptedResult<Result, W> = W extends AcceptedOutput
   ? Result extends Folded<infer A>
     ? Accumulated<A, {}>
     : Result extends import("@streamsy/projection").WakeAt
@@ -1967,12 +2063,20 @@ interface Common<
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
 }
 type Within<C extends StreamRoute.ParamCodecs, I extends Inputs> = {
   readonly [K in keyof I]: InvalidInput<C, I[K]> extends never ? I[K] : never;
 };
-type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = Within<C, D>;
+type InvalidOutput<C extends StreamRoute.ParamCodecs, X> =
+  X extends Projection.PerGeneration<infer D, infer N>
+    ? Extract<N, keyof C> | Invalid<C, Omit<DeclaredParams<D>, N>>
+    : InvalidInput<C, X>;
+type OneOutputWithin<C extends StreamRoute.ParamCodecs, X> =
+  InvalidOutput<C, X> extends never ? X : never;
+type OutputsWithin<C extends StreamRoute.ParamCodecs, D extends RoutedMap> = {
+  readonly [K in keyof D]: OneOutputWithin<C, D[K]>;
+};
 type OneWithin<C extends StreamRoute.ParamCodecs, X> = InvalidInput<C, X> extends never ? X : never;
 type InvalidInput<C extends StreamRoute.ParamCodecs, X> = X extends StreamDeclaration
   ? Invalid<C, DeclaredParams<X>>
@@ -2073,6 +2177,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -2098,7 +2203,7 @@ type WakeOutput<P = any> = StreamDeclaration &
     readonly paramCodecs: StreamRoute.ParamCodecs;
   };
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
-  readonly accepted?: W & OneWithin<C, W>;
+  readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -2145,7 +2250,7 @@ declare function fold<
   R = never,
   P = never,
   Q = CheckpointStore,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
   HE = never,
   HR = never,
 >(
@@ -2171,16 +2276,19 @@ declare function wake<
   C extends StreamRoute.ParamCodecs,
   const I extends Input,
   const O extends WakeOutput,
-  W extends WakeOutput | undefined = undefined,
+  W extends AcceptedOutput | undefined = undefined,
 >(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W>;
 ```
 
 | Type                                              | Meaning                                                                                      |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `Input`, `Inputs`, `RoutedMap`                    | A stream declaration or a fixed address, and a record of them by name                        |
-| `AddressOf`, `Addresses`                          | The address of each input after `at` binds the params                                        |
+| `Input`, `Inputs`                                 | A stream declaration or a fixed address, and a record of them by name                        |
+| `RoutedOutput`, `RoutedMap`                       | A stream declaration, fixed address, or `Projection.PerGeneration` wrapper, and a record of them by name |
+| `AddressOf`, `Addresses`                          | The addresses of inputs or outputs after `at` binds the params                               |
 | `Common`                                          | The fields that every constructor takes                                                      |
-| `Within`, `OutputsWithin`, `OneWithin`            | The param check: a stream whose params are not projection params of the same type is `never` |
+| `Within`, `OneWithin`                             | Check that each input route param is a projection param of the same type                     |
+| `OutputsWithin`, `OneOutputWithin`                | Apply the param check to output routes, accounting for the parameter supplied by `Projection.perGeneration` |
+| `AcceptedOutput`                                  | A wake class or a wake class wrapped with `Projection.perGeneration`                        |
 | `Item`, `Services`                                | The item type of one output, and the stream services of all outputs                          |
 | `RunningDeclaration`                              | The declaration that `fold` and `process` return                                             |
 | `OutputDeclaration`, `AccumulatingDeclaration`    | The declarations with outputs. Their bound projection also has `streams`                     |

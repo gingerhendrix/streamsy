@@ -63,6 +63,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
   I extends InputMap,
@@ -74,6 +76,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -156,6 +159,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
   I extends InputMap,
@@ -167,6 +172,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -249,6 +255,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
   I extends InputMap,
@@ -260,6 +268,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -343,6 +352,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
   I extends InputMap,
@@ -354,6 +365,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -527,6 +539,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
   I extends InputMap,
@@ -538,6 +552,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -1282,6 +1297,8 @@ import {
   type Unit,
 } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
+// Use the type of the private symbol from the public runner signature.
+declare const GenerationOutputs: Extract<keyof Parameters<typeof Projection.pass>[0], symbol>;
 // ---cut-end---
 // The bound projection that `pass`, `run`, `follow`, and `attach` take.
 interface Executable<
@@ -1294,6 +1311,7 @@ interface Executable<
   S = unknown,
   OR = never,
 > extends Identity {
+  readonly [GenerationOutputs]?: ReadonlyMap<string, { readonly shared: boolean }>;
   readonly inputs: I;
   readonly state?: BoundState<S>;
   readonly streams?: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
@@ -1343,7 +1361,7 @@ declare function read<Inputs extends InputMap, S = never, Q = never>(
 same<typeof read, typeof Projection.read>(true);
 ```
 
-A bound projection from any constructor is an `Executable`. `BoundState` is the state of a bound projection: `initial` already has the params bound, and it runs only when no state is stored.
+A bound projection from any constructor is an `Executable`. The runner uses its optional symbol-keyed metadata to track generation-addressed outputs. `BoundState` is the state of a bound projection: `initial` already has the params bound, and it runs only when no state is stored.
 
 ## `Projection.Registry`
 
