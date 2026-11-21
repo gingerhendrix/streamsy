@@ -1,3 +1,21 @@
+## @streamsy/projection@0.13.0
+
+### Replay into a fresh stream for each generation
+
+Wrap a projection output or its accepted wake class with `Projection.perGeneration(route, param)` to put the declaration's generation in the stream address. Raise the generation when you rebuild, and pin readers to the previous address until the new streams catch up. The built-in commits check for an empty stream on the first write by default. Use `Projection.createOutputs(bound)` when readers need the wrapped streams before the first unit. [Generation-addressed outputs](https://streamsy.dev/docs/projections/outputs#generation-addressed-outputs)
+
+### Clean up SQL state with a projection binding
+
+Use `Commit.transactionWithCleanup` to remove a binding's SQL state in the same transaction as `Projection.forget` or `Projection.retire`. Use the supplied SQL client so a cleanup failure rolls back the lifecycle operation and the cleanup SQL. [Commit reference](https://streamsy.dev/docs/reference/projection/commit#committransactionwithcleanup)
+
+Use `Projection.isPerGeneration` to recognize a generation-addressed output and `Projection.generationBinding` to read its route, generation parameter, and `shared` flag. [Generation-addressed outputs](https://streamsy.dev/docs/projections/outputs#generation-addressed-outputs)
+
+### Retire a projection generation
+
+Call `Projection.retire(declaration, params, { generation })` to fence the generation's checkpoint and remove its exclusively owned generation-addressed outputs. Pass `streams: "close"` to keep their data and let readers reach the end. Use `StateTable.clear(table)` to delete a retired stream's cached rows and applied offset.
+
+`ProjectionFault.reason` now includes the non-retryable `retired-generation` case. Add it to exhaustive switches over `reason`. See [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation).
+
 ## @streamsy/projection@0.12.0
 
 ### Set a retry policy for each projection declaration
