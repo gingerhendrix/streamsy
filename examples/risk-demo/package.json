@@ -17,7 +17,8 @@
     "test:sqlite": "bun --bun vitest run test/persistence",
     "build:worker": "bun scripts/build-worker.ts",
     "dev:worker": "bun run build:worker && bun scripts/local-worker.ts",
-    "test:workerd": "bun run build:worker && bun --bun vitest run --config vitest.workerd.config.ts"
+    "test:workerd": "bun run build:worker && bun --bun vitest run --config vitest.workerd.config.ts",
+    "deploy": "bun run build:worker && node node_modules/alchemy/bin/cli.js deploy"
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.2",
@@ -36,10 +37,12 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
     "@cloudflare/workers-types": "4.20251228.0",
     "@types/bun": "^1.4.3",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "alchemy": "2.0.0-beta.85",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",
     "vitest": "catalog:"

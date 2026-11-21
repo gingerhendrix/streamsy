@@ -1,6 +1,6 @@
 # Hex Domination
 
-Hex Domination is an event-sourced territory game for two to four players. Play in a browser or watch two scripted bots use the same command and board routes. The server records the generated hex map in `GameStarted`, so replay uses the map the players saw.
+Hex Domination is an event-sourced territory game for two to four players. Play it at <https://hex-domination.streamsy.dev>, play in a local browser or watch two scripted bots use the same command and board routes. The server records the generated hex map in `GameStarted`, so replay uses the map the players saw.
 
 ## Play on Bun
 
@@ -33,7 +33,7 @@ bun run build
 bun run --cwd examples/risk-demo dev:worker
 ```
 
-Open <http://127.0.0.1:8791>. No Cloudflare account is used. [Local workerd host](docs/workerd.md) explains the routing, the defence alarm, storage, and the limits of this host.
+Open <http://127.0.0.1:8791>. No Cloudflare account is used. [Workerd host](docs/workerd.md) explains the deployment, the routing, the defence alarm, storage, and the limits of this host.
 
 ## Command and stream contracts
 

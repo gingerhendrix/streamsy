@@ -1,6 +1,6 @@
-# Local workerd host
+# Workerd host
 
-The Worker host runs the same game code as the Bun server. `buildApp`, the stream declarations, the board projection, the command service, and the defence timers are shared. Only storage, routing, and the timer differ. This host is verified on local workerd through Miniflare. It has no deployment configuration.
+The Worker host runs the same game code as the Bun server. `buildApp`, the stream declarations, the board projection, the command service, and the defence timers are shared. Only storage, routing, and the timer differ. This host is verified on local workerd through Miniflare. The public deployment runs at <https://hex-domination.streamsy.dev>.
 
 ## Run it
 
@@ -10,6 +10,16 @@ bun run --cwd examples/risk-demo dev:worker
 ```
 
 `dev:worker` builds the SPA into `dist/web` and the Worker into `dist/worker`, then serves both on <http://127.0.0.1:8791>. Set `PORT` to change the port. Durable Object state is kept in `WORKER_STATE`. Its default is `dist/worker-state`, which the next build deletes. Set `DEFENSE_TIMEOUT_MS` to shorten the 15-second defence window for local testing.
+
+## Deploy
+
+`alchemy.run.ts` declares the `hex-domination` stack: the `hex-domination-<stage>` Worker, the `GAME` Durable Object namespace for `GameDurableObject`, and `dist/web` as its assets. `deploy` builds the Worker bundle and runs Alchemy on it as it is (`bundle: false`).
+
+```bash
+bun run --cwd examples/risk-demo deploy --stage prod
+```
+
+Only the `prod` stage attaches `hex-domination.streamsy.dev` and turns off `workers.dev`. State is local (`Alchemy.localState()`), so run deploys from the worktree that owns `examples/risk-demo/.alchemy/`. The deployed Worker uses the 15-second defence window. It does not set `DEFENSE_TIMEOUT_MS`.
 
 ## Routing
 
@@ -43,7 +53,7 @@ A human defence and the alarm both go through the CAS append. The first one comm
 
 ## Limits
 
-- **No deployment path.** There is no Alchemy stack, Wrangler deploy, custom domain, or credential. Deploying needs a separate, approved slice.
+- **No data migration.** The deployment starts empty. It does not take over the archived hosted game at `hexdomination.gandrew.com`.
 - **No Worker rebuild.** There is no admin or rebuild route. The offline `rebuild` command works only on a Bun SQLite file. A game object always serves `board1`. A future board format change would need an object-local maintenance path.
 - **No data import.** The host does not read Bun SQLite files, the hosted game's Durable Objects, or the archived storage tables (`risk_streams` and `risk_messages`). Games start fresh.
 - **Dice.** The object uses the same seeded default RNG as the Bun server. A recreated object restarts that sequence. This is unchanged game behaviour from both earlier hosts.
