@@ -26,12 +26,14 @@ String comparisons (`eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`), `View.min`, `Vi
 Rules for `top`:
 
 - `limit` must be a finite positive integer.
-- `by` must end with a final ascending stable key term, such as `row.orderId.asc()`.
+- `by` must end with a final ascending stable key term, such as `row.orderId.asc()` or `View.key.asc()`. The latter sorts by the encoded relation key.
 - `top` produces a keyed State collection, not an ordered result list. `StateTable.list` returns rows ordered by their wire keys, not by the `top` sort order.
 
 ## Bounding fan-out with maxAffectedKeys
 
 Set the optional `maxAffectedKeys` option on `View.circuit` to a positive safe integer to cap the distinct affected relation keys processed in one unit, including intermediate relation keys. Joins also check candidate key counts before building large joined results.
+
+Closure checks candidate nodes within `maxDepth - 1` edges below each changed edge in both graph images. Reparenting a subtree of `s` nodes between chains of heights `h1` and `h2` can change up to `s * (min(h1, maxDepth) + min(h2, maxDepth))` closure rows. These changes count toward the unit limit. Each stored path has one part per edge, so a single descendant's paths grow quadratically with its depth up to `maxDepth`. Summed over all descendants, an untruncated chain's path storage grows cubically in its height.
 
 - Passing a value that is not a positive safe integer throws `RangeError` at declaration time.
 - When a unit exceeds the limit, the SQL transaction rolls back completely. Operator tables, output streams, and the checkpoint remain at their pre-unit state.
@@ -64,4 +66,4 @@ Under `Projection.attach` and `ProjectionWakeup.attach`, non-retryable faults (`
 - **JSON object rows.** Input collection values must be JSON objects, and collection codecs must require no Effect services.
 - **Equi-joins only.** Join conditions must test equality between a left-only expression and a right-only expression.
 - **Separate binding namespaces.** Circuit parameters bind separate namespaces with independent SQL state. Dynamic parameters-as-data across bindings are not supported.
-- **Unsupported features.** `avg`, `distinct`, fact folds, closure, the memory tier, frontier rows, and `old_value` on emitted upserts are not supported.
+- **Unsupported features.** `avg`, `distinct`, fact folds, the memory tier, frontier rows, and `old_value` on emitted upserts are not supported.

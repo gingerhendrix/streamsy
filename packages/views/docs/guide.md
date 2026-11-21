@@ -63,6 +63,22 @@ A missing alias or optional leaf passes `undefined` to the function. TypeScript 
 
 `selectRow` takes one expression that supplies the entire output row. Use it with `View.fn` or an object field such as `row.value`. Its expression must return a JSON object. Both `select` and `selectRow` keep the relation's input key. A circuit uses its output State collection's declared key to write rows.
 
+`left.concat(right)` keeps every row from both relations, including identical values. It namespaces the input relation keys as `["l", encodedKey]` and `["r", encodedKey]`. The row values pass through unchanged.
+
+`closure({ parent, part, maxDepth })` emits one row for each descendant and each reachable ancestor within a positive integer bound.
+
+```ts
+const lineage = agents.closure({
+  parent: (agent) => agent.parentRef,
+  part: (agent) => agent.createdAt,
+  maxDepth: 64,
+});
+```
+
+Each node is identified by its string relation key and can name one parent. For State sources, `parent` refers to the wire key, so a numeric key field must be converted to a string. An absent parent marks a root. A parent key with no corresponding row is included as the last ancestor. Each upward walk stops before visiting the starting node or repeating an ancestor, so cycles and self parents produce no reflexive rows.
+
+The row contains `node`, `ancestor` and the edge count `depth`. The row key is the pair of encoded node and ancestor keys. With `part`, the row also contains `path`, with one value per edge ordered from the row immediately below the ancestor down to the node. An absent value on an emitted path fails the unit with `ViewDataFault`. Read the optional path with `View.field(row, "path")` because `path` overlaps the expression's own field.
+
 Declare an output State route with a numeric generation parameter in its path, then pass the route as `output: Projection.perGeneration(ShopViews, "generation")`. For multiple outputs, wrap every route in `outputs` and group the `views` under the same output names. Each State collection needs exactly one view. A circuit rejects incomplete coverage and repeated State classes at declaration time. Collection names can repeat across different State classes. The State collection supplies the output key and schema. TypeScript checks the view row type, and output encoding validates each row at runtime.
 
 A circuit returns a projection declaration with `.at(params)`. The circuit's `version` and `generation` default to 1. The `retry` option accepts the projection binding policy. Input route parameters and the remaining output route parameters must be circuit parameters with the same decoded types. Projection supplies the generation parameter from the circuit's `generation`. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters as expressions, for example `row.workspace.eq(params.workspace)`. The plan hash includes the parameter names. Each binding evaluates the plan with its own decoded values and SQL namespace.
@@ -112,7 +128,7 @@ For a long-lived process, attach with `Projection.attach(shopViews, { durable: t
 
 Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer` and `Transaction.layer`. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
 
-The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals and per-customer top 3 against the full-recompute oracle after each unit. It also checks a no-op unit and a shared `txid` on every emitted change.
+The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals, per-customer top 3 and order lineage against the full-recompute oracle after each unit. It also checks a no-op unit, a shared `txid` on every emitted change and a generation-2 lineage replay.
 
 ```sh
 bun run --cwd packages/views test:unit
@@ -141,7 +157,7 @@ Stop and drain old runners before calling `Projection.retire(circuit, params, { 
 
 ## Ordering and limits
 
-String expressions compare lexicographically by UTF-16 code units, without locale comparison, case folding or Unicode normalization. `min`, `max`, `list` and `top` follow that contract. Top needs a finite positive bound and the row key as its stable final sort term. It selects a keyed relation, not a ranked result list; StateTable reads order by wire key.
+String expressions compare lexicographically by UTF-16 code units, without locale comparison, case folding or Unicode normalization. `min`, `max`, `list` and `top` follow that contract. Top needs a finite positive bound and a stable final sort term. Use `View.key.asc()` to sort by the encoded relation key, including keys produced by joins and concat. Top selects a keyed relation. StateTable reads order by wire key.
 
 `View.list(expression)` collects a group's string or finite number values in ascending order and keeps duplicates. Numbers precede strings in a mixed group. Absent operands are skipped. A group with no members has no output row. When a member changes the list, the aggregate emits the whole array. `maxAffectedKeys` does not bound group size.
 
@@ -151,7 +167,9 @@ A source used only by direct `where` filters keeps rows that pass at least one o
 
 Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's distinct changed relation keys, including intermediate results. Joins also check the number of candidate keys before building large joined results. The unit rolls back on overflow and attached runners stop the binding with a `ViewDataFault` that names a key. The limit governs fan-out, so an operator may still read unchanged rows, for example when recomputing a fractional sum. The limit can be changed without changing the plan hash.
 
-Unsupported operators and features include `avg`, `distinct`, fact folds, closure, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Retained State streams are the source of truth for rebuilding SQL state.
+Closure uses a parent index over the input. An edge or part change recomputes the changed node and descendants within `maxDepth - 1` edges in both the before and after graphs. Reparenting a subtree with `s` nodes from a chain of height `h1` to one of height `h2` can change up to `s * (min(h1, maxDepth) + min(h2, maxDepth))` closure rows. `maxAffectedKeys` checks the number of candidate nodes and counts changed closure keys toward the unit limit. A consumer that reads closure through an arrangement stores those rows in the normal integral. With `part`, each stored row carries `depth` path values, so one descendant carries up to `d * (d + 1) / 2` path values across its closure rows, where `d` is its depth capped at `maxDepth`. An entire untruncated chain holds a cubic number of path values in its height.
+
+Unsupported operators and features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Retained State streams are the source of truth for rebuilding SQL state.
 
 ## Package exports
 
