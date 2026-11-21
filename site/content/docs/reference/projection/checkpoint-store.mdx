@@ -102,8 +102,10 @@ interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   readonly list?: (
     id: string,
-    generation?: number,
-  ) => Effect.Effect<ReadonlyArray<Record<string, string>>, ProjectionFault>;
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly generation: number; readonly params: Record<string, string> }>,
+    ProjectionFault
+  >;
   readonly compareAndSet: (
     key: ProjectionKey,
     ifToken: string,
@@ -122,7 +124,7 @@ same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
 `CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
 
 - `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`. A retirement tombstone fails with phase `load` and reason `retired-generation`.
-- `list`, when available, returns unique encoded params with live checkpoints for the id. The optional generation filter spans checkpoint versions. MySQL cannot list historical keys that may have been shortened.
+- `list`, when available, returns each generation and encoded params with a live checkpoint for the id, across checkpoint versions. Each pair appears once. A record that does not decode fails with phase `load` and reason `invalid-record`. MySQL cannot list historical keys that may have been shortened.
 - `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key. A retirement tombstone fails with phase `load` and reason `retired-generation`.
 - `remove` deletes the live record of `key`. It ignores absent records and retirement tombstones.
 - `retire` is optional. It replaces a live or absent record with a tombstone and returns `"retired"`. If the tombstone already exists, it returns `"already-retired"`.

@@ -65,7 +65,7 @@ const CheckpointKeyJson = Schema.fromJsonString(
     Schema.Literal(CHECKPOINT_NAMESPACE),
     Schema.String, // id
     Schema.String, // checkpoint version
-    Schema.String, // generation
+    Schema.FiniteFromString, // generation
     Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
   ]),
 );
@@ -87,13 +87,19 @@ export interface Loaded {
   readonly token: string;
 }
 
+/** A binding found by `CheckpointStoreApi.list`. */
+export interface ListedBinding {
+  readonly generation: number;
+  readonly params: Record<string, string>;
+}
+
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
-  /** Lists unique encoded params with live checkpoints for an id across checkpoint versions. */
-  readonly list?: (
-    id: string,
-    generation?: number,
-  ) => Effect.Effect<ReadonlyArray<Record<string, string>>, ProjectionFault>;
+  /**
+   * Lists each generation and encoded params with a live checkpoint for an id, across
+   * checkpoint versions. Each pair appears once, in unspecified order.
+   */
+  readonly list?: (id: string) => Effect.Effect<ReadonlyArray<ListedBinding>, ProjectionFault>;
   /** Compare-and-set inside the owner transaction; returns the new token. */
   readonly compareAndSet: (
     key: ProjectionKey,
@@ -245,22 +251,16 @@ const decodeStored = (id: string, encoded: string) =>
   );
 
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
-  const list = Effect.fn("Projection.CheckpointStore.list")(function* (
-    id: string,
-    generation?: number,
-  ) {
+  const list = Effect.fn("Projection.CheckpointStore.list")(function* (id: string) {
     if (store.list === undefined) return yield* unsupportedBindingList();
 
     // Replace the closing bracket with a separator after the exact namespace and id.
     const prefix = `${encodeKey([CHECKPOINT_NAMESPACE, id]).slice(0, -1)},`;
     const entries = yield* store.list(prefix);
-    const selected = generation === undefined ? undefined : String(generation);
-    const paramsByKey = new Map<string, Record<string, string>>();
+    const byKey = new Map<string, ListedBinding>();
 
     for (const [key, encoded] of entries) {
-      const [, , , storedGeneration, params] = yield* Schema.decodeEffect(CheckpointKeyJson)(
-        key,
-      ).pipe(
+      const [, , , generation, params] = yield* Schema.decodeEffect(CheckpointKeyJson)(key).pipe(
         Effect.mapError(
           (cause) =>
             new ProjectionFault({
@@ -272,14 +272,13 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
         ),
       );
 
-      if (selected !== undefined && selected !== storedGeneration) continue;
       const stored = yield* decodeStored(id, encoded);
 
       if ("retired" in stored || stored.record.ended === true) continue;
-      paramsByKey.set(canonicalParams(params), params);
+      byKey.set(`${generation}:${canonicalParams(params)}`, { generation, params });
     }
 
-    return Array.fromIterable(paramsByKey.values());
+    return Array.fromIterable(byKey.values());
   });
 
   const load = Effect.fn("Projection.CheckpointStore.load")(function* (

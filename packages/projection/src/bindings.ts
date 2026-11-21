@@ -31,9 +31,13 @@ export const bindings = Effect.fn("Projection.bindings")(function* <
   const schema = Schema.Struct(declaration.params);
   const decode = Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" });
   const encode = Schema.encodeEffect(schema);
-  const stored = yield* store.list(declaration.id, options?.generation);
+  const stored = new Map<string, Record<string, string>>();
 
-  return yield* Effect.forEach(stored, (params) =>
+  for (const { generation, params } of yield* store.list(declaration.id))
+    if (options?.generation === undefined || generation === options.generation)
+      stored.set(canonicalParams(params), params);
+
+  return yield* Effect.forEach(stored.values(), (params) =>
     Effect.gen(function* () {
       const invalid = () => new InvalidBinding({ projection: declaration.id, params });
       const decoded = yield* decode(params).pipe(Effect.mapError(invalid));

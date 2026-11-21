@@ -195,15 +195,16 @@ const startupInventory = Effect.fn("Projection.startupInventory")(function* <
   const discover = Effect.gen(function* () {
     if (list === undefined) return [];
 
-    const all = yield* list(id);
-    const keys = new Set(Array.map(all, canonicalParams));
+    const keys = new Set<string>();
+    const current = new Set<string>();
+
+    // The generation also names the output address, regardless of checkpoint version.
+    for (const { generation, params } of yield* list(id))
+      (generation === declaration.generation ? current : keys).add(canonicalParams(params));
 
     if (Record.isEmptyRecord(declaration.params)) keys.add(canonicalParams({}));
 
-    // The generation also names the output address, regardless of checkpoint version.
-    if (all.length > 0)
-      for (const params of yield* list(id, declaration.generation))
-        keys.delete(canonicalParams(params));
+    for (const key of current) keys.delete(key);
 
     const candidates: B[] = [];
 

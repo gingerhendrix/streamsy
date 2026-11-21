@@ -6,6 +6,7 @@ export {
   recordKey,
   type CheckpointStoreApi,
   type EncodedStore,
+  type ListedBinding,
   type Loaded,
   type ProjectionKey,
 } from "./checkpoint-store.ts";
