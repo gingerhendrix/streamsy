@@ -19,7 +19,7 @@ bun run --cwd examples/hex-domination dev:worker
 bun run --cwd examples/hex-domination deploy --stage prod
 ```
 
-Only the `prod` stage attaches `hex-domination.streamsy.dev` and turns off `workers.dev`. State is local (`Alchemy.localState()`), so run deploys from the worktree that owns `examples/hex-domination/.alchemy/`. The deployed Worker uses the 15-second defence window. It does not set `DEFENSE_TIMEOUT_MS`.
+Only the `prod` stage attaches `hex-domination.streamsy.dev` and turns off `workers.dev`. State is in the Cloudflare account's Alchemy state store (`Cloudflare.state()`), so a deploy from any checkout updates the same Worker. The Alchemy profile's Cloudflare token needs Secrets Store Write to reach the store. The deployed Worker uses the 15-second defence window. It does not set `DEFENSE_TIMEOUT_MS`.
 
 ## Routing
 
