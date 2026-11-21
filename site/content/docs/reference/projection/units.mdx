@@ -352,11 +352,12 @@ same<FollowOptions, Real.FollowOptions>(true);
 
 ```ts
 // ---cut-start---
-import type { Schedule } from "effect";
+import type { Effect, Schedule } from "effect";
 import type * as Real from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
-interface AttachOptions {
+interface AttachOptions<Params = Readonly<Record<string, unknown>>, E = never, R = never> {
+  readonly bindings?: Effect.Effect<ReadonlyArray<Params>, E, R>;
   readonly triggers?: ReadonlyArray<Real.WakeOutput<{}>>;
   readonly limit?: number;
   readonly passRetry?: Schedule.Schedule<unknown>;
@@ -370,14 +371,15 @@ same<AttachOptions, Real.AttachOptions>(true);
 
 `AttachOptions` holds the options of [`Projection.attach`](/docs/reference/projection/runners#projectionattach) and [`ProjectionWakeup.attach`](/docs/reference/projection/runners#projectionwakeup).
 
-| Field         | Meaning                                                                                                                                                                               |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `limit`       | The most units for each binding in a run. The default is `100`                                                                                                                        |
-| `passRetry`   | Timing only. The runner calls the schedule once per retryable failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)        |
-| `durable`     | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach` |
-| `triggers`    | Fixed-address wake classes whose rows request binding runs. Remote triggers require the process host. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)      |
-| `batch`       | The most due marks that a pass reads. The default is `25`                                                                                                                             |
-| `concurrency` | The most bindings run at once. The default is `1`; must be a positive safe integer                                                                                                    |
+| Field         | Meaning                                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bindings`    | Effect that yields decoded params to consider for startup replay. Defaults to available checkpoint inventory. See [Choose the binding inventory](/docs/projections/rebuild#choose-the-binding-inventory) |
+| `limit`       | The most units for each binding in a run. The default is `100`                                                                                                                                           |
+| `passRetry`   | Timing only. The runner calls the schedule once per retryable failed pass with no input. The default is [`ProjectionRetry`](/docs/reference/projection/faults#projectionretry)                           |
+| `durable`     | When `true`, the runner keeps a pending mark for each binding with work in the storage owner. The default is `false` for `Projection.attach` and `true` for `ProjectionWakeup.attach`                    |
+| `triggers`    | Fixed-address wake classes whose rows request binding runs. Remote triggers require the process host. Default `[]`; see [Trigger streams](/docs/projections/run#trigger-streams)                         |
+| `batch`       | The most due marks that a pass reads. The default is `25`                                                                                                                                                |
+| `concurrency` | The most bindings run at once. The default is `1`; must be a positive safe integer                                                                                                                       |
 
 An attach options object that still contains `retry` throws a `RangeError` naming `passRetry`.
 

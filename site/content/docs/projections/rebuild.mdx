@@ -1,0 +1,157 @@
+---
+title: Rebuild a projection
+description: Replay retained inputs into a new generation, check progress, and move readers before retiring the old outputs.
+---
+
+Choose an in-place rebuild if readers can use a partial stream during replay or wait for readiness. Run both projections side by side if readers need to stay on the old output until you verify the new one.
+
+## Prepare the inputs and outputs
+
+Keep the input history needed for a full replay. Retain the old outputs and checkpoints through your rollback window. Use `Projection.perGeneration` on every derived output, including `accepted` if you publish it. Pick a fresh generation number so the new addresses start empty and open. If you add the wrappers to an existing projection, raise `generation` in the same deployment. [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
+
+Use persistent storage and `durable: true` for both procedures. Durable marks let a restart resume replay after the first unit commits. With private memory marks, that first checkpoint can exclude the binding from startup discovery while the rest of the replay is still pending. The binding then needs a new request for work, such as another input write or `registry.schedule`.
+
+The totals projection uses a numeric `rev` path parameter for its generation. The revised handler treats negative events as zero.
+
+```ts include rebuild-totals
+// @filename: totals.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Commit, Projection } from "@streamsy/projection";
+
+export class Events extends Streamsy.json<Events>()("Rebuild/Events", "events/:user", {
+  params: { user: Schema.String },
+  schema: Schema.Finite,
+}) {}
+
+export class Totals extends Streamsy.json<Totals>()("Rebuild/Totals", "totals/:user/g/:rev", {
+  params: { user: Schema.String, rev: Schema.FiniteFromString },
+  schema: Schema.Finite,
+}) {}
+
+const totals = (id: string, generation: number, amount: (item: number) => number) =>
+  Projection.mapAccum({
+    id,
+    generation,
+    params: { user: Schema.String },
+    inputs: { events: Events },
+    outputs: { totals: Projection.perGeneration(Totals, "rev") },
+    state: { schema: Schema.Finite, initial: 0 },
+    commit: Commit.producer,
+    mapAccum: (sum, { item }) => {
+      const next = sum + amount(item);
+      return [next, { totals: [next] }] as const;
+    },
+  });
+
+export const totalsV1 = totals("totals", 1, (item) => item);
+export const correctedTotals = (id: string) => totals(id, 2, (item) => Math.max(0, item));
+```
+
+On a process host, build the attach Layers over the storage and checkpoint services for the lifetime of the app. On Cloudflare, pass `ProjectionWakeup.attach` with the same options in the object's `wakeups`. Each object discovers bindings on acquisition and replays them on the alarm. Arrange for every affected object to be acquired, and run inventory and readiness checks on the owner of each binding. [Attach](/docs/projections/run#attach) and [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
+
+## Rebuild in place
+
+1. Keep the projection id, change the handler, and raise `generation`. Replace the old attachment with the new one in a single deployment.
+2. Let the runner provision the selected bindings' wrapped outputs and replay their input history in the background. Readers that use `totals.at({ user }).streams.totals` move to the new address on deployment. They can see a missing stream before provisioning and a partial stream during replay. A State reader can see a partial set of rows.
+3. If the host must wait before serving, hold its readiness until the expected bindings pass the [fixed-tail checks](#check-replay-progress).
+
+```ts
+// @include: rebuild-totals
+// @filename: index.ts
+// ---cut---
+import { Projection } from "@streamsy/projection";
+import { correctedTotals } from "./totals.ts";
+
+export const totals = correctedTotals("totals");
+export const rebuild = Projection.attach(totals, { durable: true });
+```
+
+To roll back before retirement, redeploy the previous code and attach the old declaration. Its readers return to the old addresses and its runner resumes from the old checkpoints. To catch up on writes made while it was detached, use `registry.schedule` with the old bindings, then check readiness. Supply `Projection.Registry.layer` below the attach Layer. [Observe attached runners](/docs/projections/run#observe-attached-runners).
+
+## Run both generations side by side
+
+Give the new declaration both a fresh id and a fresh generation. The id separates the registry entries, pending marks, and triggers. The generation separates the stream addresses.
+
+1. In deploy 1, attach both declarations and leave readers on `totalsV1`. Pass the old declaration's inventory so `totalsV2` can discover its first bindings. Check replay progress and verify the new outputs.
+2. In deploy 2, move readers to `totalsV2` and read each new stream from its start. Detach `totalsV1` and keep its declaration for rollback or retirement.
+3. After the rollback window, [retire the old bindings](#retire-the-old-generation). In deploy 3, remove the old declaration.
+
+```ts
+// @include: rebuild-totals
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { Projection } from "@streamsy/projection";
+import { correctedTotals, totalsV1 } from "./totals.ts";
+
+export const totalsV2 = correctedTotals("totals-2");
+export const projections = Layer.mergeAll(
+  Projection.attach(totalsV1, { durable: true }),
+  Projection.attach(totalsV2, { durable: true, bindings: Projection.bindings(totalsV1) }),
+);
+```
+
+Before deploy 2, readers already use the old outputs. To roll back after deploy 2 and before retirement, reattach `totalsV1`, schedule its bindings to catch up, and point readers back to its outputs once ready. Keep `totals-2` as the projection id if you keep serving its outputs. Renaming the id gives it a different checkpoint key.
+
+## Check replay progress
+
+Use the expected list of binding params for the rollout. Capture `Projection.tails` for those bindings once, then pass each fixed target to `Projection.caughtUp`. Producers can keep writing while you wait. The check waits for the captured offsets and source closes, and for any pinned unit to settle. Pass the new declaration from either procedure. Use `Projection.lag` with the same targets to inspect which inputs are behind.
+
+```ts
+// @include: rebuild-totals
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import type { correctedTotals } from "./totals.ts";
+
+export const waitForReplay = (
+  projection: ReturnType<typeof correctedTotals>,
+  users: ReadonlyArray<{ readonly user: string }>,
+) =>
+  Effect.gen(function* () {
+    const targets = yield* Effect.forEach(users, ({ user }) =>
+      Effect.gen(function* () {
+        const bound = projection.at({ user });
+        const tail = yield* Projection.tails(bound);
+        return { bound, tail };
+      }),
+    );
+    yield* Effect.forEach(targets, ({ bound, tail }) => Projection.caughtUp(bound, tail), {
+      discard: true,
+    });
+  }).pipe(Effect.timeout("60 seconds"));
+```
+
+Check that the output streams exist before opening them to readers. An empty input can meet a zero-offset target before the attach runner provisions the outputs. Inspect the output and verify the handler's results before switching readers.
+
+## Choose the binding inventory
+
+By default, attach uses live checkpoints for the projection id. It queues bindings that lack a live checkpoint at the declared generation across checkpoint versions. It also considers `{}` for a projection with no params. Use `Projection.bindings(declaration, { generation })` to list the live checkpoint bindings of one generation.
+
+Checkpoint inventory omits bindings that never committed a unit and records that were forgotten, ended, or retired. Keep an application inventory when those bindings matter, including named empty inputs. Supply it as a `bindings` Effect that returns decoded params, such as `Effect.succeed([{ user: "u1" }])`. The runner resolves them with the attached declaration and checks the checkpoint through its Commit before provisioning outputs. An explicit list can select a binding at a new checkpoint version within the same generation. Use a fresh generation for output rebuilds.
+
+MySQL owner records can contain irreversible shortened keys, so `Projection.bindings` fails there and attach skips implicit inventory. Adapters without checkpoint listing also skip implicit inventory. Supply `bindings` from your application on those hosts. Live commits and configured triggers continue to schedule work.
+
+## Retire the old generation
+
+An open browser tab keeps the address it opened. After the old runner stops, that stream stops receiving projection writes. If you close the stream, the tab can read to the end and your app can prompt for a reload. If you remove it, subsequent reader requests get a missing stream.
+
+Stop and drain the old runner before you retire its checkpoint. Keep the declaration that wrote the old addresses. Save the binding list before retirement so you can retry cleanup after the checkpoints become tombstones. Execute retirement on the checkpoint owner. The example closes generation 1 and preserves the old stream contents.
+
+```ts
+// @include: rebuild-totals
+// @filename: index.ts
+// ---cut---
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import { totalsV1 } from "./totals.ts";
+
+export const closeOldTotals = (users: ReadonlyArray<{ readonly user: string }>) =>
+  Effect.forEach(users, (params) =>
+    Projection.retire(totalsV1, params, { generation: 1, streams: "close" }),
+  );
+```
+
+Use `streams: "remove"` to delete the old outputs when you no longer need them. A retirement tombstone prevents the old declaration from resuming that binding. To restore the old handler after retirement, rebuild it in a fresh generation from retained inputs. If a State table indexed the old stream, clear its cached rows separately. [Retire a generation](/docs/projections/checkpoints#retire-a-generation) and [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows).

@@ -400,10 +400,23 @@ type Readable<Inputs extends InputMap, S, Q> = Identity & {
   readonly commit: Pick<Commit.Commit<never, never, Q>, "load">;
 };
 // ---cut-end---
-declare function attach<I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
-  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
-  options?: AttachOptions,
-): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I>>;
+declare function attach<
+  I extends InputMap,
+  E,
+  R,
+  Q,
+  Result,
+  P,
+  OR = never,
+  HE = never,
+  HR = never,
+  Params extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
+  BE = never,
+  BR = never,
+>(
+  projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR, Params>,
+  options?: AttachOptions<NoInfer<Params>, BE, BR>,
+): Layer.Layer<never, never, Storage | Exclude<R, P> | Q | OR | HR | InputServices<I> | BR>;
 // ---cut-after---
 same<typeof attach, typeof Projection.attach>(true);
 ```
@@ -411,6 +424,7 @@ same<typeof attach, typeof Projection.attach>(true);
 `attach` returns a Layer that runs a projection whenever a local commit writes one of its inputs. It takes the declaration, not a bound projection. Use it on long-lived hosts, such as Bun and Node. On a Cloudflare object, use [`ProjectionWakeup`](#projectionwakeup).
 
 - The Layer subscribes to `Storage.committed` when it is built. Build it over the storage Layer, before the app writes.
+- The runner can also queue startup replays from checkpoint inventory or an explicit `bindings` Effect. See [Rebuild a projection](/docs/projections/rebuild).
 - For each stream id that a commit writes, the `parse` method of the declaration returns the params, and the runner runs `Projection.run(projection.at(params), { limit })`.
 - Each input must give every projection param. When one does not, `attach` throws a `RangeError`. A fixed address triggers only a projection with no params.
 - `attach` throws a `RangeError` when `limit`, `batch` or `concurrency` is not a positive safe integer.
@@ -422,7 +436,7 @@ same<typeof attach, typeof Projection.attach>(true);
 
 A trigger is local when its stream service is absent or its owner matches any of the ambient `Storage`, `OwnerRecords` and `CommitBoundary` services; otherwise it is remote. These three services share an owner; wrappers must keep at least one unwrapped so its owner metadata survives. Provide a remote class at runtime, such as `Protocol.bind(RemoteStreams.layerProtocol(...), Streamsy.group(Wake))` or another owner's protocol layer. `Projection.attach` follows each remote trigger with a scoped live-read fiber, which signals new data and ends with the layer scope. `ProjectionWakeup.attach` rejects a remote trigger at acquisition with a `RangeError` naming its stream: it accepts only triggers on its own storage owner.
 
-A pass reads local triggers, drains local bindings, then reads one page per remote trigger outside the local transaction. It commits the page's `nextOffset` with its durable marks in one local transaction; it does not derive per-message offsets. `StreamNotFound` and `StreamGone` leave the cursor unchanged without a fault. `InvalidReadRequest`, invalid wake data or an invalid page cursor stops only that trigger as `invalid-source`. Remote `TransportFault` and `StorageFault` failures are retryable pass failures; all remote triggers are attempted before the first failure is returned. Local commits during pass backoff wait until it ends (default cap 30 s). The follower retries with its own `passRetry` schedule steps and never signals a read failure. `next` reads no network and a failing remote alone does not make it report immediate work. See [Trigger streams](/docs/projections/run#trigger-streams) for cursor recovery and rescan.
+A pass reads local triggers, drains local bindings, then reads one page per remote trigger outside the local transaction. It commits the page's `nextOffset` with its durable marks in one local transaction; it does not derive per-message offsets. `StreamNotFound` and `StreamGone` leave the cursor unchanged without a fault. `InvalidReadRequest`, invalid wake data or an invalid page cursor stops only that trigger as `invalid-source`. Remote `TransportFault` and `StorageFault` failures are retryable pass failures; all remote triggers are attempted before the first failure is returned. Local commits during pass backoff wait until it ends (default cap 30 s). The follower retries with its own `passRetry` schedule steps and never signals a read failure. See [Trigger streams](/docs/projections/run#trigger-streams) for cursor recovery and rescan.
 
 `Projection.attach` wakes a sleeping binding at its recorded deadline. Its process
 wait re-reads the wall clock at least every 30 seconds while a deadline exists,
@@ -596,18 +610,31 @@ interface WakeupHost {
 }
 // ---cut-end---
 declare const ProjectionWakeup: {
-  attach: <I extends InputMap, E, R, Q, Result, P, OR = never, HE = never, HR = never>(
-    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR>,
-    options?: AttachOptions,
+  attach: <
+    I extends InputMap,
+    E,
+    R,
+    Q,
+    Result,
+    P,
+    OR = never,
+    HE = never,
+    HR = never,
+    Params extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
+    BE = never,
+    BR = never,
+  >(
+    projection: Attachable<Executable<I, E, R, Q, Result, P, unknown, OR>, HE, HR, Params>,
+    options?: AttachOptions<NoInfer<Params>, BE, BR>,
   ) => Effect.Effect<
     {
       name: string;
-      next: Effect.Effect<Option.Option<number>, StorageFault>;
+      next: Effect.Effect<Option.Option<number>, StorageFault, Q | OR | InputServices<I> | BR>;
       retryable: (cause: Cause.Cause<unknown>) => boolean;
       run: Effect.Effect<
         { more: boolean },
         StorageFault,
-        Exclude<R, P> | Q | OR | HR | InputServices<I>
+        Exclude<R, P> | Q | OR | HR | InputServices<I> | BR
       >;
       bind: (host: WakeupHost) => Effect.Effect<void>;
       changed: Effect.Effect<void>;

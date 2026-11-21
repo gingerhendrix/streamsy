@@ -103,7 +103,7 @@ Build the host Layer once for each host lifetime. Each build of `CheckpointStore
 
 A projection has no reset. To start again from zero offsets, raise `generation` in the declaration. The default is 1. The new generation has its own record, so it reads every input from the start.
 
-Use `Projection.perGeneration(route, param)` on each derived output and on `accepted` to replay into fresh stream addresses. Choose a route codec with a distinct address for each generation. Readers can stay pinned to the previous generation until the new one catches up, then switch to the new address and read from its start. The previous generation's stream and checkpoint remain available. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
+Use `Projection.perGeneration(route, param)` on each derived output and on `accepted` to replay into fresh stream addresses. Choose a route codec with a distinct address for each generation. To deploy a rebuild and move readers, follow [Rebuild a projection](/docs/projections/rebuild). For the wrapper's address rules, see [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
 Raise `generation` in the same deployment that adds the wrapper or otherwise changes the output addresses. A checkpoint tracks the input addresses but does not store the output addresses. A transaction with an existing checkpoint skips first-unit creation. A producer can start writing to a new address from the current checkpoint instead of replaying the input from the start.
 
