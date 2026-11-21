@@ -24,6 +24,17 @@ bun run --cwd examples/risk-demo demo
 
 Open the printed spectator URL. The demo creates a disposable database and starts the bots after a short lead-in. Stop it with Ctrl-C.
 
+## Play on local workerd
+
+The same game also runs as a Cloudflare Worker with one SQLite Durable Object per game. To serve it on local workerd through Miniflare, run:
+
+```bash
+bun run build
+bun run --cwd examples/risk-demo dev:worker
+```
+
+Open <http://127.0.0.1:8791>. No Cloudflare account is used. [Local workerd host](docs/workerd.md) explains the routing, the defence alarm, storage, and the limits of this host.
+
 ## Command and stream contracts
 
 - `games/<gameId>/events` is the canonical log. Each item is a command batch. The service folds the log, checks `commandId`, and appends with `expectedOffset`. After an offset conflict, it reads the new head and applies the rules again. The payload hash in an accepted batch lets a retry recover the same acknowledgement even if the server stopped before saving its metadata row.
@@ -53,4 +64,10 @@ bun run --cwd examples/risk-demo test:sqlite
 bun run --cwd examples/risk-demo smoke:http
 ```
 
-The HTTP smoke starts the real Bun server on loopback with disposable SQLite state, submits commands, reads the streams, and restarts the process. The Worker and Durable Object host are outside this Bun port.
+The HTTP smoke starts the real Bun server on loopback with disposable SQLite state, submits commands, reads the streams, and restarts the process.
+
+To test the Worker host on real local workerd with disposable state, run:
+
+```bash
+bun run --cwd examples/risk-demo test:workerd
+```

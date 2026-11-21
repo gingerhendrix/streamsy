@@ -6,5 +6,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src/**/*", "server/**/*", "scripts/**/*", "test/**/*"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "server/cloudflare"]
 }
