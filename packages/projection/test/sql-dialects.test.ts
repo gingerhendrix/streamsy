@@ -166,7 +166,7 @@ for (const dialect of dialects) {
     );
 
     test(
-      "checkpoints with long params save, load and stay apart when the params share a prefix",
+      "long checkpoint keys stay distinct and only reversible keys can be listed",
       async () => {
         if (url === undefined) return;
 
@@ -187,14 +187,34 @@ for (const dialect of dialects) {
                 Option.map(loaded.record, (found) => found.state),
               ]);
 
-            return [yield* saved("01"), yield* saved("02")];
+            const bindings = yield* Projection.bindings({
+              id: folder("01").id,
+              params: { folderId: Schema.String },
+            }).pipe(Effect.provideService(CheckpointStore, store), Effect.result);
+
+            return { saved: [yield* saved("01"), yield* saved("02")], bindings };
           }),
         );
 
-        expect(result).toEqual([
+        expect(result.saved).toEqual([
           ["2", Option.some("two")],
           ["1", Option.some("other")],
         ]);
+
+        if (dialect.name === "mysql") {
+          expect(Result.getFailure(result.bindings)).toMatchObject(
+            Option.some({
+              reason: "unsupported-composition",
+              message: expect.stringContaining("hashed"),
+            }),
+          );
+        } else {
+          const params = Option.getOrThrow(Result.getSuccess(result.bindings));
+          expect(params).toHaveLength(2);
+          expect(params).toEqual(
+            expect.arrayContaining([folder("01").params, folder("02").params]),
+          );
+        }
       },
       TIMEOUT_MS,
     );

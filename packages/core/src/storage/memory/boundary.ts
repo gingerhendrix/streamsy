@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Semaphore } from "effect";
+import { Array, Context, Effect, Option, Semaphore } from "effect";
 import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { ProjectionMarks } from "../../internal/projection-marks.ts";
@@ -120,6 +120,13 @@ export const makeBoundary = (
         Effect.map(current, (draft) =>
           Option.fromUndefinedOr(
             (Option.isSome(draft) ? draft.value.records : committedRecords).get(key),
+          ),
+        ),
+      list: (prefix) =>
+        Effect.map(current, (draft) =>
+          Array.filter(
+            Array.fromIterable(Option.isSome(draft) ? draft.value.records : committedRecords),
+            ([key]) => key.startsWith(prefix),
           ),
         ),
       remove: (key) =>

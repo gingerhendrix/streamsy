@@ -884,6 +884,34 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
 
       return found;
     }),
+    list: Effect.fn("SqlStorage.records.list")(function* (prefix: string) {
+      const rows = yield* sql.onDialectOrElse({
+        mysql: () =>
+          Effect.fail(
+            new StorageFault({
+              operation: "records.list.unsupported",
+              message: "MySQL cannot list owner records because long keys may have been hashed",
+              retryable: false,
+            }),
+          ),
+        orElse: () => {
+          const startsWith = sql.onDialectOrElse({
+            sqlite: () => sql`instr(owner_key, ${prefix}) = 1`,
+            orElse: () => sql`strpos(owner_key, ${prefix}) = 1`,
+          });
+
+          return attempt(
+            "records.list",
+            sql<{
+              readonly owner_key: string;
+              readonly owner_value: string;
+            }>`SELECT owner_key, owner_value FROM streamsy_owner_records WHERE ${startsWith}`,
+          );
+        },
+      });
+
+      return Array.map(rows, ({ owner_key, owner_value }) => [owner_key, owner_value] as const);
+    }),
     write: Effect.fn("SqlStorage.records.write")(function* (requested: string, encoded: string) {
       const key = yield* storedKey(requested);
       const transaction = yield* Effect.serviceOption(sql.transactionService);

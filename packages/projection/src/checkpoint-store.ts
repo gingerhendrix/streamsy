@@ -53,9 +53,21 @@ export interface ProjectionKey {
   readonly params: Record<string, string>;
 }
 
+const CHECKPOINT_NAMESPACE = "streamsy.projection.v1";
+
+const CheckpointKeyJson = Schema.fromJsonString(
+  Schema.Tuple([
+    Schema.Literal(CHECKPOINT_NAMESPACE),
+    Schema.String, // id
+    Schema.String, // checkpoint version
+    Schema.String, // generation
+    Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+  ]),
+);
+
 export const recordKey = (key: ProjectionKey): string =>
   encodeKey([
-    "streamsy.projection.v1",
+    CHECKPOINT_NAMESPACE,
     key.id,
     String(key.version),
     String(key.generation),
@@ -72,6 +84,11 @@ export interface Loaded {
 
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
+  /** Lists unique encoded params with live checkpoints for an id across checkpoint versions. */
+  readonly list?: (
+    id: string,
+    generation?: number,
+  ) => Effect.Effect<ReadonlyArray<Record<string, string>>, ProjectionFault>;
   /** Compare-and-set inside the owner transaction; returns the new token. */
   readonly compareAndSet: (
     key: ProjectionKey,
@@ -94,6 +111,8 @@ const storageFailure =
  */
 const OWNER_RECORD_CONFLICT = "records.conflict";
 
+type EncodedEntries = ReadonlyArray<readonly [key: string, encoded: string]>;
+
 /** Stores each projection's offsets and encoded state in one compare-and-set record. */
 export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreApi>()(
   "@streamsy/projection/CheckpointStore",
@@ -110,6 +129,21 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
         const records = yield* OwnerRecords;
 
         const checkpoints = fromStore({
+          list: (prefix) =>
+            records.list(prefix).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectionFault({
+                    phase: "load",
+                    reason:
+                      cause.operation === "records.list.unsupported"
+                        ? "unsupported-composition"
+                        : "storage-failure",
+                    message: cause.message,
+                    cause,
+                  }),
+              ),
+            ),
           read: (key) =>
             records
               .read(key)
@@ -160,6 +194,12 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
       const lock = yield* Semaphore.make(1);
 
       return fromStore({
+        list: (prefix) =>
+          lock.withPermits(1)(
+            Effect.sync(() =>
+              Array.filter(Array.fromIterable(records), ([key]) => key.startsWith(prefix)),
+            ),
+          ),
         read: (key) => Effect.sync(() => Option.fromUndefinedOr(records.get(key))),
         write: (key, value) =>
           Effect.sync(() => {
@@ -177,6 +217,8 @@ export class CheckpointStore extends Context.Service<CheckpointStore, Checkpoint
 
 /** The encoded seam a checkpoint Layer builds on; both shipped Layers use it. */
 export interface EncodedStore {
+  /** A snapshot of the stored entries whose keys start with the exact prefix. */
+  readonly list?: (prefix: string) => Effect.Effect<EncodedEntries, ProjectionFault>;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
@@ -198,6 +240,43 @@ const decodeStored = (id: string, encoded: string) =>
   );
 
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
+  const list = Effect.fn("Projection.CheckpointStore.list")(function* (
+    id: string,
+    generation?: number,
+  ) {
+    if (store.list === undefined) return yield* unsupportedBindingList();
+
+    // Replace the closing bracket with a separator after the exact namespace and id.
+    const prefix = `${encodeKey([CHECKPOINT_NAMESPACE, id]).slice(0, -1)},`;
+    const entries = yield* store.list(prefix);
+    const selected = generation === undefined ? undefined : String(generation);
+    const paramsByKey = new Map<string, Record<string, string>>();
+
+    for (const [key, encoded] of entries) {
+      const [, , , storedGeneration, params] = yield* Schema.decodeEffect(CheckpointKeyJson)(
+        key,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "load",
+              reason: "invalid-record",
+              message: `Invalid checkpoint key for ${id}`,
+              cause,
+            }),
+        ),
+      );
+
+      if (selected !== undefined && selected !== storedGeneration) continue;
+      const stored = yield* decodeStored(id, encoded);
+
+      if ("retired" in stored || stored.record.ended === true) continue;
+      paramsByKey.set(canonicalParams(params), params);
+    }
+
+    return Array.fromIterable(paramsByKey.values());
+  });
+
   const load = Effect.fn("Projection.CheckpointStore.load")(function* (
     key: ProjectionKey,
   ): Effect.fn.Return<Loaded, ProjectionFault> {
@@ -253,6 +332,7 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   });
 
   return {
+    list,
     load,
     compareAndSet,
     remove: (key) =>
@@ -315,6 +395,13 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
       ),
   };
 };
+
+export const unsupportedBindingList = () =>
+  new ProjectionFault({
+    phase: "load",
+    reason: "unsupported-composition",
+    message: "This CheckpointStore does not support listing bindings",
+  });
 
 /** What the kernel needs to locate a record; every projection value satisfies it. */
 export interface Identity {

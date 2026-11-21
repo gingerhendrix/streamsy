@@ -39,6 +39,8 @@ export { current } from "./current.ts";
 
 export { read } from "./snapshot.ts";
 
+export { bindings } from "./bindings.ts";
+
 export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
