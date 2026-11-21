@@ -141,6 +141,8 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
     case "inner-join":
     case "left-join":
       return [["on", node.on]];
+    case "concat":
+      return [];
     case "grouped-aggregate":
       return [
         ...Arr.map(

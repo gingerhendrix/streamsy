@@ -154,6 +154,12 @@ export interface LeftJoinNode extends RelationNodeBase {
   readonly rightAlias: string;
 }
 
+export interface ConcatNode extends RelationNodeBase {
+  readonly kind: "concat";
+  readonly left: string;
+  readonly right: string;
+}
+
 export interface GroupedAggregateNode extends RelationNodeBase {
   readonly kind: "grouped-aggregate";
   readonly input: string;
@@ -176,6 +182,7 @@ export type RelationNode =
   | KeyNode
   | InnerJoinNode
   | LeftJoinNode
+  | ConcatNode
   | GroupedAggregateNode
   | TopNNode;
 

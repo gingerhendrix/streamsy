@@ -55,6 +55,9 @@ export interface Relation<Row, Inputs extends Input = Input> {
   readonly selectRow: <Result extends JsonObject>(
     expression: (row: Reference<Row>) => TypedExpression<Result>,
   ) => Relation<Result, Inputs>;
+  readonly concat: <Other, OtherInputs extends Input>(
+    other: Relation<Other, OtherInputs>,
+  ) => Relation<Row | Other, Inputs | OtherInputs>;
   readonly join: <Right, Other extends Input, Alias extends string>(
     other: Relation<Right, Other>,
     spec: {
@@ -89,6 +92,12 @@ function relation<Row, Inputs extends Input>(
 ): Relation<Row, Inputs> {
   const row = selectors<Row>().row;
 
+  const combineInputs = <Other extends Input>(other: Relation<unknown, Other>["inputs"]) =>
+    new Map<string, { readonly state: Inputs | Other; readonly collection: string }>([
+      ...inputs,
+      ...other,
+    ]);
+
   const join = <Right, Other extends Input, Alias extends string>(
     other: Relation<Right, Other>,
     spec: {
@@ -99,19 +108,12 @@ function relation<Row, Inputs extends Input>(
     const refs = joinSelectors<Row, Right>();
     const on = spec.on(refs.left, refs.right);
 
-    const combined = new Map<
-      string,
-      { readonly state: Inputs | Other; readonly collection: string }
-    >(inputs);
-
-    for (const [id, input] of other.inputs) combined.set(id, input);
-
     return {
       left: expression,
       right: other.expression,
       rightAlias: spec.as,
       on,
-      combined,
+      combined: combineInputs(other.inputs),
     };
   };
 
@@ -124,6 +126,11 @@ function relation<Row, Inputs extends Input>(
       relation({ kind: "project", input: expression, fields: fields(row) }, inputs),
     selectRow: (project) =>
       relation({ kind: "project", input: expression, row: project(row) }, inputs),
+    concat: (other) =>
+      relation(
+        { kind: "concat", left: expression, right: other.expression },
+        combineInputs(other.inputs),
+      ),
     join: (other, spec) => {
       const { combined, ...joined } = join(other, spec);
 

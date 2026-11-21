@@ -1,5 +1,6 @@
 import { Record as Rec } from "effect";
 import type {
+  ConcatNode,
   FilterNode,
   GroupedAggregateNode,
   InnerJoinNode,
@@ -21,7 +22,10 @@ type UnaryRelation<Node extends UnaryNode = UnaryNode> = Node extends UnaryNode
 export type RelationExpression<Row = unknown> = (
   | Omit<SourceNode, "id">
   | UnaryRelation
-  | (Omit<InnerJoinNode | LeftJoinNode, "id" | "left" | "right"> & {
+  | ((
+      | Omit<InnerJoinNode | LeftJoinNode, "id" | "left" | "right">
+      | Omit<ConcatNode, "id" | "left" | "right">
+    ) & {
       readonly left: RelationExpression;
       readonly right: RelationExpression;
     })

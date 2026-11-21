@@ -34,6 +34,37 @@ const aggregateItem = (id: string, v?: number) =>
 
 const rankedItem = (id: string, v: number, group = "g") => up("items", id, { id, v, group });
 
+it.live("concat preserves same-key rows from both sides, including composite keys", () => {
+  const p = plan("concat", [
+    source("left"),
+    source("right"),
+    { kind: "key", id: "leftKey", input: "left", key: keyExpression(["id", "group"]) },
+    { kind: "key", id: "rightKey", input: "right", key: keyExpression(["id", "group"]) },
+    { kind: "concat", id: "concat", left: "leftKey", right: "rightKey" },
+  ]);
+
+  return Effect.gen(function* () {
+    yield* migrate();
+    const engine = yield* makeEngine({ concat: p });
+    const left = { id: "same", group: "g", value: 1 };
+    const right = { id: "same", group: "g", value: 2 };
+    const inputKey = encodeRowKey(["same", "g"]);
+    expect(
+      yield* engine.process("concat", [up("left", left.id, left), up("right", right.id, right)]),
+    ).toEqual([
+      { view: "concat", kind: "upsert", key: ["l", inputKey], value: left },
+      { view: "concat", kind: "upsert", key: ["r", inputKey], value: right },
+    ]);
+    const updated = { ...right, value: 3 };
+    expect(
+      yield* engine.process("concat", [del("left", left.id), up("right", right.id, updated)]),
+    ).toEqual([
+      { view: "concat", kind: "delete", key: ["l", inputKey] },
+      { view: "concat", kind: "upsert", key: ["r", inputKey], value: updated },
+    ]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
+});
+
 it.live("orders mixed View.list values the same way as the full recompute", () => {
   const Item = Schema.Struct({
     id: Schema.String,

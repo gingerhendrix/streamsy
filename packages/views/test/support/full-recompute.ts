@@ -171,6 +171,22 @@ function evaluateRelations(
       case "grouped-aggregate":
         relations.set(node.id, recomputeAggregate(node, rows(relations, node.input), parameters));
         break;
+      case "concat":
+        relations.set(
+          node.id,
+          Arr.flatMap(
+            [
+              ["l", node.left],
+              ["r", node.right],
+            ] as const,
+            ([tag, input]) =>
+              Arr.map(rows(relations, input), ({ key, row }) => ({
+                key: [tag, encodeRowKey(key)],
+                row,
+              })),
+          ),
+        );
+        break;
       case "top-n": {
         const result = recomputeTop(node, rows(relations, node.input), parameters);
         relations.set(node.id, result.rows);

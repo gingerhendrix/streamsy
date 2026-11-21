@@ -8,6 +8,7 @@ import {
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
 import {
   isJsonObject,
+  type ConcatNode,
   type JsonObject,
   type JsonValue,
   type GroupedAggregateNode,
@@ -17,7 +18,7 @@ import {
 } from "../ir/contracts.ts";
 import { checkData, type DataFault } from "./data-fault.ts";
 import { findArrangement, joinKeys, type Program } from "./planner.ts";
-import { difference, type Deltas, type Runtime } from "./runtime.ts";
+import { difference, type Delta, type Deltas, type Runtime } from "./runtime.ts";
 import type { Accumulator, Entry, Store } from "./store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening -- Mutable aggregate fields and sums use the IR's open dictionary contract; Expression results are checked at the operator boundary. */
@@ -84,6 +85,22 @@ export function linear(
   }
 
   return difference(before, after, fault);
+}
+
+export function concat(node: ConcatNode, rt: Runtime): Deltas {
+  const result = new Map<string, Delta>();
+
+  for (const [tag, input] of [
+    ["l", node.left],
+    ["r", node.right],
+  ] as const) {
+    for (const [id, change] of rt.changes.get(input) ?? []) {
+      const key = [tag, id];
+      result.set(encodeRowKey(key), { ...change, key });
+    }
+  }
+
+  return result;
 }
 
 export const join = Effect.fnUntraced(function* (

@@ -26,7 +26,7 @@ export interface Program {
 export function dependencies(node: RelationNode): readonly string[] {
   if (node.kind === "source") return [];
 
-  if (node.kind === "inner-join" || node.kind === "left-join") return [node.left, node.right];
+  if ("left" in node) return [node.left, node.right];
 
   return [node.input];
 }
@@ -145,7 +145,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
       const mapped =
         node.kind === "source"
           ? node
-          : node.kind === "inner-join" || node.kind === "left-join"
+          : "left" in node
             ? { ...node, left: remap(node.left), right: remap(node.right) }
             : { ...node, input: remap(node.input) };
 
