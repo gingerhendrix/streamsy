@@ -121,11 +121,16 @@ export interface FilterNode extends RelationNodeBase {
   readonly predicate: Expression;
 }
 
-export interface ProjectNode extends RelationNodeBase {
+interface ProjectNodeBase extends RelationNodeBase {
   readonly kind: "project";
   readonly input: string;
-  readonly fields: Readonly<Record<string, Expression>>;
 }
+
+export type ProjectNode = ProjectNodeBase &
+  (
+    | { readonly fields: Readonly<Record<string, Expression>>; readonly row?: never }
+    | { readonly row: Expression; readonly fields?: never }
+  );
 
 export interface KeyNode extends RelationNodeBase {
   readonly kind: "key";

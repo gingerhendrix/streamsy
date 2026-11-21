@@ -47,6 +47,22 @@ void counts;
 // @ts-expect-error list requires a string or number expression
 list(x.row.enabled);
 
+const projectCount = fn("project-count", 1, (count: number) => ({ doubled: count * 2 }));
+
+const doubled: Relation<{ doubled: number }> = fixtureRelation.selectRow((row) =>
+  projectCount(row.count),
+);
+
+void doubled;
+
+// @ts-expect-error a row projection must return a JSON object
+fixtureRelation.selectRow((row) => row.id);
+
+const optionalRow = fn("optional-row", 1, (count: number) => (count ? { count } : undefined));
+
+// @ts-expect-error potentially absent objects require a fallback or unwrap
+fixtureRelation.selectRow((row) => optionalRow(row.count));
+
 const nested = selectors<{ readonly alias?: { readonly value: { readonly label?: string } } }>();
 
 const requiredLabel = fn("required-label", 1, (label: string) => label.toUpperCase());

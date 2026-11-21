@@ -260,6 +260,43 @@ it.effect("stores the same plan hash for equivalent output and outputs declarati
   }).pipe(Effect.provide(host)),
 );
 
+it.effect("projects a row from a whole left-joined alias and a binding parameter", () =>
+  Effect.gen(function* () {
+    yield* seed;
+
+    const project = View.fn(
+      "project-item",
+      1,
+      (id: string, detail: typeof Details.Type | undefined, minimum: number) => ({
+        id,
+        label: `${minimum}: ${detail === undefined ? "no alias" : (detail.value.label ?? "no label")}`,
+      }),
+    );
+
+    const declaration = View.circuit({
+      ...definition,
+      views: ({ minimum }) => ({
+        row: joined.selectRow((row) => project(row.id, row.details, minimum)),
+      }),
+    });
+
+    const minimum = 3;
+    const table = Table.at({ minimum, generation: 1 });
+
+    yield* Projection.run(declaration.at({ minimum }));
+    yield* Projection.run(table);
+
+    expect((yield* table.get("row", "missing-alias")).value).toEqual({
+      id: "missing-alias",
+      label: "3: no alias",
+    });
+    expect((yield* table.get("row", "present")).value).toEqual({
+      id: "present",
+      label: "3: original",
+    });
+  }).pipe(Effect.provide(host)),
+);
+
 const namedParameterCircuit = (name: "minimum" | "other") =>
   View.circuit({
     ...definition,

@@ -12,8 +12,9 @@ import {
   type Selected,
   type Reference,
   type TypedAggregateExpression,
+  type TypedExpression,
 } from "./expression.ts";
-import type { Expression, SortTerm } from "./ir/contracts.ts";
+import type { Expression, JsonObject, SortTerm } from "./ir/contracts.ts";
 
 /** A State declaration, with the same structural contract as StateTable.define. */
 export type State<
@@ -51,6 +52,9 @@ export interface Relation<Row, Inputs extends Input = Input> {
   readonly select: <F extends Readonly<Record<string, Expression>>>(
     fields: (row: Reference<Row>) => F,
   ) => Relation<Selected<F>, Inputs>;
+  readonly selectRow: <Result extends JsonObject>(
+    expression: (row: Reference<Row>) => TypedExpression<Result>,
+  ) => Relation<Result, Inputs>;
   readonly join: <Right, Other extends Input, Alias extends string>(
     other: Relation<Right, Other>,
     spec: {
@@ -118,6 +122,8 @@ function relation<Row, Inputs extends Input>(
       relation({ kind: "filter", input: expression, predicate: predicate(row) }, inputs),
     select: (fields) =>
       relation({ kind: "project", input: expression, fields: fields(row) }, inputs),
+    selectRow: (project) =>
+      relation({ kind: "project", input: expression, row: project(row) }, inputs),
     join: (other, spec) => {
       const { combined, ...joined } = join(other, spec);
 

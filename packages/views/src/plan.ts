@@ -7,7 +7,8 @@ export function orderPlanFields(plan: RelationPlan): RelationPlan {
   return {
     ...plan,
     nodes: Arr.map(plan.nodes, (node) => {
-      if (node.kind === "project") return { ...node, fields: orderedFields(node.fields) };
+      if (node.kind === "project" && node.fields !== undefined)
+        return { ...node, fields: orderedFields(node.fields) };
 
       if (node.kind === "grouped-aggregate")
         return {

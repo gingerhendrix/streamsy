@@ -104,6 +104,13 @@ function topByRegion(eligible: typeof orderRelation, descending: boolean, limit:
   });
 }
 
+const linkOrder = View.fn(
+  "link-order",
+  1,
+  ({ id: _id, account, ...order }: Order & { readonly account?: Customer }) =>
+    account === undefined ? order : { ...order, accountLabel: account.label },
+);
+
 function plansFor(
   minimum: number,
   requireMemo: boolean,
@@ -147,7 +154,7 @@ function plansFor(
       input: project.expression,
       key: keyExpression(["region", "id"]),
     }),
-    linked: compilePlan("linked", linked.expression),
+    linked: compilePlan("linked", linked.selectRow(linkOrder).expression),
     totals: compilePlan("totals", totals.expression),
     top: compilePlan("top", top.expression),
   };
@@ -201,10 +208,14 @@ function tanstack(
     map(([, [left, right]]): RecordByKey => {
       if (!left) throw new Error("unexpected right-only row");
       const leftKey = `s${left.id.length}:${left.id}`;
+      const { id: _id, ...order } = left;
 
-      if (!right) return [["unmatched", leftKey], left];
+      if (!right) return [["unmatched", leftKey], order];
 
-      return [["match", leftKey, `s${right.id.length}:${right.id}`], { ...left, account: right }];
+      return [
+        ["match", leftKey, `s${right.id.length}:${right.id}`],
+        { ...order, accountLabel: right.label },
+      ];
     }),
     consume("linked"),
   );

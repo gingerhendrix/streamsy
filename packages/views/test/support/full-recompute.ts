@@ -1,12 +1,13 @@
-import type {
-  Expression,
-  GroupedAggregateNode,
-  JsonObject,
-  JsonValue,
-  RelationPlan,
-  RelationNode,
-  RowKey,
-  TopNNode,
+import {
+  isJsonObject,
+  type Expression,
+  type GroupedAggregateNode,
+  type JsonObject,
+  type JsonValue,
+  type RelationPlan,
+  type RelationNode,
+  type RowKey,
+  type TopNNode,
 } from "../../src/ir/contracts.ts";
 import { evaluate, evaluateOptional, isMissing } from "../../src/runtime/expression.ts";
 import type { Evaluated, ExpressionScopes } from "../../src/runtime/expression.ts";
@@ -97,14 +98,21 @@ function evaluateRelations(
         relations.set(
           node.id,
           Arr.map(rows(relations, node.input), (entry) => {
+            const scopes = { row: entry.row, key: entry.key, parameter: parameters };
+
+            if (node.row !== undefined) {
+              const row = evaluate(node.row, scopes);
+
+              if (!isJsonObject(row))
+                throw new TypeError("row projection did not return an object");
+
+              return { key: entry.key, row };
+            }
+
             const row: Record<string, JsonValue> = {};
 
             for (const [name, expression] of Rec.toEntries(node.fields)) {
-              const value = evaluateOptional(expression, {
-                row: entry.row,
-                key: entry.key,
-                parameter: parameters,
-              });
+              const value = evaluateOptional(expression, scopes);
 
               if (!isMissing(value)) row[name] = value;
             }

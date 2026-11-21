@@ -135,7 +135,9 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
     case "filter":
       return [["predicate", node.predicate]];
     case "project":
-      return Arr.map(Rec.toEntries(node.fields), ([key, value]) => [`fields.${key}`, value]);
+      return node.row === undefined
+        ? Arr.map(Rec.toEntries(node.fields), ([key, value]) => [`fields.${key}`, value])
+        : [["row", node.row]];
     case "inner-join":
     case "left-join":
       return [["on", node.on]];

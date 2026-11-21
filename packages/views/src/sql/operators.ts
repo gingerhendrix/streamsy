@@ -6,13 +6,14 @@ import {
   type ExpressionScopes,
 } from "../runtime/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../runtime/key.ts";
-import type {
-  JsonObject,
-  JsonValue,
-  GroupedAggregateNode,
-  RelationNode,
-  TopNNode,
-  RowKey,
+import {
+  isJsonObject,
+  type JsonObject,
+  type JsonValue,
+  type GroupedAggregateNode,
+  type RelationNode,
+  type TopNNode,
+  type RowKey,
 } from "../ir/contracts.ts";
 import { checkData, type DataFault } from "./data-fault.ts";
 import { findArrangement, joinKeys, type Program } from "./planner.ts";
@@ -48,10 +49,20 @@ export function linear(
       return accepts(node, entry.key, entry.row, fault, parameter) ? entry : undefined;
 
     return checkData(fault, entry.key, () => {
+      const scopes = { row: entry.row, key: entry.key, parameter };
+
+      if (node.row !== undefined) {
+        const row = evaluate(node.row, scopes);
+
+        if (!isJsonObject(row)) throw fault(entry.key, "row projection must produce a JSON object");
+
+        return { key: entry.key, row };
+      }
+
       const row: Record<string, JsonValue> = {};
 
       for (const [name, e] of Rec.toEntries(node.fields)) {
-        const value = evaluateOptional(e, { row: entry.row, key: entry.key, parameter });
+        const value = evaluateOptional(e, scopes);
 
         if (!isMissing(value)) row[name] = value;
       }

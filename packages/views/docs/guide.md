@@ -35,7 +35,7 @@ const top = orders.top({
 A join condition must be equality between a left-only and a right-only expression.
 A left-joined alias can be absent. Nested references such as `row.customer.name` preserve optionality through every field, and `select` omits absent fields from its output. Use `isPresent()` to test presence, `orElse(fallback)` to supply a value, or `unwrap()` to fail the unit if a value is absent. Use `View.field(row.value, "path")` when a field name overlaps an expression member.
 
-Use `View.fn(name, version, implementation)` to declare a pure, synchronous expression for `select` or `where`. The callback must be deterministic for its arguments and must leave its inputs unchanged. Its name and positive integer version are part of the plan hash. Raise the version when the implementation changes.
+Use `View.fn(name, version, implementation)` to declare a pure, synchronous expression for `select`, `selectRow` or `where`. The callback must be deterministic for its arguments and must leave its inputs unchanged. Its name and positive integer version are part of the plan hash. Raise the version when the implementation changes.
 
 ```ts
 const displayName = View.fn(
@@ -51,9 +51,17 @@ const selected = joined.select((row) => ({
   orderId: row.orderId,
   customerName: displayName(row.customer.name),
 }));
+
+const order = View.fn("order-row", 1, (orderId: string, customerName: string) => ({
+  orderId,
+  customerName,
+}));
+const projected = joined.selectRow((row) => order(row.orderId, displayName(row.customer.name)));
 ```
 
 A missing alias or optional leaf passes `undefined` to the function. TypeScript requires such arguments to accept `undefined` explicitly, or to be supplied by a fallback or an unwrap expression. Present arguments retain their values, including `null`. A function can return `undefined` intentionally to omit a selected field. A function used as a filter must return a Boolean.
+
+`selectRow` takes one expression that supplies the entire output row. Use it with `View.fn` or an object field such as `row.value`. Its expression must return a JSON object. Both `select` and `selectRow` keep the relation's input key. A circuit uses its output State collection's declared key to write rows.
 
 Declare an output State route with a numeric generation parameter in its path, then pass the route as `output: Projection.perGeneration(ShopViews, "generation")`. For multiple outputs, wrap every route in `outputs` and group the `views` under the same output names. Each State collection needs exactly one view. A circuit rejects incomplete coverage and repeated State classes at declaration time. Collection names can repeat across different State classes. The State collection supplies the output key and schema. TypeScript checks the view row type, and output encoding validates each row at runtime.
 

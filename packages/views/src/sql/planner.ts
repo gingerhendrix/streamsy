@@ -223,7 +223,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
       if (key) keyFields.set(node.id, key);
     }
 
-    if (node.kind === "project") {
+    if (node.kind === "project" && node.fields !== undefined) {
       const key = keyFields.get(node.input);
 
       if (key)

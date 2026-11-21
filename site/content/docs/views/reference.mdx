@@ -214,6 +214,9 @@ interface Relation<Row, Inputs extends Input = Input> {
   readonly select: <F extends Readonly<Record<string, Expression>>>(
     fields: (row: Reference<Row>) => F,
   ) => Relation<Selected<F>, Inputs>;
+  readonly selectRow: <Result extends JsonObject>(
+    expression: (row: Reference<Row>) => TypedExpression<Result>,
+  ) => Relation<Result, Inputs>;
   readonly join: <Right, Other extends Input, Alias extends string>(
     other: Relation<Right, Other>,
     spec: {
@@ -242,6 +245,8 @@ interface Relation<Row, Inputs extends Input = Input> {
   }) => Relation<Row, Inputs>;
 }
 ```
+
+`selectRow` projects the whole row from one expression that returns a JSON object. It keeps the input relation key, as `select` does. A circuit uses its output State collection's declared key when writing the row.
 
 ## `TypedExpression` operations
 
