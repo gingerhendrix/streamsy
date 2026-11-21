@@ -1,8 +1,12 @@
-# @streamsy/views 0.5
+# @streamsy/views
 
 Incrementally maintain Streamsy State collections on SQLite. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
 
-This private workspace package uses Streamsy's local core and projection packages and Effect 4.1.2. Runs on Bun SQLite and Durable Object SQLite. See the [guide](docs/guide.md) for host setup, lifecycle and checks.
+```sh
+bun add @streamsy/views @streamsy/projection @streamsy/core effect
+```
+
+Runs on Bun SQLite and Durable Object SQLite only. Requires Effect 4. The package is pre-1.0: raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";

@@ -3,11 +3,11 @@
     "index",
     "streams",
     "projections",
+    "views",
     "storage",
     "servers",
     "reference",
     "examples",
-    "!views",
     "..."
   ]
 }

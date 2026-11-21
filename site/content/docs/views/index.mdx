@@ -5,7 +5,17 @@ description: Incrementally maintain derived Durable State collections on SQLite 
 
 `@streamsy/views` maintains derived [Durable State](/docs/streams/durable-state) collections incrementally on SQLite. A circuit is an ordinary projection: it consumes input State pages, updates indexed SQL operator state, appends changed output rows, and commits its input checkpoint in one SQL transaction.
 
-`@streamsy/views` is a private, unreleased workspace package in this repository. It supports SQLite only, on Bun SQLite and Cloudflare Durable Object SQLite.
+Views supports SQLite only, on Bun SQLite and Cloudflare Durable Object SQLite. It is pre-1.0, so read the [storage layout and generation rule](/docs/views/ordering-and-limits#storage-layout-and-generation-rule) before you upgrade.
+
+## Install
+
+`@streamsy/views` runs circuits with `@streamsy/projection` and declares streams with `@streamsy/core`. Install it with Effect 4:
+
+```sh
+bun add @streamsy/views @streamsy/projection @streamsy/core effect
+```
+
+Circuits store operator state in the same SQLite database as their checkpoints. The examples on [Declare and run a circuit](/docs/views/declare-and-run) open it with [`@streamsy/storage`](/docs/storage/sqlite).
 
 ## What a circuit does
 

@@ -14,8 +14,9 @@ Documentation: [streamsy.dev](https://streamsy.dev)
 | [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                   |
 | [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
 | [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, projection wakeups              |
+| [`@streamsy/views`](packages/views/README.md)           | Incremental SQL views over State collections, run as projections (SQLite)    |
 
-All four packages share one version. `effect` 4 is a peer dependency. See
+All five packages share one version. `effect` 4 is a peer dependency. See
 [docs/releasing.md](docs/releasing.md) for the release process.
 
 ## Quick start
