@@ -1,9 +1,6 @@
----
-packages:
-  "@streamsy/views": minor
----
+## @streamsy/views@0.13.0
 
-## Maintain incremental SQL views with `@streamsy/views`
+### Maintain incremental SQL views with `@streamsy/views`
 
 `@streamsy/views` is now published. Install it with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`.
 
