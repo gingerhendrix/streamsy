@@ -1,4 +1,4 @@
-# Views 0.5 guide
+# Views guide
 
 ## Declare relations and a circuit
 

@@ -1,7 +1,6 @@
 {
   "name": "@streamsy/views",
-  "version": "0.5.0",
-  "private": true,
+  "version": "0.12.0",
   "description": "Incremental SQL views over Streamsy State collections, run as projections.",
   "homepage": "https://github.com/gingerhendrix/streamsy/tree/main/packages/views#readme",
   "bugs": {
@@ -30,6 +29,9 @@
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core --deps.never-bundle @streamsy/projection",
     "typecheck": "tsc --noEmit",
@@ -37,14 +39,16 @@
     "test:unit": "bun --bun vitest run --dir test --exclude \"**/workerd.test.ts\"",
     "test:workerd": "bun --bun vitest run test/circuit/workerd.test.ts"
   },
+  "dependencies": {
+    "@streamsy/core": "workspace:^",
+    "@streamsy/projection": "workspace:^"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "4.1.2",
     "@effect/sql-sqlite-bun": "4.1.2",
     "@effect/sql-sqlite-do": "4.1.2",
     "@effect/vitest": "catalog:",
-    "@streamsy/core": "workspace:*",
-    "@streamsy/projection": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "@tanstack/db-ivm": "0.2.0",
     "@types/bun": "^1.4.3",
@@ -54,8 +58,6 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@streamsy/core": "~0.12.0",
-    "@streamsy/projection": "~0.12.0",
     "effect": "^4.1.2"
   },
   "tsdown": {

@@ -55,9 +55,9 @@ A circuit unit can fail with a `CircuitError` (`PlanChanged | ViewFault | ViewDa
 
 Under `Projection.attach` and `ProjectionWakeup.attach`, non-retryable faults (`PlanChanged`, `ViewDataFault`, and non-retryable `ProjectionFault` reasons such as `identity-mismatch`, `invalid-output`, or `retired-generation`) stop only the affected binding and record the failure in `Projection.Registry`. Other bindings continue running.
 
-## Pre-release storage and naming rule
+## Storage layout and generation rule
 
-`@streamsy/views` is private and pre-release. Until the first public release, any change to operator-state table layout or internal plan naming requires raising `generation` so affected bindings rebuild into fresh namespaces and output streams.
+`@streamsy/views` is pre-1.0. A change to the operator-state table layout or to internal plan naming requires raising `generation`, so affected bindings rebuild into fresh namespaces and output streams. A release that changes the layout or plan naming says so in the changelog with a **Breaking change:** marker. Raise `generation` on every affected circuit when you upgrade to that release.
 
 ## Current limits
 
