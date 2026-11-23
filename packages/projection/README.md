@@ -145,8 +145,8 @@ a declaration and a bound table are `StateTable.Declaration` and
 `Commit.transaction` with the State stream in `outputs`, that folds records into
 one collection. It reads each key's previous row from the table. `sync` and the
 fold handler fail with `ProjectionFault` for every wire, SQL and schema failure,
-and the handler adds `FoldByKeyError` for a row with the wrong key. A fold's `id`,
-`version` and `generation` are its identity, so a rename is a fold fix. See
+and the handler adds `FoldByKeyError` for a row with the wrong key. A fold's
+identity includes its `id`, `generation` and binding params. See
 [State tables](https://streamsy.dev/docs/projections/state-table).
 
 ## Wake streams
@@ -363,7 +363,7 @@ processing finishes. `registry.retry(target)` makes failed work due now.
 
 After a fold fix, `registry.rescan(projectionOrId, WakeClassOrStreamId)` resets one
 trigger cursor to `ZERO_OFFSET`, clears its stop and wakes the runner. It does not
-reset binding checkpoints; use the appropriate version or generation for the fix.
+reset binding checkpoints. Raise `generation` to replay those bindings.
 A row that still fails to decode stops that stream again. The cursor is stored in
 both durability modes and survives restart; ingested marks survive only in durable
 mode. An unknown projection fails with `NotAttached`; an unknown trigger dies with
@@ -441,11 +441,18 @@ projections are follow-only; wait on their output to see a command.
 backoff from 200 ms, capped at 30 s. `run` does not retry. Handler errors retain
 their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.
 
-Records are keyed by `id`, `version`, `generation`, and canonical parameters.
-Use a new generation for changed input identity or state schema. Retain input
-history after the checkpoint, including pinned ranges. Stop the follower first, or use a new generation before
-`Projection.forget(bound)`, which calls the Commit's `remove`. For producer
-outputs, delete output streams first or use a new generation.
+Records are keyed by `id`, `generation` and canonical parameters.
+Raise `generation` for changed input identity or state schema. When migrating a
+declaration that set `version`, remove that option and set `generation` above
+every generation the projection id has used, including under older versions.
+Deleting `version` alone can resume a previous version 1 checkpoint.
+
+Retain input history after the checkpoint, including pinned ranges. Stop the
+follower before calling `Projection.forget(bound)`, which calls the Commit's
+`remove` and leaves output streams in place. A raised generation replays into
+fresh `perGeneration` streams. An unwrapped `Commit.producer` output receives the
+replay after its existing items. Move its address or remove that output stream
+before replay if it should contain only the rebuilt items.
 
 Without a follower, each `current` replays from the last checkpoint or from
 the start. A continuously growing input can delay it. Fold handlers must be
