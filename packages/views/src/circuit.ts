@@ -1,4 +1,4 @@
-import { Array, Effect, Option, Order, Predicate, Record, Schema } from "effect";
+import { Array, Effect, Order, Predicate, Record, Schema } from "effect";
 import { DurableState, isStreamsFault } from "@streamsy/core";
 import { Streams, StreamsWriter, type StreamRoute } from "@streamsy/core/protocol";
 import {
@@ -24,14 +24,14 @@ import {
 } from "./expression.ts";
 import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
-import { makeEngine, type StateChange } from "./sql/engine.ts";
+import { makeEngine } from "./sql/engine.ts";
 import type { Backend } from "./backend.ts";
 import { migrateBackend } from "./sql/backend.ts";
 import { catchMemoryEnlist, currentBackend, type ViewBackend } from "./view-backend.ts";
 import { ViewFault } from "./view-fault.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
-import { normalize } from "./sql/normalize.ts";
+import { circuitErrors, normalizeUnit } from "./circuit-engine.ts";
 import { encodeRowKey } from "./runtime/key.ts";
 import {
   isJsonObject,
@@ -524,46 +524,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           hash,
         );
 
-        const changes: StateChange[] = [];
-        const store = backend.store(namespace);
-
-        const active = Array.flatMap([...sources], ([sourceId, input]) => {
-          const slice = batch[input.state.key];
-
-          return slice === undefined
-            ? []
-            : [{ sourceId, input, slice, markerKey: encodeRowKey(sourceId) }];
-        });
-
-        const snapshots = yield* store.getMany(
-          "@snapshots",
-          Array.map(active, ({ markerKey }) => markerKey),
-        );
-
-        for (const { sourceId, input, slice, markerKey } of active) {
-          const source = Array.findFirst(
-            engine.program.nodes,
-            (node) => node.kind === "source" && node.sourceId === sourceId,
-          );
-
-          if (Option.isNone(source)) throw new TypeError(`Missing compiled source ${sourceId}`);
-          const location = engine.program.locations.get(source.value.id);
-
-          if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
-          changes.push(
-            ...(yield* normalize(
-              backend,
-              namespace,
-              sourceId,
-              source.value.id,
-              input.collection,
-              dataFault(location),
-              slice.items,
-              snapshots.has(markerKey),
-            )),
-          );
-        }
-
+        const changes = yield* normalizeUnit(engine, backend, namespace, sources, batch);
         const changesOut = yield* engine.process(backend, namespace, changes, unit.params);
 
         type HandlerOutput = (typeof outputs)[string];
@@ -684,19 +645,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
 
         return definition.wakeAt?.(unit);
-      }).pipe(
-        catchMemoryEnlist,
-        Effect.catchTags({
-          SqlError: (cause) =>
-            new ProjectionFault({
-              phase: "process",
-              reason: "storage-failure",
-              message: "Cannot update circuit state",
-              cause,
-            }),
-          SchemaError: (cause) => new ViewFault({ message: cause.message }),
-          SqlEngineFault: (cause) => new ViewFault({ message: "Circuit operator failed", cause }),
-        }),
-      ),
+      }).pipe(circuitErrors),
   }) as CircuitDeclaration<C, ViewMap, OutputMap, HE, HR>;
 }
