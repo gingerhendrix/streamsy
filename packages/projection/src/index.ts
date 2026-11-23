@@ -48,6 +48,8 @@ export { InvalidBinding, NonRetryable, NotAttached, ProjectionFault } from "./fa
 
 export { Transaction } from "./transaction.ts";
 
+export { OwnerTransaction } from "./owner-transaction.ts";
+
 export * as Commit from "./commit.ts";
 
 export {

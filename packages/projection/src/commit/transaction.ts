@@ -3,9 +3,10 @@ import { SqlClient } from "effect/sql";
 import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
-import { make, type RetireRequest } from "./model.ts";
+import { make, type Commit, type RetireRequest } from "./model.ts";
 import { CheckpointStore } from "../checkpoint-store.ts";
 import { Transaction } from "../transaction.ts";
+import { OwnerTransaction } from "../owner-transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { createOutput } from "../outputs.ts";
 import { TransactionGenerationOutputs } from "../per-generation.ts";
@@ -87,6 +88,7 @@ const retireInTransaction = (tx: OwnerBoundary, request: RetireRequest) =>
 const makeTransaction = <P, Q>(
   name: string,
   context: Effect.Effect<TransactionContext<P>, never, Q>,
+  requireSharedOwner = false,
 ) =>
   withPrepare(
     make<Result, P, CheckpointStore | Q>({
@@ -105,7 +107,7 @@ const makeTransaction = <P, Q>(
           const { outputs, prepare } = detailsOf(pending);
           const hasRoutes = RoutedOutputs in pending.key;
 
-          if (hasRoutes && ownerOf(store.load) !== tx.owner)
+          if ((requireSharedOwner || hasRoutes) && ownerOf(store.load) !== tx.owner)
             return yield* new ProjectionFault({
               phase: "checkpoint",
               reason: "unsupported-composition",
@@ -255,4 +257,83 @@ export const transactionWithCleanup = (
           cleanup: request.cleanup.pipe(Effect.andThen(() => cleanup(request.key, tx.sql))),
         }),
       ),
+  });
+
+const OwnerCommitTypeId = Symbol("@streamsy/projection/OwnerCommit");
+
+/** A commit that joins the storage owner's transaction and supplies no handler services. */
+export interface OwnerCommit<in Result, out Requires> extends Commit<Result, never, Requires> {
+  readonly [OwnerCommitTypeId]: true;
+}
+
+const removeInOwnerTransaction = <R>(
+  tx: OwnerBoundary,
+  key: ProjectionKey,
+  cleanup: Effect.Effect<void, ProjectionFault, R>,
+) =>
+  tx.withTransaction(
+    Effect.gen(function* () {
+      if (RoutedOutputs in key) yield* removeWithRoutes(key, tx.owner);
+      else {
+        const store = yield* CheckpointStore;
+
+        if (ownerOf(store.load) !== tx.owner)
+          return yield* new ProjectionFault({
+            phase: "checkpoint",
+            reason: "unsupported-composition",
+            message: `The checkpoint store for ${key.id} does not share the transaction owner`,
+          });
+
+        yield* store.remove(key);
+      }
+
+      yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
+    }),
+  );
+
+/** Commit the unit and checkpoint together on a memory or SQL storage host. */
+export const ownerTransaction: OwnerCommit<Result, CheckpointStore | OwnerTransaction> =
+  Object.assign(
+    makeTransaction<never, OwnerTransaction>(
+      "ownerTransaction",
+      Effect.map(OwnerTransaction, (tx) => ({
+        owner: tx.owner,
+        withTransaction: (body) => tx.withTransaction(body),
+        provide: (body) => body,
+      })),
+      true,
+    ),
+    {
+      [OwnerCommitTypeId]: true as const,
+      remove: (key: ProjectionKey) =>
+        OwnerTransaction.use((tx) => removeInOwnerTransaction(tx, key, Effect.void)),
+    },
+  );
+
+/** Clean up binding state in the owner transaction on both forget and retire. */
+export const ownerTransactionWithCleanup = <R>(
+  cleanup: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, R>,
+): OwnerCommit<Result, CheckpointStore | OwnerTransaction | R> =>
+  inherit(ownerTransaction, {
+    ...ownerTransaction,
+    remove: (key: ProjectionKey) =>
+      OwnerTransaction.use((tx) =>
+        removeInOwnerTransaction(
+          tx,
+          key,
+          Effect.suspend(() => cleanup(key)),
+        ),
+      ),
+    retire: (request: RetireRequest) =>
+      Effect.gen(function* () {
+        const tx = yield* OwnerTransaction;
+        const services = yield* Effect.context<R>();
+
+        return yield* retireInTransaction(tx, {
+          ...request,
+          cleanup: request.cleanup.pipe(
+            Effect.andThen(() => cleanup(request.key).pipe(Effect.provideContext(services))),
+          ),
+        });
+      }),
   });
