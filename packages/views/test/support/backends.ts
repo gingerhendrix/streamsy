@@ -1,6 +1,6 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import type { Streamsy } from "@streamsy/core";
-import { CheckpointStore, StateTable, Transaction } from "@streamsy/projection";
+import { CheckpointStore, OwnerTransaction, StateTable, Transaction } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Context, Effect, Layer } from "effect";
@@ -11,7 +11,7 @@ import {
   sqlDialects,
   type SqlDialect,
 } from "../../../storage/test/dialects/support.ts";
-import { View } from "../../src/index.ts";
+import { View, ViewBackend } from "../../src/index.ts";
 import { backendFor } from "../../src/sql/backend.ts";
 
 export interface SqlFixture {
@@ -36,7 +36,12 @@ export const client = (fixture: SqlFixture) =>
     ? SqliteClient.layer({ filename: ":memory:" })
     : fixtureClient(fixture.server);
 
-const commits = Layer.mergeAll(CheckpointStore.layer, Transaction.layer);
+const commits = Layer.mergeAll(
+  CheckpointStore.layer,
+  OwnerTransaction.layer,
+  ViewBackend.layerSql,
+  Transaction.layer,
+);
 
 const sqlHost = <const Keys extends readonly Streamsy.Any[]>(group: Streamsy.Group<Keys>) =>
   commits.pipe(Layer.provideMerge(SqlStorage.layer(group, { readLimit: 200 })));

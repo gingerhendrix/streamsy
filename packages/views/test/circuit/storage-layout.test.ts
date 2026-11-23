@@ -2,13 +2,16 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { ViewBackend } from "../../src/index.ts";
 import { BunStorage } from "@streamsy/storage/bun";
 import { layoutGroup, layoutNamespace, runLayoutUnits } from "./support/layout.ts";
 
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(BunStorage.layer(layoutGroup, { client: { filename: ":memory:" } })),
-);
+const host = Layer.mergeAll(
+  CheckpointStore.layer,
+  OwnerTransaction.layer,
+  ViewBackend.layerSql,
+).pipe(Layer.provideMerge(BunStorage.layer(layoutGroup, { client: { filename: ":memory:" } })));
 
 // A changed storage pin is a layout break that requires raising the plan `version`
 // and adding a breaking release note.

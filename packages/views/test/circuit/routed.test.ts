@@ -1,12 +1,15 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { BunStorage } from "@streamsy/storage/bun";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { ViewBackend } from "../../src/index.ts";
 import { routedGroup, routedProof } from "./support/routed-proof.ts";
 
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(BunStorage.layer(routedGroup, { client: { filename: ":memory:" } })),
-);
+const host = Layer.mergeAll(
+  CheckpointStore.layer,
+  OwnerTransaction.layer,
+  ViewBackend.layerSql,
+).pipe(Layer.provideMerge(BunStorage.layer(routedGroup, { client: { filename: ":memory:" } })));
 
 it.live("routes the full-recompute oracle by workspace and date", () =>
   routedProof(false).pipe(
