@@ -58,6 +58,32 @@ const previousEnvelope = Schema.fromJsonString(
 );
 
 layer(host)((it) => {
+  it.effect("producer retirement overwrites an undecodable checkpoint and removes its output", () =>
+    Effect.gen(function* () {
+      const { params, rev, numberId } = binding("producer-undecodable");
+      const spec = numbers(Commit.producer, 1);
+      const bound = spec.at(params);
+      const store = yield* CheckpointStore;
+      const records = yield* OwnerRecords;
+      const slot = recordKey(bound);
+      yield* seed(params);
+      yield* Projection.run(bound);
+      yield* records.write(slot, '{"version":1,"record":{"future":true}}');
+      expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject({
+        reason: "invalid-record",
+      });
+
+      const result = yield* Projection.retire(spec, params, { generation: 1 });
+      expect(result).toMatchObject({
+        record: "retired",
+        streams: expect.arrayContaining([{ output: "numbers", id: numberId, result: "removed" }]),
+      });
+      expect(yield* records.read(slot)).toEqual(Option.some('{"version":1,"retired":{}}'));
+      const target = yield* Numbers;
+      expect(yield* target.head(rev).pipe(Effect.flip)).toMatchObject(missing);
+    }),
+  );
+
   it.effect("transactionWithCleanup rolls back forget and callback SQL on failure", () =>
     Effect.gen(function* () {
       const { params } = binding("forget-with-cleanup");

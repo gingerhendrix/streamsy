@@ -400,6 +400,101 @@ it.live("after forget, reopening one route leaves the other forgotten", () =>
   }).pipe(Effect.provide(withFamilies(layerSqlite(1), Source, Output))),
 );
 
+it.live("a failed unit rolls back a successful reclaim of a forgotten route", () =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const target = yield* Output;
+    const id = Output.at(at("one")).id;
+    const binding = declaration().at(params);
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    yield* Projection.forget(binding);
+    yield* target.wire.remove(id);
+
+    const failing = Projection.process({
+      ...definition,
+      process: (_batch, _unit, { outputs: { out } }) =>
+        Effect.gen(function* () {
+          yield* out.open({ date: "one" });
+          expect(yield* routes.state(binding, "out", id)).toBe("live");
+
+          return yield* Effect.fail("rollback");
+        }),
+    }).at(params);
+
+    expect(yield* Projection.run(failing).pipe(Effect.flip)).toBe("rollback");
+    expect(yield* routes.state(binding, "out", id)).toBe("forgotten");
+    expect((yield* store.load(binding)).token).toBe("0");
+    expect(yield* target.head(at("one")).pipe(Effect.flip)).toMatchObject({
+      _tag: "StreamNotFound",
+    });
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("a failing forget cleanup restores a live route and its checkpoint", () =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const id = Output.at(at("one")).id;
+
+    const failure = new ProjectionFault({
+      phase: "checkpoint",
+      reason: "storage-failure",
+      message: "Cleanup failed",
+    });
+
+    const commit = Commit.transactionWithCleanup((key) =>
+      Effect.gen(function* () {
+        expect(yield* routes.state(key, "out", id)).toBe("forgotten");
+        expect((yield* store.load(key)).token).toBe("0");
+
+        return yield* failure;
+      }),
+    );
+
+    const binding = declaration(1, commit).at(params);
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    const before = yield* store.load(binding);
+
+    expect(yield* Projection.forget(binding).pipe(Effect.flip)).toBe(failure);
+    expect(yield* routes.state(binding, "out", id)).toBe("live");
+    expect(yield* store.load(binding)).toEqual(before);
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("a forgotten route still prevents another output from claiming its stream", () =>
+  Effect.gen(function* () {
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const target = yield* Output;
+    const id = Output.at(at("one")).id;
+    const binding = declaration().at(params);
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    yield* Projection.forget(binding);
+    yield* target.wire.remove(id);
+
+    const overlap = Projection.process({
+      ...definition,
+      outputs: { ...outputs, alias: outputs.out },
+      process: (_batch, _unit, { outputs: { alias } }) =>
+        alias.open({ date: "one" }).pipe(Effect.asVoid),
+    }).at(params);
+
+    expect(yield* Projection.run(overlap).pipe(Effect.flip)).toMatchObject({
+      reason: "invalid-output",
+    });
+    expect((yield* store.load(binding)).token).toBe("0");
+    expect(yield* routes.state(binding, "out", id)).toBe("forgotten");
+    expect(yield* routes.state(binding, "alias", id)).toBe("absent");
+    expect(yield* target.head(at("one")).pipe(Effect.flip)).toMatchObject({
+      _tag: "StreamNotFound",
+    });
+  }).pipe(Effect.provide(host)),
+);
+
 it.live("forget marks routes of an undecodable or absent checkpoint for retirement", () =>
   Effect.gen(function* () {
     const spec = declaration();
