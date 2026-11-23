@@ -38,6 +38,8 @@ import {
   within,
 } from "foldkit/scene";
 import { afterEach, beforeAll, afterAll, expect, test, vi } from "vitest";
+import { Intent } from "../src/domain/intent.ts";
+import { Message } from "../src/message.ts";
 import { emptyRows, workspaceView } from "../src/domain/workspace.ts";
 import type { Model } from "../src/model.ts";
 import { workspaceMessages } from "../src/subscription.ts";
@@ -51,6 +53,7 @@ import {
   statusCounts,
   visibleIssues,
 } from "./selectors.ts";
+import { stamp } from "./support.ts";
 
 const nativeFetch = globalThis.fetch;
 
@@ -183,25 +186,43 @@ test("replays the workspace and matches the old selectors after every API write"
         .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.andThen(verify));
 
     yield* write("POST", "projects", { id: "proj_views", name: "Views" });
+    const txid = "00000000-0000-4000-8000-000000000008";
+    const intent = Intent.CreateIssue({ projectId: "proj_views", title: "Replay" });
+
+    const pending = yield* Ref.updateAndGet(
+      model,
+      (current) =>
+        update(current, Message.CompletedGenerateStamp({ intent, stamp: stamp(txid) })).model,
+    );
+
+    scene(
+      { update, view },
+      given({ ...pending, maybeSelectedProjectId: Option.some("proj_views") }),
+      check(selector(".issue-row.pending .issue-title-button")).toHaveText("Replay"),
+      check(selector(".filter-chip.selected .filter-count")).toHaveText("0"),
+    );
+
     yield* write("POST", "issues", {
-      id: "issue_views_a",
+      id: "issue_abcdef12",
       projectId: "proj_views",
       title: "Replay",
+      txid,
     });
+    yield* matchesModel(model, (current) => expect(current.pending).toHaveLength(0));
     yield* write("POST", "issues", {
       id: "issue_views_b",
       projectId: "proj_views",
       title: "Steady state",
     });
-    yield* write("PATCH", "issues/issue_views_a", { status: "done" });
+    yield* write("PATCH", "issues/issue_abcdef12", { status: "done" });
     yield* write("POST", "comments", {
       id: "comment_views_a",
-      issueId: "issue_views_a",
+      issueId: "issue_abcdef12",
       body: "First",
     });
     yield* write("POST", "comments", {
       id: "comment_views_b",
-      issueId: "issue_views_a",
+      issueId: "issue_abcdef12",
       body: "Second",
     });
   }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise));
