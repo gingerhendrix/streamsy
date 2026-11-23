@@ -115,7 +115,8 @@ export const workspaceMessages = (workspaceId: string, baseUrl: string) =>
       );
 
       // Views expose row values, while the write confirmation is in State event
-      // headers. Read those headers separately to preserve txid confirmation.
+      // headers. A terminal failure here disables pending indicators while
+      // the Views follower and the HTTP write commands keep running.
       const confirmations = workspaces.follow(params).pipe(
         Stream.filterMap((batch) => {
           const txids = Array.dedupe(
@@ -130,6 +131,8 @@ export const workspaceMessages = (workspaceId: string, baseUrl: string) =>
             ? Result.failVoid
             : Result.succeed(Message.ConfirmedWrites({ txids }));
         }),
+        Stream.catch(() => Stream.empty),
+        Stream.concat(Stream.succeed(Message.StoppedConfirmingWrites())),
       );
 
       // A failed startup HEAD can fail caughtUp without ending changes.

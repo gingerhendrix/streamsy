@@ -36,6 +36,7 @@ export const init = (flags: Flags): UpdateReturn => ({
     rows: emptyRows,
     counts: { issueCountByProject: {}, statusCounts: [] },
     pending: [],
+    canConfirmWrites: true,
     maybeSelectedProjectId: Option.none(),
     filter: "all",
     projectName: "",
@@ -80,6 +81,13 @@ export const update = (model: Model, message: Message) =>
     ConfirmedWrites: ({ txids }) => ({
       model: modifyFields(model, {
         pending: Array.filter(({ txid }) => !Array.contains(txids, txid)),
+      }),
+    }),
+
+    StoppedConfirmingWrites: () => ({
+      model: modifyFields(model, {
+        canConfirmWrites: () => false,
+        pending: () => [],
       }),
     }),
 
@@ -200,7 +208,7 @@ export const update = (model: Model, message: Message) =>
 
       return {
         model: modifyFields(model, {
-          pending: Array.append(pending),
+          pending: (writes) => (model.canConfirmWrites ? Array.append(writes, pending) : writes),
           maybeSelectedProjectId: () => maybeNewProjectId,
         }),
         commands: [SendWrite({ workspaceId: model.workspaceId, pending })],

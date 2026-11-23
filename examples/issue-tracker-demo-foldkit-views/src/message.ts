@@ -7,6 +7,7 @@ import { Rows, StatusFilter } from "./domain/workspace.ts";
 export const Message = defineMessageUnion({
   ReceivedViews: { rows: Rows, counts: Counts, caughtUp: Schema.Boolean },
   ConfirmedWrites: { txids: Schema.Array(Schema.String) },
+  StoppedConfirmingWrites: {},
   ChangedConnection: { isOnline: Schema.Boolean },
   FailedReadWorkspace: { error: Schema.String },
 

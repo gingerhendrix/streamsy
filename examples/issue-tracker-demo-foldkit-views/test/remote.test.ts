@@ -313,3 +313,77 @@ test.each([
     yield* Fiber.join(reader);
   }).pipe(Effect.scoped, Effect.runPromise),
 );
+
+test("keeps live views and writes available when only confirmation stops", () =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const refuseConfirmation = yield* Deferred.make();
+    // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- The native fetch callback waits on this promise.
+    const refuse = Effect.runPromise(Deferred.await(refuseConfirmation));
+
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, options?: RequestInit) =>
+      requestUrl(input).searchParams.get("offset") === "-1"
+        ? refuse.then(() => new Response(null, { status: 404 }))
+        : nativeFetch(input, options),
+    );
+
+    const model = yield* Ref.make(startModel("main"));
+    yield* consume("main", model).pipe(Effect.forkScoped);
+
+    yield* Effect.gen(function* () {
+      const ready = yield* matchesModel(model, (actual) => {
+        live(actual);
+        expect(actual.rows.projects["proj_streamsy"]?.name).toBe("Streamsy Demo");
+        expect(actual.counts.issueCountByProject["proj_streamsy"]).toBe(4);
+      });
+
+      const intent = Intent.CreateIssue({ projectId: "proj_streamsy", title: "Shows from Views" });
+      const txid = "00000000-0000-4000-8000-000000000009";
+      const request = Message.CompletedGenerateStamp({ intent, stamp: stamp(txid) });
+
+      const pending = yield* Ref.updateAndGet(model, (current) => update(current, request).model);
+      expect(pending.pending).toHaveLength(1);
+
+      yield* Deferred.succeed(refuseConfirmation, undefined);
+
+      const degraded = yield* matchesModel(model, (actual) => {
+        live(actual);
+        expect(actual.canConfirmWrites).toBe(false);
+        expect(actual.rows).toEqual(ready.rows);
+        expect(actual.counts).toEqual(ready.counts);
+        expect(actual.pending).toHaveLength(0);
+      });
+
+      scene(
+        { update, view },
+        given({ ...degraded, maybeSelectedProjectId: Option.some("proj_streamsy") }),
+        check(
+          text(
+            "Write confirmation stopped. Changes still sync. Reload to restore pending indicators.",
+          ),
+        ).toExist(),
+        expectAll(all.selector(".issue-row")).toHaveCount(4),
+        check(selector(".filter-chip.selected .filter-count")).toHaveText("4"),
+      );
+
+      const unstaged = update(degraded, request);
+      expect(unstaged.model.pending).toHaveLength(0);
+      expect(unstaged.commands).toHaveLength(1);
+
+      const body: IssueInput = { projectId: "proj_streamsy", title: "Shows from Views", txid };
+      yield* HttpClientRequest.post(`${origin}/api/w/main/issues`).pipe(
+        HttpClientRequest.bodyJsonUnsafe(body),
+        client.execute,
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+      );
+
+      yield* matchesModel(model, (actual) => {
+        live(actual);
+        expect(actual.canConfirmWrites).toBe(false);
+        expect(actual.counts.issueCountByProject["proj_streamsy"]).toBe(5);
+        expect(Record.values(actual.rows.issues)).toEqual(
+          expect.arrayContaining([expect.objectContaining({ title: body.title })]),
+        );
+      });
+    }).pipe(Effect.ensuring(Deferred.succeed(refuseConfirmation, undefined)));
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise));

@@ -34,6 +34,7 @@ export const Model = Schema.Struct({
   counts: Counts,
   /** Local changes that wait for their txid on the stream. */
   pending: Schema.Array(PendingWrite),
+  canConfirmWrites: Schema.Boolean,
   maybeSelectedProjectId: Schema.Option(Schema.String),
   filter: StatusFilter,
   projectName: Schema.String,

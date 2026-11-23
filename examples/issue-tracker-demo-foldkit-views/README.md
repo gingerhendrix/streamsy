@@ -24,6 +24,6 @@ Open http://localhost:1338. Vite proxies `/api` and `/streams` to the base serve
 
 The server exposes one State stream per workspace at `/streams/workspace/:workspaceId`, with project, issue, and comment collections. A Foldkit subscription opens a single circuit with `RemoteStreams` and `ViewBackend.layerMemoryHost`. It replays the stream on each page load and shows the tracker after `caughtUp`. Project and status choices select from the current outputs. A different workspace loads a fresh page and circuit.
 
-The project totals and status chips use committed view outputs. The page shows pending rows from the Foldkit Model while a separate scoped read of the same State stream waits for their txids. The write queue lives in the page, and leaving the page closes both readers.
+The project totals and status chips use committed view outputs. The page shows pending rows from the Foldkit Model while a separate scoped read of the same State stream waits for their txids. The write queue lives in the page, and leaving the page closes both readers. If the confirmation reader stops, the page shows a warning and clears pending indicators. Writes still go through the API, and the live views continue to show committed changes. Reload the page to restart confirmation.
 
 Run `bun run smoke:issue-tracker-foldkit-views` from the repository root to check replay, live writes, failure display, and cancellation against a base-server child process.
