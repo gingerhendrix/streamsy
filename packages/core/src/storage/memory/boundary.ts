@@ -1,4 +1,4 @@
-import { Array, Context, Effect, Exit, Option, Semaphore } from "effect";
+import { Array, Cause, Context, Effect, Exit, Option, Predicate, Schema, Semaphore } from "effect";
 import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { ProjectionMarks } from "../../internal/projection-marks.ts";
@@ -32,14 +32,17 @@ class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
 
-const activeDraft = (owner: Draft["owner"]) =>
+const activeDraft = (
+  owner: Draft["owner"],
+  reject = () => Effect.die(new Error("Memory boundary requires the active owner fiber")),
+) =>
   Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
     Effect.withFiber((fiber) => {
       if (
         Option.isSome(draft) &&
         (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
       )
-        return Effect.die(new Error("Memory boundary requires the active owner fiber"));
+        return reject();
 
       return Effect.succeed(draft);
     }),
@@ -48,16 +51,37 @@ const activeDraft = (owner: Draft["owner"]) =>
 export interface TransactionParticipant {
   /** Runs synchronously after the draft becomes committed, before wakes. Must not throw. */
   readonly onCommit: () => void;
-  /** Runs synchronously when the outer transaction rolls back. Must not throw. */
+  /**
+   * Runs synchronously when the outer transaction rolls back. Must not throw.
+   * A throw adds a defect to the transaction's cause. Effect's typed recovery
+   * gives defects precedence even when the exit still contains a typed failure.
+   */
   readonly onRollback: () => void;
 }
+
+const MemoryEnlistDefectType = Symbol.for("@streamsy/core/internal/MemoryEnlistDefect");
+
+class MemoryEnlistDefect extends Schema.TaggedError<MemoryEnlistDefect>()("MemoryEnlistDefect", {
+  message: Schema.String,
+}) {
+  readonly [MemoryEnlistDefectType] = true;
+}
+
+/** A participant could not join a memory transaction on its owner fiber. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This predicate narrows a runtime defect.
+export const isMemoryEnlistDefect = (value: unknown): value is MemoryEnlistDefect =>
+  Predicate.hasProperty(value, MemoryEnlistDefectType) && value[MemoryEnlistDefectType] === true;
+
+const rejectEnlist = () =>
+  Effect.die(
+    new MemoryEnlistDefect({ message: "Enlisting requires the active memory owner fiber" }),
+  );
 
 /** Join the memory owner transaction open on this fiber. */
 // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
 export const enlist = (owner: object, participant: TransactionParticipant): Effect.Effect<void> =>
-  Effect.flatMap(activeDraft(owner), (draft) => {
-    if (Option.isNone(draft))
-      return Effect.die(new Error("Enlisting requires an active memory owner transaction"));
+  Effect.flatMap(activeDraft(owner, rejectEnlist), (draft) => {
+    if (Option.isNone(draft)) return rejectEnlist();
 
     draft.value.participants.add(participant);
 
@@ -121,14 +145,20 @@ export const makeBoundary = (
             );
 
             return Effect.uninterruptibleMask((restore) =>
-              restore(withHooks).pipe(
-                Effect.onExit((exit) => {
+              Effect.exit(restore(withHooks)).pipe(
+                Effect.flatMap((exit) => {
                   if (Exit.isFailure(exit))
                     return Effect.sync(() =>
                       notifyParticipants(
                         Array.reverse(Array.fromIterable(draft.participants)),
                         "onRollback",
                       ),
+                    ).pipe(
+                      // Keep the body's Fail reasons alongside the callback defect in the exit.
+                      Effect.catchCause((rollback) =>
+                        Effect.failCause(Cause.combine(exit.cause, rollback)),
+                      ),
+                      Effect.andThen(exit),
                     );
 
                   return Effect.sync(() => {
@@ -141,6 +171,7 @@ export const makeBoundary = (
                     Effect.ensuring(
                       Effect.suspend(() => (draft.changed ? publish(draft.ids) : Effect.void)),
                     ),
+                    Effect.as(exit.value),
                   );
                 }),
                 Effect.ensuring(
