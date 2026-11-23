@@ -304,11 +304,10 @@ const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => 
 type RowLock = "share" | "update";
 
 /**
- * A mutation reads with a row lock on MySQL. At REPEATABLE READ a plain read uses
- * the snapshot of the transaction's first plain read, which app SQL in a fused
- * commit may have fixed before the stream lock. A locking read sees the latest
- * committed row. SQLite has one writer, and Postgres at READ COMMITTED reads the
- * latest commit in each statement, so both keep plain reads.
+ * A mutation reads with a row lock on MySQL to see the latest committed row,
+ * including when a caller has selected REPEATABLE READ. SQLite has one writer,
+ * and Postgres at READ COMMITTED takes a fresh snapshot for each statement,
+ * so both keep plain reads.
  */
 const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
   sql.onDialectOrElse({
@@ -319,10 +318,10 @@ const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
 
 /**
  * The lock for a read the protocol plans a mutation from. Inside an open
- * transaction on this client, such as a fused commit, it is `update`: on MySQL a
- * plain read would return the snapshot fixed by the transaction's first read, so
- * every replan would see the same stale tail. The row then stays locked until the
- * mutation. Outside a transaction the read stays plain and takes no lock.
+ * transaction on this client, such as a fused commit, it is `update` on MySQL.
+ * The lock keeps the tail stable from planning through commit and reads the
+ * latest row even at a caller-selected REPEATABLE READ. Outside a transaction
+ * the read stays plain and takes no lock.
  */
 const planningLock = (sql: SqlClient.SqlClient) =>
   Effect.map(Effect.serviceOption(sql.transactionService), (open) =>

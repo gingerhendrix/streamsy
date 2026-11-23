@@ -494,7 +494,7 @@ for (const dialect of dialects) {
                 inputs: { input },
                 process: (batch) =>
                   Effect.gen(function* () {
-                    // On MySQL this plain read fixes the transaction's snapshot.
+                    // Read before the other process appends to the output.
                     yield* count(sql);
 
                     if (!interleaved) {

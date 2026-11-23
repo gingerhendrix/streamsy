@@ -14,7 +14,7 @@ import {
   Schema,
 } from "effect";
 import { SqlClient, Statement } from "effect/sql";
-import { Streamsy } from "@streamsy/core";
+import { CommitBoundary, Streamsy } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { SqlStorage } from "@streamsy/storage";
@@ -110,8 +110,55 @@ const projectionHost = (database: string) =>
     Layer.provideMerge(dialectClient(dialect, database, { maxConnections: 1 })),
   );
 
+const readOwnerKeys = (client: SqlClient.SqlClient) =>
+  client<{ readonly owner_key: string }>`SELECT owner_key FROM streamsy_owner_records`;
+
 export const registerMysqlLifecycle = () => {
   describe.skipIf(url === undefined)("mysql projection lifecycle", () => {
+    test("forgets a routed binding whose first checkpoint committed after an earlier read", async () => {
+      if (url === undefined) return;
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fresh = yield* freshDatabase(dialect, url);
+          const writer = yield* Layer.build(projectionHost(fresh));
+          const reader = yield* Layer.build(projectionHost(fresh));
+          const sql = Context.get(reader, SqlClient.SqlClient);
+          const boundary = Context.get(reader, CommitBoundary);
+          const store = Context.get(writer, CheckpointStore);
+          const source = Context.get(writer, Source);
+          const binding = routed(1).at({ tenant: "late-checkpoint" });
+          const writerSql = Context.get(writer, SqlClient.SqlClient);
+
+          yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`;
+          yield* source.create({});
+          yield* source.append({}, [1]);
+          yield* boundary.withTransaction(
+            Effect.gen(function* () {
+              expect(yield* readOwnerKeys(sql)).toEqual([]);
+              expect(
+                (yield* Projection.run(binding).pipe(Effect.provideContext(writer))).units,
+              ).toBe(1);
+              const written = yield* readOwnerKeys(writerSql);
+              expect(Array.map(written, ({ owner_key }) => owner_key)).toEqual(
+                expect.arrayContaining([expect.stringContaining("streamsy.projection.routed.v1")]),
+              );
+              expect((yield* store.load(binding)).record._tag).toBe("Some");
+              yield* Projection.forget(binding).pipe(Effect.provideContext(reader));
+            }),
+          );
+
+          expect({
+            checkpoint: (yield* store.load(binding)).record,
+            records: yield* readOwnerKeys(sql),
+          }).toEqual({ checkpoint: Option.none(), records: [] });
+          expect(
+            (yield* Context.get(writer, Output).collect({ route: "one", generation: 1 })).items,
+          ).toEqual([1]);
+        }).pipe(Effect.scoped),
+      );
+    }, 15_000);
+
     test("retires and forgets routed bindings with long params", async () => {
       if (url === undefined) return;
 

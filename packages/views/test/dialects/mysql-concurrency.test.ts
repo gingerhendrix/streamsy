@@ -1,12 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
-import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { CommitBoundary, DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Projection, ProjectionFault } from "@streamsy/projection";
 import { Array, Context, Deferred, Effect, Fiber, Layer, Result, Schedule, Schema } from "effect";
 import { SqlClient, Statement } from "effect/sql";
 import { sqlDialects } from "../../../storage/test/dialects/support.ts";
 import { View } from "../../src/index.ts";
-import { circuit, group, Order, orders, Results, Shop } from "../circuit/support/shop.ts";
+import { keyExpression } from "../../src/expression.ts";
+import { compilePlan } from "../../src/relation.ts";
+import { canonicalJson } from "../../src/runtime/key.ts";
+import {
+  circuit,
+  customerTotals,
+  group,
+  Order,
+  orders,
+  Results,
+  Shop,
+  views,
+} from "../circuit/support/shop.ts";
 import { fixtureDatabase, hostAt } from "../support/backends.ts";
+import { fullRecompute } from "../support/full-recompute.ts";
 
 const mysql = sqlDialects.mysql;
 
@@ -39,13 +52,53 @@ const routedGroup = Streamsy.group(Shop, Routed);
 
 const raceParams = { shop: "race" };
 
+const sideParams = { shop: "side" };
+
+const sideCircuit = View.circuit({
+  id: "mysql-side-circuit",
+  params: Shop.paramCodecs,
+  output: Projection.perGeneration(Results, "generation"),
+  views,
+}).at(sideParams);
+
 const order = (orderId: string, total: number) => ({ orderId, customerId: "c", total });
 
-const append = (row: ReturnType<typeof order>) =>
+const totalsPlan = compilePlan("customerTotals", {
+  kind: "key",
+  input: customerTotals.expression,
+  key: keyExpression(Results.collections.customerTotals.key),
+});
+
+const checkTotals = (params: typeof raceParams, rows: ReadonlyArray<ReturnType<typeof order>>) =>
+  Results.use((output) =>
+    Effect.gen(function* () {
+      const { items } = yield* output.collect({ ...params, generation: 1 });
+      const actual = DurableState.materialize(DurableState.materialized(Results), items);
+
+      const expected = fullRecompute(
+        {
+          plan: totalsPlan,
+          sources: {
+            [canonicalJson([Shop.key, "order"])]: Array.map(rows, (row) => ({
+              key: row.orderId,
+              row,
+            })),
+          },
+        },
+        true,
+      );
+
+      expect([...actual.rows.customerTotals.values()]).toEqual(
+        Array.map(expected.rows, ({ row }) => row),
+      );
+    }),
+  );
+
+const append = (row: ReturnType<typeof order>, params = raceParams) =>
   Shop.use((input) =>
     input.append(
-      raceParams,
-      DurableState.changes(Shop.at(raceParams), {}, [DurableState.upsert("order", row)]),
+      params,
+      DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", row)]),
     ),
   );
 
@@ -190,6 +243,88 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
       }),
     15_000,
   );
+
+  for (const prior of ["an earlier read", "no earlier read", "another circuit"] as const) {
+    it.live(
+      `commits oracle results in a host transaction with ${prior}`,
+      () =>
+        Effect.gen(function* () {
+          const [writer, reader] = yield* twoHosts(group, 1);
+          const sql = Context.get(reader, SqlClient.SqlClient);
+          const input = Context.get(writer, Shop);
+          const boundary = Context.get(reader, CommitBoundary);
+          const binding = circuit().at(raceParams);
+          const run = Projection.run(binding, { limit: 1 });
+          const first = order("first", 1);
+          const second = order("second", 2);
+          const third = order("third", 3);
+
+          yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`;
+          yield* input.create(raceParams);
+          yield* append(first).pipe(Effect.provide(writer));
+          yield* run.pipe(Effect.provide(writer));
+          yield* append(second).pipe(Effect.provide(writer));
+          yield* append(third).pipe(Effect.provide(writer));
+
+          if (prior === "another circuit") {
+            yield* input.create(sideParams);
+            yield* append(first, sideParams).pipe(Effect.provide(writer));
+          }
+
+          const aboutToReadCheckpoint = yield* Deferred.make<void>();
+          const writerCommitted = yield* Deferred.make<void>();
+
+          const pending = yield* boundary
+            .withTransaction(
+              Effect.gen(function* () {
+                if (prior === "an earlier read")
+                  yield* sql`SELECT value FROM streamsy_view_accumulators`;
+
+                if (prior === "another circuit")
+                  expect((yield* Projection.run(sideCircuit, { limit: 1 })).units).toBe(1);
+
+                let paused = false;
+
+                return yield* run.pipe(
+                  Effect.provideService(Statement.CurrentTransformer, (statement) => {
+                    const [query] = statement.compile();
+
+                    if (
+                      paused ||
+                      !query.startsWith("SELECT owner_value FROM streamsy_owner_records")
+                    )
+                      return Effect.succeed(statement);
+
+                    // Without a host read, let Projection's first checkpoint read establish the snapshot.
+                    if (prior === "no earlier read" && !query.endsWith(" FOR UPDATE"))
+                      return Effect.succeed(statement);
+
+                    paused = true;
+
+                    return Deferred.succeed(aboutToReadCheckpoint, undefined).pipe(
+                      Effect.andThen(Deferred.await(writerCommitted)),
+                      Effect.as(statement),
+                    );
+                  }),
+                );
+              }).pipe(Effect.provide(reader)),
+            )
+            .pipe(Effect.forkScoped);
+
+          yield* Deferred.await(aboutToReadCheckpoint);
+          expect((yield* run.pipe(Effect.provide(writer))).units).toBe(1);
+          yield* Deferred.succeed(writerCommitted, undefined);
+          expect((yield* Fiber.join(pending)).units).toBe(1);
+          expect((yield* run.pipe(Effect.provide(writer))).units).toBe(0);
+
+          yield* checkTotals(raceParams, [first, second, third]).pipe(Effect.provide(writer));
+
+          if (prior === "another circuit")
+            yield* checkTotals(sideParams, [first]).pipe(Effect.provide(writer));
+        }),
+      15_000,
+    );
+  }
 
   it.live(
     "converges across new and populated snapshots and neighbouring lifecycle operations",

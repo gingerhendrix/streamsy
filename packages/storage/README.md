@@ -90,10 +90,9 @@ shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation
 inside the transaction, not when the transaction starts. Your SQL before that
-mutation runs before the lock. Storage's reads inside a mutation are safe on
-every dialect: on MySQL they are locking reads (`FOR UPDATE` or `FOR SHARE`),
-so they see the latest committed rows even when your SQL fixed the
-transaction's snapshot first. A stale plan is rejected, never written.
+mutation runs before the lock. On MySQL, storage uses locking reads
+(`FOR UPDATE` or `FOR SHARE`) inside a mutation to see the latest committed
+rows even under a caller-selected isolation level. Storage rejects a stale plan.
 
 The protocol plans an append from `storage.record` and `storage.producer`.
 Inside a transaction on MySQL, these reads are `FOR UPDATE` too, so each replan
@@ -101,11 +100,12 @@ sees the latest tail and the stream row stays locked until your transaction
 ends. Other writers to that stream wait for your commit. Outside a transaction
 they are plain reads and take no lock.
 
-Your reads of your own tables are your job. On Postgres each statement reads
-the latest committed rows. On MySQL at the default REPEATABLE READ, a plain
-read uses the snapshot of the transaction's first plain read, which can be
-older than the stream lock. If a decision depends on a row another writer can
-change, read it with `FOR UPDATE` or `FOR SHARE` on MySQL.
+On MySQL the boundary defaults to `READ COMMITTED` for the transaction it
+opens, leaving the pooled session's isolation setting as it is. At
+`READ COMMITTED`, also the Postgres default, each plain read takes a fresh
+snapshot of committed rows. If a decision depends on keeping a row stable
+until commit, lock it with `FOR UPDATE` or `FOR SHARE`. A begin statement
+supplied through Effect's `SqlClient.BeginTransaction` takes precedence.
 
 For a projection on that same connection:
 

@@ -211,7 +211,7 @@ for (const dialect of dialects) {
               const outcome = yield* left.boundary
                 .withTransaction(
                   Effect.gen(function* () {
-                    // On MySQL this plain read fixes the transaction's snapshot.
+                    // Read before the other pool advances the stream tail.
                     yield* left.sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                     // Another process appends after that read.
                     yield* right.writer.append(id, { data: text("other"), contentType });

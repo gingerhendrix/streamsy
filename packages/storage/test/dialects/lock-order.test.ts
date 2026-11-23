@@ -1,10 +1,8 @@
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 /**
- * The row lock must be the first statement of every mutation transaction. On
- * MySQL at REPEATABLE READ, a plain read before it fixes a stale snapshot, so
- * storage reads after the lock are locking reads there. A recording tracer
- * captures each SQL statement with its transaction, so the check works on any
- * server dialect. Add a dialect to `dialects` to run it there.
+ * A standalone mutation locks its stream rows before reading or writing them.
+ * A host transaction can run app SQL first. A recording tracer groups statements
+ * by transaction, so the check works on any server dialect in `dialects`.
  */
 import { describe, expect, test } from "vitest";
 import { Array, Context, Effect, Layer, Option, Tracer } from "effect";
@@ -312,7 +310,7 @@ for (const dialect of dialects) {
 
               const outcomes = yield* boundary.withTransaction(
                 Effect.gen(function* () {
-                  // On MySQL this plain read fixes the transaction's snapshot.
+                  // Read before the other process changes the stream and its dependents.
                   yield* sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                   // Another process appends and removes the only child after that read.
                   yield* other.mutate(append(ZERO_OFFSET, 1));
