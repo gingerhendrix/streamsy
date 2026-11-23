@@ -18,6 +18,7 @@ import {
   ProjectionMarks,
   compileSegments,
   memoryProjectionMarks,
+  ownerOf,
   type ProjectionMarksApi,
 } from "@streamsy/core/internal";
 import type { StreamRoute } from "@streamsy/core/protocol";
@@ -339,6 +340,20 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
 
   return Effect.gen(function* () {
     const storage = yield* Storage;
+    const owner = ownerOf(storage);
+    const limitKey = Symbol.for("@streamsy/storage/MaxProjectionIdLength");
+    const maxIdLength = limitKey in owner ? owner[limitKey] : undefined;
+
+    // An invalid declaration fails at acquisition, like other attach configuration errors.
+    if (typeof maxIdLength === "number" && Array.fromIterable(declaration.id).length > maxIdLength)
+      return yield* Effect.die(
+        new StorageFault({
+          operation: "projection.attach",
+          message: `MySQL projection id must be at most ${maxIdLength} characters`,
+          retryable: false,
+        }),
+      );
+
     const registry = yield* Effect.serviceOption(Registry);
     const publish = Option.isSome(registry) ? eventPublisher(registry.value) : undefined;
 

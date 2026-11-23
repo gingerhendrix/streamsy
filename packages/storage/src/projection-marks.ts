@@ -3,9 +3,11 @@ import type { SqlClient, SqlError } from "effect/sql";
 import { StorageFault } from "@streamsy/core";
 import {
   ProjectionMarks,
+  fitKey,
   type ProjectionMarksApi,
   type PendingMark,
 } from "@streamsy/core/internal";
+import { MYSQL_PROJECTION_PARAMS_LENGTH } from "./schema.ts";
 
 const TABLE = "streamsy_projection_pending";
 
@@ -64,30 +66,39 @@ const pendingMark = (row: MarkRow): PendingMark => ({
  */
 export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
   const table = sql(TABLE);
+  const mysql = sql.onDialectOrElse({ mysql: () => true, orElse: () => false });
+  const readParams = sql.literal(mysql ? "COALESCE(full_params, params) AS params" : "params");
+  const storedParams = (params: string) =>
+    mysql ? fitKey(params, MYSQL_PROJECTION_PARAMS_LENGTH) : Effect.succeed(params);
+  const writeParams = (params: string) =>
+    mysql
+      ? Effect.map(storedParams(params), (fitted) => ({ params: fitted, full_params: params }))
+      : Effect.succeed({ params });
 
   const mark = (projection: string, params: ReadonlyArray<string>) =>
     Effect.forEach(
       Array.chunksOf(params, MARK_CHUNK),
-      (chunk) => {
+      Effect.fnUntraced(function* (chunk) {
+        const values = yield* Effect.forEach(chunk, writeParams);
         const rows = sql.insert(
-          Array.map(chunk, (value) => ({
+          Array.map(values, (params) => ({
             projection,
-            params: value,
+            ...params,
             seq: 1,
             attempts: 0,
             due_at: 0,
           })),
         );
 
-        return sql.onDialectOrElse({
+        yield* sql.onDialectOrElse({
           mysql: () => sql`INSERT INTO ${table} ${rows} ON DUPLICATE KEY UPDATE seq = seq + 1,
- due_at = CASE WHEN wake_at IS NOT NULL THEN 0 ELSE due_at END, wake_at = NULL`,
+ full_params = VALUES(full_params), due_at = CASE WHEN wake_at IS NOT NULL THEN 0 ELSE due_at END, wake_at = NULL`,
           orElse: () =>
             sql`INSERT INTO ${table} ${rows}
  ON CONFLICT (projection, params) DO UPDATE SET seq = ${table}.seq + 1,
  due_at = CASE WHEN ${table}.wake_at IS NOT NULL THEN 0 ELSE ${table}.due_at END, wake_at = NULL`,
         });
-      },
+      }),
       { discard: true },
     );
 
@@ -136,7 +147,7 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
     );
 
   const due = (projection: string, now: number, limit: number) =>
-    sql<MarkRow>`SELECT params, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
+    sql<MarkRow>`SELECT ${readParams}, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
  WHERE projection = ${projection} AND stopped = 0 AND due_at <= ${now}
  ORDER BY due_at, params LIMIT ${limit}`.pipe(
       Effect.map(Array.map(pendingMark)),
@@ -146,9 +157,12 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
   const read = (projection: string, params: ReadonlyArray<string>) =>
     Effect.forEach(
       Array.chunksOf(params, READ_CHUNK),
-      (chunk) =>
-        sql<MarkRow>`SELECT params, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
- WHERE projection = ${projection} AND ${sql.in("params", chunk)}`,
+      Effect.fnUntraced(function* (chunk) {
+        const keys = yield* Effect.forEach(chunk, storedParams);
+
+        return yield* sql<MarkRow>`SELECT ${readParams}, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
+ WHERE projection = ${projection} AND ${sql.in("params", keys)}`;
+      }),
     ).pipe(
       Effect.map(
         (chunks) => new Map(Array.map(chunks.flat(), (row) => [row.params, pendingMark(row)])),
@@ -160,10 +174,11 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
     sql
       .withTransaction(
         Effect.gen(function* () {
-          yield* sql`DELETE FROM ${table} WHERE projection = ${projection} AND params = ${params} AND seq = ${seq}`;
+          const key = yield* storedParams(params);
+          yield* sql`DELETE FROM ${table} WHERE projection = ${projection} AND params = ${key} AND seq = ${seq}`;
           yield* sql`UPDATE ${table} SET attempts = 0, due_at = 0, wake_at = NULL, stopped = 0,
  failed_at = NULL, failure_reason = NULL, failure_message = NULL
- WHERE projection = ${projection} AND params = ${params} AND seq <> ${seq}`;
+ WHERE projection = ${projection} AND params = ${key} AND seq <> ${seq}`;
         }),
       )
       .pipe(Effect.mapError(fault("clear")));
@@ -174,7 +189,7 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
         Effect.gen(function* () {
           const row = sql.insert({
             projection,
-            params,
+            ...(yield* writeParams(params)),
             seq: 1,
             attempts: 0,
             due_at: wakeAt,
@@ -185,6 +200,7 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
           // MySQL evaluates assignments left to right; neither deadline changes seq.
           yield* sql.onDialectOrElse({
             mysql: () => sql`INSERT INTO ${table} ${row} ON DUPLICATE KEY UPDATE
+ full_params = VALUES(full_params),
  due_at = CASE WHEN seq = ${seq} THEN ${wakeAt} ELSE 0 END,
  wake_at = CASE WHEN seq = ${seq} THEN ${wakeAt} ELSE NULL END,
  attempts = 0, stopped = 0, failed_at = NULL, failure_reason = NULL, failure_message = NULL`,
@@ -199,19 +215,22 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       .pipe(Effect.mapError(fault("sleep")));
 
   const remove = (projection: string, params: string) =>
-    sql`DELETE FROM ${table} WHERE projection = ${projection} AND params = ${params}`.pipe(
+    storedParams(params).pipe(
+      Effect.flatMap(
+        (key) => sql`DELETE FROM ${table} WHERE projection = ${projection} AND params = ${key}`,
+      ),
       Effect.asVoid,
       Effect.mapError(fault("remove")),
     );
 
-  const fail = (
+  const fail = Effect.fnUntraced(function* (
     projection: string,
     params: string,
     options: Parameters<ProjectionMarksApi["fail"]>[2],
-  ) => {
+  ) {
     const row = sql.insert({
       projection,
-      params,
+      ...(yield* writeParams(params)),
       seq: 1,
       attempts: options.attempts,
       due_at: Option.getOrElse(options.dueAt, () => 0),
@@ -222,11 +241,11 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       failure_message: options.failure.message.slice(0, 1_000),
     });
 
-    return sql
+    yield* sql
       .onDialectOrElse({
         mysql: () =>
           sql`INSERT INTO ${table} ${row}
- ON DUPLICATE KEY UPDATE attempts = VALUES(attempts), due_at = VALUES(due_at), wake_at = NULL,
+ ON DUPLICATE KEY UPDATE full_params = VALUES(full_params), attempts = VALUES(attempts), due_at = VALUES(due_at), wake_at = NULL,
  stopped = VALUES(stopped), failed_at = VALUES(failed_at),
  failure_reason = VALUES(failure_reason), failure_message = VALUES(failure_message)`,
         orElse: () =>
@@ -236,10 +255,10 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
  failure_reason = excluded.failure_reason, failure_message = excluded.failure_message`,
       })
       .pipe(Effect.asVoid, Effect.mapError(fault("fail")));
-  };
+  });
 
   const failed = (projection: string, limit: number) =>
-    sql<MarkRow>`SELECT params, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
+    sql<MarkRow>`SELECT ${readParams}, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
  WHERE projection = ${projection} AND attempts > 0
  ORDER BY stopped DESC, due_at, params LIMIT ${limit}`.pipe(
       Effect.map(Array.map(pendingMark)),
@@ -261,14 +280,15 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       .pipe(Effect.mapError(fault("resume")));
 
   const retry = (projection: string, params?: string) => {
-    const selected = sql`projection = ${projection} AND (stopped <> 0 OR (attempts > 0 AND due_at <> 0))
-      ${params === undefined ? sql`` : sql`AND params = ${params}`}`;
-
     // Count and update in one transaction on all dialects, including MySQL,
     // which has no UPDATE RETURNING. Neither attempts nor seq is reset.
     return sql
       .withTransaction(
         Effect.gen(function* () {
+          const key = params === undefined ? undefined : yield* storedParams(params);
+          const selected = sql`projection = ${projection} AND (stopped <> 0 OR (attempts > 0 AND due_at <> 0))
+            ${key === undefined ? sql`` : sql`AND params = ${key}`}`;
+
           const rows = yield* sql<{ readonly count: SqlNumber }>`SELECT COUNT(*) AS count
           FROM ${table} WHERE ${selected}`;
 
