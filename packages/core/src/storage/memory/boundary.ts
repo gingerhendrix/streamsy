@@ -32,6 +32,19 @@ class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
 
+const activeDraft = (owner: Draft["owner"]) =>
+  Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
+    Effect.withFiber((fiber) => {
+      if (
+        Option.isSome(draft) &&
+        (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
+      )
+        return Effect.die(new Error("Memory boundary requires the active owner fiber"));
+
+      return Effect.succeed(draft);
+    }),
+  );
+
 export interface TransactionParticipant {
   /** Runs synchronously after the draft becomes committed, before wakes. Must not throw. */
   readonly onCommit: () => void;
@@ -40,22 +53,16 @@ export interface TransactionParticipant {
 }
 
 /** Join the memory owner transaction open on this fiber. */
+// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
 export const enlist = (owner: object, participant: TransactionParticipant): Effect.Effect<void> =>
-  Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
-    Effect.withFiber((fiber) => {
-      if (
-        Option.isNone(draft) ||
-        draft.value.owner !== owner ||
-        !draft.value.active ||
-        draft.value.fiberId !== fiber.id
-      )
-        return Effect.die(new Error("Enlisting requires the active memory owner fiber"));
+  Effect.flatMap(activeDraft(owner), (draft) => {
+    if (Option.isNone(draft))
+      return Effect.die(new Error("Enlisting requires an active memory owner transaction"));
 
-      draft.value.participants.add(participant);
+    draft.value.participants.add(participant);
 
-      return Effect.void;
-    }),
-  );
+    return Effect.void;
+  });
 
 const notifyParticipants = (
   participants: Iterable<TransactionParticipant>,
@@ -86,17 +93,7 @@ export const makeBoundary = (
     let committedMarks: Marks.MarkTable = new Map();
     const hooks = commitHookRegistry();
 
-    const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
-      Effect.withFiber((fiber) => {
-        if (
-          Option.isSome(draft) &&
-          (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
-        )
-          return Effect.die(new Error("Memory boundary requires the active owner fiber"));
-
-        return Effect.succeed(draft);
-      }),
-    );
+    const current = activeDraft(owner);
 
     const withTransaction: WithTransaction = (body) =>
       Effect.flatMap(current, (ambient) => {
@@ -129,7 +126,7 @@ export const makeBoundary = (
                   if (Exit.isFailure(exit))
                     return Effect.sync(() =>
                       notifyParticipants(
-                        Array.fromIterable(draft.participants).reverse(),
+                        Array.reverse(Array.fromIterable(draft.participants)),
                         "onRollback",
                       ),
                     );
