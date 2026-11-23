@@ -239,7 +239,14 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
 
 const retryable = (fault: ProjectionFault) => fault.retryable;
 
-/** Run views in a scoped follower and read committed heap snapshots. */
+/**
+ * Run views in a scoped follower and read committed heap snapshots.
+ *
+ * Close the reader's scope outside a caller-owned owner transaction. Closing
+ * inside one stops the follower, but rolling that transaction back retains the
+ * checkpoint, heap state and reservation. The same binding cannot be reopened
+ * on that owner. Build a fresh memory host to replay it.
+ */
 export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
   definition: LiveDefinition<C, V>,
 ) {
