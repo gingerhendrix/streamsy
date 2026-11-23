@@ -893,7 +893,9 @@ test("rejects unsupported routed declarations at runtime", () => {
 
   const producer = { ...definition, commit: Commit.producer, process };
   // @ts-expect-error A producer does not supply the owner transaction.
-  expect(() => Projection.process(producer)).toThrow(/require Commit.transaction/);
+  expect(() => Projection.process(producer)).toThrow(
+    "Routed outputs require Commit.transaction or Commit.ownerTransaction",
+  );
 
   const emitter = { ...definition, emit: () => ({}) };
   // @ts-expect-error Routed output requires a process handler.
