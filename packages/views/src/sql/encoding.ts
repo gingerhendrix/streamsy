@@ -14,7 +14,11 @@ export function scalarKey(value: JsonValue): string {
       for (let i = 0; i < 8; i++) bytes[i] = 255 - (bytes[i] ?? 0);
     } else bytes[0] = (bytes[0] ?? 0) ^ 128;
 
-    return `1${bytes.toHex()}`;
+    let result = "1";
+
+    for (const byte of bytes) result += byte.toString(16).padStart(2, "0");
+
+    return result;
   }
 
   if (typeof value === "string") {
