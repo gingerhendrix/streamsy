@@ -491,6 +491,14 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     process: (batch, unit, { outputs }) =>
       Effect.gen(function* () {
         const backend = yield* backendFor(yield* SqlClient.SqlClient);
+
+        if (backend.validateSource !== undefined)
+          for (const source of sources.keys()) {
+            const failure = backend.validateSource(source);
+
+            if (failure !== undefined) return yield* failure;
+          }
+
         // Unit params are decoded. Re-encode through the declaration to obtain the
         // exact checkpoint identity, including transformed parameter codecs.
         const boundParams: Record<string, string> = {};
