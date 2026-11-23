@@ -7,7 +7,7 @@ import { encodeRowKey } from "../../src/runtime/key.ts";
 import { dataFault } from "../../src/sql/data-fault.ts";
 import { makeEngine, migrate } from "../../src/sql/engine.ts";
 import { normalize } from "../../src/sql/normalize.ts";
-import { storeFor, type Store } from "../../src/sql/store.ts";
+import { storeFor, type Store } from "../../src/sql/sqlite.ts";
 import { plan, source } from "./fixtures.ts";
 
 const fault = dataFault({ view: "rows", node: "r0" });

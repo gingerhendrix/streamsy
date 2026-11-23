@@ -11,7 +11,7 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import { PlanChanged, View } from "../../src/index.ts";
-import { storeFor } from "../../src/sql/store.ts";
+import { storeFor } from "../../src/sql/sqlite.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";

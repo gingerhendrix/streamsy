@@ -5,7 +5,7 @@ import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
 import { checkData, dataFault, type DataFault } from "./data-fault.ts";
 import { orderKey } from "./encoding.ts";
 import type { Arrangement, Program } from "./planner.ts";
-import type { Entry, IndexEntry, Store } from "./store.ts";
+import type { Entry, IndexEntry, Store } from "./sqlite.ts";
 
 export interface Delta {
   readonly key: RowKey;

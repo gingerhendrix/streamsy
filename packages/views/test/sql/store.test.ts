@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
 import { SqlClient } from "effect/sql";
-import { storeFor, migrate } from "../../src/sql/store.ts";
+import { storeFor, migrate } from "../../src/sql/sqlite.ts";
 import { encodeRowKey } from "../../src/runtime/key.ts";
 
 it.live(

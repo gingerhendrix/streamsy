@@ -3,7 +3,7 @@ import { StreamAddress } from "@streamsy/core";
 import { encodeRowKey } from "../runtime/key.ts";
 import type { DataFault } from "./data-fault.ts";
 import type { StateChange } from "./engine.ts";
-import type { Store } from "./store.ts";
+import type { Store } from "./sqlite.ts";
 
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening -- Keep unvalidated State values intact for the JSON decoder. */
 function omitUndefinedMembers(value: unknown): unknown {

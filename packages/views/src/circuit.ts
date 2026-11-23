@@ -31,7 +31,7 @@ import {
   migrate as migrateEngine,
   migrateCircuits,
   storeFor,
-} from "./sql/store.ts";
+} from "./sql/sqlite.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";

@@ -4,7 +4,7 @@ import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import { checkData, type DataFault } from "./data-fault.ts";
 import { difference, type Deltas } from "./runtime.ts";
-import type { Entry, Store } from "./store.ts";
+import type { Entry, Store } from "./sqlite.ts";
 
 interface OwnedEntry extends Entry {
   readonly owner: string;

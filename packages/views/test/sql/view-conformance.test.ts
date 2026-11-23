@@ -19,7 +19,7 @@ import { SqlClient } from "effect/sql";
 import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
 import { normalize } from "../../src/sql/normalize.ts";
 import { dataFault } from "../../src/sql/data-fault.ts";
-import { storeFor } from "../../src/sql/store.ts";
+import { storeFor } from "../../src/sql/sqlite.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";

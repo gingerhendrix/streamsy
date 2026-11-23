@@ -8,11 +8,11 @@ import { accepts, aggregate, closure, concat, join, linear, top } from "./operat
 import { delta, runtime, type Delta, type Deltas } from "./runtime.ts";
 import { checkData, dataFault, ViewDataFault } from "./data-fault.ts";
 import { rekey } from "./key-ownership.ts";
-import { storeFor, type Store } from "./store.ts";
+import { storeFor, type Store } from "./sqlite.ts";
 
 export { ViewDataFault } from "./data-fault.ts";
 
-export { migrate } from "./store.ts";
+export { migrate } from "./sqlite.ts";
 
 export type StateChange =
   | {
