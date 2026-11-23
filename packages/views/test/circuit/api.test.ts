@@ -174,6 +174,37 @@ it("rejects a legacy circuit version at declaration", () => {
   expect(declare(undefined).generation).toBe(1);
 });
 
+it("rejects legacy versions in multi-output circuit declarations", () => {
+  const result = buildResult("label", 1);
+
+  const declare = (version: number | undefined) => {
+    const legacy = { version };
+
+    return View.circuit({
+      ...legacy,
+      id: definition.id,
+      params: definition.params,
+      outputs: {
+        result: definition.output,
+        mirror: Projection.perGeneration(Mirror, "generation"),
+      },
+      views: ({ minimum }) => ({ result: { row: result(minimum) }, mirror: { row: items } }),
+    });
+  };
+
+  expect(() => declare(1)).toThrow(
+    new RangeError(
+      "Projection api-circuit: version was removed. Remove version: 1 from the declaration.",
+    ),
+  );
+  expect(() => declare(3)).toThrow(
+    new RangeError(
+      "Projection api-circuit: version was removed. Raise generation above every generation the projection has used.",
+    ),
+  );
+  expect(declare(undefined).generation).toBe(1);
+});
+
 it("rejects invalid joins, aggregates, top bounds and parameter references from View.from", () => {
   const invalid = items
     .join(details, { as: "", on: (item, right) => item.id.ne(right.id) })

@@ -343,10 +343,14 @@ type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 /** @internal Reject legacy definitions passed from JavaScript or unchecked TypeScript. */
 // oxlint-disable-next-line anti-slop/no-object-parameters -- The guard inspects an extra property on differently typed constructor arguments.
 export const rejectProjectionVersion = (id: string, definition: object): void => {
-  if ("version" in definition && definition.version !== undefined)
-    throw new RangeError(
-      `Projection ${id}: version was removed. Raise generation above every generation the projection has used.`,
-    );
+  if (!("version" in definition) || definition.version === undefined) return;
+
+  const advice =
+    definition.version === 1
+      ? "Remove version: 1 from the declaration."
+      : "Raise generation above every generation the projection has used.";
+
+  throw new RangeError(`Projection ${id}: version was removed. ${advice}`);
 };
 
 /** Public constructors check all mapped types before this shared binding boundary. */
