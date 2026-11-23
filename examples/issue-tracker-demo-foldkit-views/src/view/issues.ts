@@ -1,4 +1,4 @@
-import { Array, Option, Record } from "effect";
+import { Array, Option, Order, Record } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import {
   issueStatuses,
@@ -9,12 +9,8 @@ import type { Comment, Issue, Project } from "@streamsy/issue-tracker-demo-contr
 import { STATUS_LABEL, formatRelativeTime, shortId } from "issue-tracker-demo/src/utils/format.ts";
 import { titleDraftId } from "../command.ts";
 import {
-  commentsOn,
-  issuesIn,
   projectsOldestFirst,
   selectedProject,
-  statusCounts,
-  visibleIssues,
   type Shown,
   type StatusFilter,
   type Workspace,
@@ -55,23 +51,54 @@ export const issuesPanelView = (
     onSome: ({ row: project }) => projectIssuesView(model, workspace, project, h),
   });
 
-/** The derived values of A2: counts and the filtered list, computed on each render. */
+const latestIssueFirst = Order.flip(
+  Order.mapInput(Order.String, ({ row }: Shown<Issue>) => row.updatedAt),
+);
+
+const oldestCommentFirst = Order.mapInput(Order.String, ({ row }: Shown<Comment>) => row.createdAt);
+
+/** Select the current project and filter from the workspace-wide outputs. */
 const projectIssuesView = (
   model: Model,
   workspace: Workspace,
   project: Project,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const inProject = issuesIn(workspace, project.id);
-  const counts = statusCounts(inProject);
-  const visible = visibleIssues(inProject, model.filter);
+  const counts = {
+    all: model.counts.issueCountByProject[project.id] ?? 0,
+    open: 0,
+    in_progress: 0,
+    done: 0,
+  };
+
+  for (const group of model.counts.statusCounts) {
+    if (group.projectId === project.id) counts[group.status] = group.count;
+  }
+
+  const count = counts[model.filter];
+
+  const visible = Array.sort(
+    Array.filter(
+      workspace.issues,
+      ({ row }) =>
+        row.projectId === project.id && (model.filter === "all" || row.status === model.filter),
+    ),
+    latestIssueFirst,
+  );
+
+  const commentsByIssue = Array.groupBy(workspace.comments, ({ row }) => row.issueId);
+
+  const syncedCommentsByIssue = Array.groupBy(
+    Record.values(model.rows.comments),
+    (row) => row.issueId,
+  );
 
   return h.section(
     [h.Class("panel issues")],
     [
       toolbarView(
         project.name,
-        `${visible.length} ${visible.length === 1 ? "issue" : "issues"} · ${shortId(project.id)}`,
+        `${count} ${count === 1 ? "issue" : "issues"} · ${shortId(project.id)}`,
         h,
       ),
       newIssueFormView(model.issueTitle, h),
@@ -81,7 +108,15 @@ const projectIssuesView = (
         Array.match(visible, {
           onEmpty: () => [emptyIssuesView(model.filter, h)],
           onNonEmpty: (issues) =>
-            Array.map(issues, (issue) => issueRowView(model, workspace, issue, h)),
+            Array.map(issues, (issue) =>
+              issueRowView(
+                model,
+                issue,
+                Array.sort(commentsByIssue[issue.row.id] ?? [], oldestCommentFirst),
+                syncedCommentsByIssue[issue.row.id]?.length ?? 0,
+                h,
+              ),
+            ),
         }),
       ),
     ],
@@ -150,11 +185,11 @@ const emptyIssuesView = (filter: StatusFilter, h: HtmlBuilder<Message>): Html =>
 /** One issue. A pending row has a local change that the server has not confirmed, so it shows faded. */
 const issueRowView = (
   model: Model,
-  workspace: Workspace,
   { row: issue, isPending }: Shown<Issue>,
+  comments: ReadonlyArray<Shown<Comment>>,
+  commentCount: number,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const comments = commentsOn(workspace, issue.id);
   const maybeEdit = Option.filter(model.maybeTitleEdit, (edit) => edit.issueId === issue.id);
 
   return h.keyed("article")(
@@ -181,7 +216,7 @@ const issueRowView = (
                 ],
               ),
               h.span([h.Class("issue-meta-divider")], ["·"]),
-              h.span([], [`${comments.length} ${comments.length === 1 ? "comment" : "comments"}`]),
+              h.span([], [`${commentCount} ${commentCount === 1 ? "comment" : "comments"}`]),
             ],
           ),
         ],

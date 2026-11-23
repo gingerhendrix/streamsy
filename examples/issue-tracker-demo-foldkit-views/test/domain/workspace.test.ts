@@ -1,16 +1,8 @@
 import { Array, Option, Record } from "effect";
 import { describe, expect, test } from "vitest";
 import { Intent, toPendingWrite } from "../../src/domain/intent.ts";
-import {
-  applyChanges,
-  commentsOn,
-  confirmedTxids,
-  emptyRows,
-  issuesIn,
-  statusCounts,
-  visibleIssues,
-  workspaceView,
-} from "../../src/domain/workspace.ts";
+import { emptyRows, workspaceView } from "../../src/domain/workspace.ts";
+import { applyChanges, commentsOn, issuesIn, statusCounts, visibleIssues } from "../selectors.ts";
 import {
   comment,
   issue,
@@ -45,18 +37,6 @@ describe("applyChanges", () => {
     ]);
 
     expect(next.issues["issue_b"]).toBeUndefined();
-  });
-});
-
-describe("confirmedTxids", () => {
-  test("lists each txid once and skips changes without one", () => {
-    const txids = confirmedTxids([
-      upsertIssue(issue("issue_a"), "tx-1"),
-      upsertComment(comment("comment_a", "issue_a", "2026-10-25T10:00:00.000Z"), "tx-1"),
-      upsertIssue(issue("issue_b")),
-    ]);
-
-    expect(txids).toEqual(["tx-1"]);
   });
 });
 

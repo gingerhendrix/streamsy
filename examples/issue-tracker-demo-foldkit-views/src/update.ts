@@ -4,8 +4,6 @@ import { modifyFields } from "foldkit/struct";
 import { IssueStatus } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { Intent, toPendingWrite } from "./domain/intent.ts";
 import {
-  applyChanges,
-  confirmedTxids,
   emptyRows,
   projectsOldestFirst,
   selectedProject,
@@ -36,6 +34,7 @@ export const init = (flags: Flags): UpdateReturn => ({
     sync: Sync.Loading(),
     isOnline: true,
     rows: emptyRows,
+    counts: { issueCountByProject: {}, statusCounts: [] },
     pending: [],
     maybeSelectedProjectId: Option.none(),
     filter: "all",
@@ -70,19 +69,19 @@ const stamp = (model: Model, intent: Intent): UpdateReturn => ({
 
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
-    ReceivedStateBatch: ({ changes, isUpToDate }) => {
-      const confirmed = confirmedTxids(changes);
+    ReceivedViews: ({ rows, counts, caughtUp }) => ({
+      model: modifyFields(model, {
+        rows: () => rows,
+        counts: () => counts,
+        sync: (sync) => (caughtUp ? Sync.Live() : sync),
+      }),
+    }),
 
-      return {
-        model: modifyFields(model, {
-          rows: (rows) => applyChanges(rows, changes),
-          // A change with a write's txid confirms it. The stream row now holds
-          // the server's version, so the local one can go.
-          pending: Array.filter(({ txid }) => !Array.contains(confirmed, txid)),
-          sync: (sync) => (isUpToDate ? Sync.Live() : sync),
-        }),
-      };
-    },
+    ConfirmedWrites: ({ txids }) => ({
+      model: modifyFields(model, {
+        pending: Array.filter(({ txid }) => !Array.contains(txids, txid)),
+      }),
+    }),
 
     ChangedConnection: ({ isOnline }) => ({
       model: modifyFields(model, { isOnline: () => isOnline }),

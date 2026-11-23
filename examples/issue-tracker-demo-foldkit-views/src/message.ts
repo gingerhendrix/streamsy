@@ -1,12 +1,12 @@
 import { Schema } from "effect";
 import { defineMessageUnion } from "foldkit/message";
-import { StateEvent } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { Intent, Stamp } from "./domain/intent.ts";
-import { StatusFilter } from "./domain/workspace.ts";
+import { Counts } from "./workspace-views.ts";
+import { Rows, StatusFilter } from "./domain/workspace.ts";
 
 export const Message = defineMessageUnion({
-  // The workspace stream. Each batch the reader gets becomes one Message.
-  ReceivedStateBatch: { changes: Schema.Array(StateEvent), isUpToDate: Schema.Boolean },
+  ReceivedViews: { rows: Rows, counts: Counts, caughtUp: Schema.Boolean },
+  ConfirmedWrites: { txids: Schema.Array(Schema.String) },
   ChangedConnection: { isOnline: Schema.Boolean },
   FailedReadWorkspace: { error: Schema.String },
 

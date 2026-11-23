@@ -1,3 +1,8 @@
+import { Array, Record } from "effect";
+import { issueStatuses } from "@streamsy/issue-tracker-demo-contract/state-schema";
+import { emptyRows, workspaceView, type Rows } from "../src/domain/workspace.ts";
+import { Message } from "../src/message.ts";
+import { applyChanges, issueCountByProject, statusCounts } from "./selectors.ts";
 import type {
   Comment,
   Issue,
@@ -58,3 +63,29 @@ export const stamp = (txid: string): Stamp => ({
   txid,
   at: "2026-10-25T12:00:00.000Z",
 });
+
+/** A snapshot fixture after applying the given State events. */
+export const receivedViews = (
+  changes: ReadonlyArray<StateEvent>,
+  caughtUp = true,
+  previous: Rows = emptyRows,
+) => {
+  const rows = applyChanges(previous, changes);
+  const workspace = workspaceView(rows, []);
+  const byProject = Array.groupBy(workspace.issues, ({ row }) => row.projectId);
+
+  return Message.ReceivedViews({
+    rows,
+    caughtUp,
+    counts: {
+      issueCountByProject: issueCountByProject(workspaceView(rows, [])),
+      statusCounts: Array.flatMap(Record.toEntries(byProject), ([projectId, issues]) => {
+        const counts = statusCounts(issues);
+
+        return Array.flatMap(issueStatuses, (status) =>
+          counts[status] === 0 ? [] : [{ projectId, status, count: counts[status] }],
+        );
+      }),
+    },
+  });
+};

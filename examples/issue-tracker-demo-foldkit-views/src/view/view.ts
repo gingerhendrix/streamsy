@@ -11,7 +11,7 @@ import { projectsPanelView } from "./projects.ts";
 // app's stylesheet styles this page unchanged.
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: "Streamsy Issue Tracker Demo (Foldkit)",
+  title: "Streamsy Issue Tracker Demo (Foldkit + Views)",
   body: Sync.match(model.sync, {
     Loading: () => waitingView(model, "Loading durable stream database…", h),
     Failed: ({ error }) => waitingView(model, error, h),

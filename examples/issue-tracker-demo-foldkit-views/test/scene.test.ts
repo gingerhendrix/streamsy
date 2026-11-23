@@ -20,7 +20,7 @@ import { Message } from "../src/message.ts";
 import type { Model } from "../src/model.ts";
 import { init, update } from "../src/update.ts";
 import { view } from "../src/view/view.ts";
-import { issue, project, stamp, upsertIssue, upsertProject } from "./support.ts";
+import { issue, project, receivedViews, stamp, upsertIssue, upsertProject } from "./support.ts";
 
 // Scene tests drive the page through the view: they click, type and submit,
 // resolve the Commands that `update` returns, and check what the page shows.
@@ -34,22 +34,19 @@ const seeded = [
 ];
 
 /** A page that has read the seeded workspace. */
-const live: Model = update(
-  loading,
-  Message.ReceivedStateBatch({ changes: seeded, isUpToDate: true }),
-).model;
+const live: Model = update(loading, receivedViews(seeded)).model;
 
 const pendingRow = selector(".issue-row.pending");
 
 const wipNotice = "This project already has 3 issues in progress";
 
 describe("the workspace stream", () => {
-  test("the page waits for an up-to-date batch, then shows the rows", () => {
+  test("the page waits for the circuit to catch up, then shows the rows", () => {
     scene(
       { update, view },
       given(loading),
       expect(text("Loading durable stream database…")).toExist(),
-      Subscription.emit(Message.ReceivedStateBatch({ changes: seeded, isUpToDate: true })),
+      Subscription.emit(receivedViews(seeded)),
       expect(text("Loading durable stream database…")).toBeAbsent(),
       expect(role("heading", { name: "Demo" })).toExist(),
       expect(role("button", { name: "Fix the reader" })).toExist(),
@@ -86,17 +83,19 @@ describe("optimistic writes (A4)", () => {
       expect(role("button", { name: "Write tests" })).toExist(),
       expect(pendingRow).toExist(),
       expect(pendingRow).toHaveAttr("aria-busy", "true"),
+      expect(role("button", { name: /^All\s*2$/ })).toExist(),
+      expect(role("button", { name: /^Open\s*1$/ })).toExist(),
       Command.resolve(SendWrite, Message.SucceededSendWrite({ txid: "tx-1" })),
       // The server said yes, but only the stream confirms the write.
       expect(pendingRow).toExist(),
       Subscription.emit(
-        Message.ReceivedStateBatch({
-          changes: [upsertIssue(issue("issue_abcdef12", { title: "Write tests" }), "tx-1")],
-          isUpToDate: true,
-        }),
+        receivedViews([...seeded, upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))]),
       ),
+      Subscription.emit(Message.ConfirmedWrites({ txids: ["tx-1"] })),
       expect(pendingRow).toBeAbsent(),
       expect(role("button", { name: "Write tests" })).toExist(),
+      expect(role("button", { name: /^All\s*3$/ })).toExist(),
+      expect(role("button", { name: /^Open\s*2$/ })).toExist(),
     );
   });
 

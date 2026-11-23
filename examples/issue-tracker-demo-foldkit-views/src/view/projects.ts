@@ -1,8 +1,7 @@
-import { Array, Option } from "effect";
+import { Array, Option, Record } from "effect";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import type { Project } from "@streamsy/issue-tracker-demo-contract/types";
 import {
-  issueCountByProject,
   projectsOldestFirst,
   selectedProject,
   type Shown,
@@ -23,14 +22,17 @@ export const projectsPanelView = (
     ({ row }) => row.id,
   );
 
-  const counts = issueCountByProject(workspace);
+  const counts = model.counts.issueCountByProject;
 
   return h.aside(
     [h.Class("panel projects")],
     [
       h.div(
         [h.Class("panel-header")],
-        [h.h2([], ["Projects"]), h.span([h.Class("count-badge")], [String(projects.length)])],
+        [
+          h.h2([], ["Projects"]),
+          h.span([h.Class("count-badge")], [String(Record.size(model.rows.projects))]),
+        ],
       ),
       h.div(
         [h.Class("project-list")],

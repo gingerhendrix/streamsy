@@ -1,24 +1,7 @@
 import { Effect } from "effect";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { workspaceFromSearch, workspaceHref } from "../src/command.ts";
-import { Message } from "../src/message.ts";
-import { batchMessage, trackedFetch } from "../src/subscription.ts";
-import { issue, upsertIssue } from "./support.ts";
-
-describe("batchMessage", () => {
-  test("a read batch becomes one ReceivedStateBatch with its changes", () => {
-    const change = upsertIssue(issue("issue_a"), "tx-1");
-
-    expect(
-      batchMessage({
-        items: [change, { headers: { control: "up-to-date" } }, "not a change"],
-        offset: "1",
-        upToDate: true,
-        streamClosed: false,
-      }),
-    ).toEqual(Message.ReceivedStateBatch({ changes: [change], isUpToDate: true }));
-  });
-});
+import { trackedFetch } from "../src/subscription.ts";
 
 const reader = () => {
   const reports: boolean[] = [];
@@ -39,21 +22,23 @@ describe("trackedFetch", () => {
     vi.unstubAllGlobals();
   });
 
-  test.each([502, 503, 504])("a gateway %i is offline, and the next answer is online", (status) =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const { reports, fetch } = reader();
+  test.each([500, 502, 503, 504])(
+    "an unavailable %i is offline, and the next answer is online",
+    (status) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const { reports, fetch } = reader();
 
-        vi.stubGlobal("fetch", () => answer(status));
-        yield* read(fetch);
-        yield* read(fetch);
-        expect(reports).toEqual([false]);
+          vi.stubGlobal("fetch", () => answer(status));
+          yield* read(fetch);
+          yield* read(fetch);
+          expect(reports).toEqual([false]);
 
-        vi.stubGlobal("fetch", () => answer(200));
-        yield* read(fetch);
-        expect(reports).toEqual([false, true]);
-      }),
-    ),
+          vi.stubGlobal("fetch", () => answer(200));
+          yield* read(fetch);
+          expect(reports).toEqual([false, true]);
+        }),
+      ),
   );
 
   test("any other HTTP status means the server answered", () =>
@@ -61,7 +46,7 @@ describe("trackedFetch", () => {
       Effect.gen(function* () {
         const { reports, fetch } = reader();
 
-        vi.stubGlobal("fetch", () => answer(500));
+        vi.stubGlobal("fetch", () => answer(404));
         yield* read(fetch);
         expect(reports).toEqual([]);
       }),

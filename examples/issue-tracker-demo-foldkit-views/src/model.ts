@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { defineTaggedUnion } from "foldkit/schema";
+import { Counts } from "./workspace-views.ts";
 import { PendingWrite, Rows, StatusFilter } from "./domain/workspace.ts";
 
 /** How far the page has read the workspace stream. */
@@ -28,8 +29,9 @@ export const Model = Schema.Struct({
   sync: Sync,
   /** Whether the last stream read reached the server. */
   isOnline: Schema.Boolean,
-  /** The rows as the stream has them. */
+  /** The committed outputs of the page circuit. */
   rows: Rows,
+  counts: Counts,
   /** Local changes that wait for their txid on the stream. */
   pending: Schema.Array(PendingWrite),
   maybeSelectedProjectId: Schema.Option(Schema.String),

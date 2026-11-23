@@ -12,30 +12,27 @@ import { Intent } from "../src/domain/intent.ts";
 import { Message } from "../src/message.ts";
 import type { Model } from "../src/model.ts";
 import { init, update } from "../src/update.ts";
-import { issue, project, stamp, upsertIssue, upsertProject } from "./support.ts";
+import { issue, project, receivedViews, stamp, upsertIssue, upsertProject } from "./support.ts";
 
 const seeded = [upsertProject(project), upsertIssue(issue("issue_a"))];
 
 /** A page that has read the seeded workspace. */
 const live: Model = update(
   init({ workspaceId: "main", displayName: "Ada" }).model,
-  Message.ReceivedStateBatch({
-    changes: seeded,
-    isUpToDate: true,
-  }),
+  receivedViews(seeded),
 ).model;
 
 describe("the workspace stream", () => {
-  test("the page stays loading until a batch is up to date", () => {
+  test("the page stays loading until the circuit catches up", () => {
     story(
       update,
       given(init({ workspaceId: "main", displayName: "" }).model),
-      message(Message.ReceivedStateBatch({ changes: seeded, isUpToDate: false })),
+      message(receivedViews(seeded, false)),
       model((current) => {
         expect(current.sync._tag).toBe("Loading");
         expect(Record.keys(current.rows.issues)).toEqual(["issue_a"]);
       }),
-      message(Message.ReceivedStateBatch({ changes: [], isUpToDate: true })),
+      message(receivedViews(seeded)),
       model((current) => expect(current.sync._tag).toBe("Live")),
     );
   });
@@ -86,11 +83,9 @@ describe("optimistic writes (A4)", () => {
       // The server accepted the write, but the stream has not shown it yet.
       model((current) => expect(current.pending).toHaveLength(1)),
       message(
-        Message.ReceivedStateBatch({
-          changes: [upsertIssue(issue("issue_abcdef12", { title: "Write tests" }), "tx-1")],
-          isUpToDate: true,
-        }),
+        receivedViews([...seeded, upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))]),
       ),
+      message(Message.ConfirmedWrites({ txids: ["tx-1"] })),
       model((current) => {
         expect(current.pending).toHaveLength(0);
         expect(current.rows.issues["issue_abcdef12"]?.title).toBe("Write tests");

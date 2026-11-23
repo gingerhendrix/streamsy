@@ -1,30 +1,20 @@
-import { stream, type JsonBatch } from "@durable-streams/client";
-import { Array, Effect, Queue, Schema, Stream } from "effect";
+/* oxlint-disable effecttsgo/strict-effect-provide -- Each subscription owns its remote client and heap. */
+import { StreamAddress, Streamsy } from "@streamsy/core";
+import { RemoteStreams } from "@streamsy/core/remote";
+import { ViewBackend } from "@streamsy/views";
+import { Array, Effect, Layer, Queue, Record, Result, Schema, Stream, Struct } from "effect";
+import { FetchHttpClient } from "effect/http";
 import { Subscription } from "foldkit";
-import { StateEvent, type JsonValue } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
+import { Workspaces, workspaceViews } from "./workspace-views.ts";
 
-const decodeChange = Schema.decodeUnknownResult(StateEvent);
-
-/**
- * The changes in one read batch. Items that are not changes, such as State
- * controls, are skipped: this server never writes them.
- */
-export const batchMessage = (batch: JsonBatch<JsonValue>): Message =>
-  Message.ReceivedStateBatch({
-    changes: Array.filterMap(batch.items, (item) => decodeChange(item)),
-    isUpToDate: batch.upToDate,
-  });
-
-const gatewayStatuses = new Set([502, 503, 504]);
+const unavailableStatuses = new Set([500, 502, 503, 504]);
 
 /**
  * A fetch for the stream reader that reports when the server stops or starts
- * answering. Any HTTP answer, even an error status, means the server is
- * reachable. A gateway status comes from the Vite proxy when the server is
- * down. A rejected fetch is a network failure, unless the reader aborted it on
- * close. The reader retries with backoff and never gives up.
+ * answering. The Vite proxy can return 500 when the upstream is down.
+ * Ignore aborts when the subscription closes.
  */
 export const trackedFetch = (report: (isOnline: boolean) => void): typeof globalThis.fetch => {
   let isOnline = true;
@@ -39,7 +29,7 @@ export const trackedFetch = (report: (isOnline: boolean) => void): typeof global
     // oxlint-disable-next-line effecttsgo/global-fetch -- The stream client requires native Response and AbortSignal behavior from its fetch adapter.
     globalThis.fetch(input, init).then(
       (response) => {
-        set(!gatewayStatuses.has(response.status));
+        set(!unavailableStatuses.has(response.status));
 
         return response;
       },
@@ -49,48 +39,112 @@ export const trackedFetch = (report: (isOnline: boolean) => void): typeof global
       },
     );
 
-  return tracked;
+  // oxlint-disable-next-line effecttsgo/global-fetch -- Preserve runtime-specific properties of the wrapped fetch.
+  return Object.assign(tracked, globalThis.fetch);
 };
 
-/**
- * Read the workspace's State stream from the start and stay live. Each batch
- * becomes one `ReceivedStateBatch`. Closing the subscription cancels the read.
- */
-const workspaceMessages = (workspaceId: string) =>
+const byId = <A extends { readonly id: string }>(rows: ReadonlyArray<A>) =>
+  Record.fromEntries(Array.map(rows, (row) => [row.id, row] as const));
+
+/** The subscription's scope owns the binding and both readers for this page. */
+export const workspaceMessages = (workspaceId: string, baseUrl: string) =>
   Stream.callback<Message>((queue) => {
-    const offer = (message: Message) => {
-      Queue.offerUnsafe(queue, message);
-    };
+    const offer = (message: Message) => Queue.offer(queue, message);
+
+    const fetch = trackedFetch((isOnline) => {
+      Queue.offerUnsafe(queue, Message.ChangedConnection({ isOnline }));
+    });
+
+    const host = Layer.merge(
+      ViewBackend.layerMemoryHost,
+      RemoteStreams.layer(Streamsy.group(Workspaces), { baseUrl }).pipe(
+        Layer.provide(FetchHttpClient.layer),
+      ),
+    );
 
     return Effect.gen(function* () {
-      const url = yield* Effect.sync(
-        () =>
-          new URL(`/streams/workspace/${encodeURIComponent(workspaceId)}`, window.location.origin),
+      const params = { workspaceId };
+      const live = yield* workspaceViews.at(params);
+      const workspaces = yield* Workspaces;
+
+      // Use changes as a notification, then read every output together. Updating
+      // each output in its own message can render counts and lists from different units.
+      const snapshots = Stream.mergeAll(
+        [
+          live.changes("projects").pipe(Stream.map(() => undefined)),
+          live.changes("visibleIssues").pipe(Stream.map(() => undefined)),
+          live.changes("commentsOn").pipe(Stream.map(() => undefined)),
+          live.changes("issueCountByProject").pipe(Stream.map(() => undefined)),
+          live.changes("statusCounts").pipe(Stream.map(() => undefined)),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Stream.mapEffect(() =>
+          Effect.all({
+            projects: live.rows("projects"),
+            issues: live.rows("visibleIssues"),
+            comments: live.rows("commentsOn"),
+            projectCounts: live.rows("issueCountByProject"),
+            statusCounts: live.rows("statusCounts"),
+          }),
+        ),
+        Stream.changesWith(
+          (previous, current) =>
+            previous.projects === current.projects &&
+            previous.issues === current.issues &&
+            previous.comments === current.comments &&
+            previous.projectCounts === current.projectCounts &&
+            previous.statusCounts === current.statusCounts,
+        ),
+        Stream.map(({ projects, issues, comments, projectCounts, statusCounts }) =>
+          Message.ReceivedViews({
+            caughtUp: projects.caughtUp,
+            rows: {
+              projects: byId(projects.rows),
+              issues: byId(Array.map(issues.rows, (issue) => Struct.omit(issue, ["project"]))),
+              comments: byId(comments.rows),
+            },
+            counts: {
+              issueCountByProject: Record.fromEntries(
+                Array.map(projectCounts.rows, ({ projectId, count }) => [projectId, count]),
+              ),
+              statusCounts: statusCounts.rows,
+            },
+          }),
+        ),
       );
 
-      const response = yield* Effect.acquireRelease(
-        Effect.tryPromise({
-          try: (signal) =>
-            stream<JsonValue>({
-              url,
-              live: true,
-              json: true,
-              signal,
-              warnOnHttp: false,
-              fetch: trackedFetch((isOnline) => offer(Message.ChangedConnection({ isOnline }))),
-            }),
-          catch: () => "Unable to open the workspace stream",
+      // Views expose row values, while the write confirmation is in State event
+      // headers. Read those headers separately to preserve txid confirmation.
+      const confirmations = workspaces.follow(params).pipe(
+        Stream.filterMap((batch) => {
+          const txids = Array.dedupe(
+            Array.flatMap(batch.items, (item) =>
+              StreamAddress.isControl(item) || item.headers.txid === undefined
+                ? []
+                : [item.headers.txid],
+            ),
+          );
+
+          return txids.length === 0
+            ? Result.failVoid
+            : Result.succeed(Message.ConfirmedWrites({ txids }));
         }),
-        (opened) => Effect.sync(() => opened.cancel()),
       );
 
-      response.subscribeJson<JsonValue>((batch) => offer(batchMessage(batch)));
-
-      yield* Effect.tryPromise({
-        try: () => response.closed,
-        catch: () => "The workspace stream stopped",
-      });
-    }).pipe(Effect.catch((error) => Queue.offer(queue, Message.FailedReadWorkspace({ error }))));
+      // A failed startup HEAD can fail caughtUp without ending changes.
+      const startup = Stream.fromEffect(live.caughtUp).pipe(Stream.drain);
+      yield* Stream.merge(snapshots, confirmations).pipe(
+        Stream.merge(startup),
+        Stream.runForEach(offer),
+      );
+      yield* offer(Message.FailedReadWorkspace({ error: "The workspace stream closed" }));
+    }).pipe(
+      Effect.provide(host),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.catch((error) => offer(Message.FailedReadWorkspace({ error: error.message }))),
+      Effect.andThen(Queue.end(queue)),
+    );
   });
 
 export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
@@ -98,7 +152,8 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
     { workspaceId: Schema.String },
     {
       modelToDependencies: (model) => ({ workspaceId: model.workspaceId }),
-      dependenciesToStream: ({ workspaceId }) => workspaceMessages(workspaceId),
+      dependenciesToStream: ({ workspaceId }) =>
+        workspaceMessages(workspaceId, new URL("/streams", window.location.origin).href),
     },
   ),
 }));

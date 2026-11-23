@@ -20,7 +20,14 @@ const examplePages = fileURLToPath(new URL("../content/docs/examples/", import.m
 export const pageExamples = new Map<string, readonly [string, ...Array<string>]>([
   ["hackernews-newest-stream", ["examples/hackernews-newest-stream"]],
   ["hex-board", ["examples/hex-board"]],
-  ["issue-tracker/index", ["examples/issue-tracker-demo", "examples/issue-tracker-demo-contract"]],
+  [
+    "issue-tracker/index",
+    [
+      "examples/issue-tracker-demo",
+      "examples/issue-tracker-demo-contract",
+      "examples/issue-tracker-demo-foldkit-views",
+    ],
+  ],
   [
     "issue-tracker/event-sourced",
     [
