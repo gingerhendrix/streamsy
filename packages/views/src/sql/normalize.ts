@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Predicate, Record, Schema } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { encodeRowKey } from "../runtime/key.ts";
-import type { DataFault } from "./data-fault.ts";
+import { ViewDataFault, type DataFault } from "./data-fault.ts";
 import type { StateChange } from "./engine.ts";
 import type { Backend } from "../backend.ts";
 
@@ -78,6 +78,10 @@ export const normalize = Effect.fn("View.normalize")(function* (
   events: readonly StreamAddress.CollectionsEvent<StreamAddress.Collections>[],
   snapshotOpen: boolean,
 ) {
+  const failure = backend.validateSource?.(sourceId);
+
+  if (failure !== undefined) return yield* failure;
+
   const store = backend.store(namespace);
   const pending = new Map<string, StateChange>();
   const marker = `@snapshot/${sourceId}`;
@@ -135,7 +139,15 @@ export const normalize = Effect.fn("View.normalize")(function* (
 
       if (open) {
         seen.add(key);
-        yield* store.snapshotMark(marker, key);
+        yield* store
+          .snapshotMark(marker, key)
+          .pipe(
+            Effect.catchDefect((cause) =>
+              Schema.is(ViewDataFault)(cause)
+                ? Effect.fail(fault(key, cause.reason))
+                : Effect.die(cause),
+            ),
+          );
       }
     } else pending.set(key, { kind: "delete", sourceId, key });
   }

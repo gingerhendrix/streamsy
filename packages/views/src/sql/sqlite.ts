@@ -1,28 +1,9 @@
-import { Array as Arr, Effect, Schema } from "effect";
+import { Array as Arr, Effect } from "effect";
 import type { SqlClient } from "effect/sql";
 import type { Backend } from "../backend.ts";
 import type { Accumulator, Entry, IndexEntry, Store } from "../store.ts";
 import { encodeRowKey } from "../runtime/key.ts";
-import { rowKeySchema } from "./data-fault.ts";
-
-const rowCodec = Schema.fromJsonString(
-  Schema.Struct({
-    key: rowKeySchema,
-    row: Schema.JsonObject,
-  }),
-);
-
-const accCodec = Schema.fromJsonString(
-  Schema.Struct({
-    count: Schema.Finite,
-    sums: Schema.Record(Schema.String, Schema.Finite),
-    integerMass: Schema.optionalKey(Schema.Record(Schema.String, Schema.Finite)),
-  }),
-);
-
-const decodeRow = Schema.decodeUnknownSync(rowCodec);
-
-const decodeAcc = Schema.decodeUnknownSync(accCodec);
+import { decodeAcc, decodeRow } from "./codecs.ts";
 
 /** All engine SQL is here. Every statement binds at most 100 values. */
 export const migrate = Effect.fn("ViewsSql.migrate")(function* (sql: SqlClient.SqlClient) {

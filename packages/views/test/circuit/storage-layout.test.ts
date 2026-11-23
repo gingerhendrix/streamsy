@@ -1,93 +1,21 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- This test provisions an isolated SQLite host. */
 import { expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
-import { DurableState, Streamsy } from "@streamsy/core";
-import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
-import { View } from "../../src/index.ts";
-
-const Entry = Schema.Struct({ id: Schema.String, team: Schema.String, score: Schema.Finite });
-
-class Source extends Streamsy.state<Source>()("Layout/Source", "layout/source/:board", {
-  params: { board: Schema.String },
-  collections: {
-    entry: { key: "id", schema: Entry },
-    team: { key: "id", schema: Schema.Struct({ id: Schema.String, name: Schema.String }) },
-  },
-}) {}
-
-class Output extends Streamsy.state<Output>()("Layout/Output", "layout/out/:board/g/:generation", {
-  params: { board: Schema.String, generation: Schema.FiniteFromString },
-  collections: {
-    ranked: {
-      key: "id",
-      schema: Schema.Struct({ id: Schema.String, label: Schema.String }),
-    },
-    totals: {
-      key: "team",
-      schema: Schema.Struct({ team: Schema.String, entries: Schema.Finite }),
-    },
-  },
-}) {}
-
-const entries = View.from(Source, "entry");
-
-const ranked = entries
-  .join(View.from(Source, "team"), {
-    as: "details",
-    on: (entry, team) => entry.team.eq(team.id),
-  })
-  .top({
-    partitionBy: (row) => row.team,
-    by: (row) => [row.score.desc(), row.id.asc()],
-    limit: 1,
-  })
-  .select((row) => ({ id: row.id, label: row.details.name }));
-
-const totals = entries
-  .groupBy((entry) => ({ team: entry.team }))
-  .aggregate(() => ({ entries: View.count() }));
-
-const circuit = View.circuit({
-  id: "layout",
-  params: Source.paramCodecs,
-  generation: 2,
-  output: Projection.perGeneration(Output, "generation"),
-  views: { ranked, totals },
-});
+import { layoutGroup, layoutNamespace, runLayoutUnits } from "./support/layout.ts";
 
 const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(
-    BunStorage.layer(Streamsy.group(Source, Output), { client: { filename: ":memory:" } }),
-  ),
+  Layer.provideMerge(BunStorage.layer(layoutGroup, { client: { filename: ":memory:" } })),
 );
 
 // A changed storage pin is a layout break that requires raising the plan `version`
 // and adding a breaking release note.
 it.effect("pins the plan hash and every operator table after two circuit units", () =>
   Effect.gen(function* () {
+    yield* runLayoutUnits;
     const sql = yield* SqlClient.SqlClient;
-    yield* View.migrate(sql);
-    const source = yield* Source;
-    const params = { board: "b" };
-    const binding = circuit.at(params);
-    const address = Source.at(params);
-    yield* source.create(params);
-
-    const units = [
-      [
-        DurableState.upsert("team", { id: "t", name: "Team" }),
-        DurableState.upsert("entry", { id: "ä", team: "t", score: 5 }),
-        DurableState.upsert("entry", { id: "z", team: "t", score: -2 }),
-      ],
-      [DurableState.upsert("entry", { id: "z", team: "t", score: 5 })],
-    ] as const;
-
-    for (const changes of units) {
-      yield* source.append(params, DurableState.changes(address, {}, changes));
-      expect((yield* Projection.run(binding, { limit: 1 })).units).toBe(1);
-    }
 
     const stored = {
       integrals: yield* sql`SELECT * FROM streamsy_view_integrals
@@ -101,7 +29,7 @@ it.effect("pins the plan hash and every operator table after two circuit units",
       circuits: yield* sql`SELECT * FROM streamsy_view_circuits ORDER BY namespace`.values,
     };
 
-    const namespace = '["[\\"layout\\",1,{\\"board\\":\\"b\\"}]",2]';
+    const namespace = layoutNamespace;
 
     expect(stored).toEqual({
       integrals: [

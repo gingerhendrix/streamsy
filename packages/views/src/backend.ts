@@ -1,8 +1,10 @@
 import type { Effect } from "effect";
 import type { SqlError } from "effect/sql";
+import type { ViewDataFault } from "./sql/data-fault.ts";
 import type { Query, Store } from "./store.ts";
 
 export interface Backend {
+  readonly validateSource?: (source: string) => ViewDataFault | undefined;
   readonly store: (namespace: string) => Store;
   readonly circuit: (namespace: string) => {
     readonly load: Query<string | undefined>;
