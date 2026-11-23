@@ -4,11 +4,11 @@ import { it } from "@effect/vitest";
 import { Array, Effect, Layer, Option, Result, Schedule, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
-import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
+import { StorageFault, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { OWNER_RECORDS_LIST_UNSUPPORTED, OwnerRecords } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
-import { recordKey } from "@streamsy/projection/checkpoint";
+import { fromStore, recordKey } from "@streamsy/projection/checkpoint";
 import { eventually } from "./support/eventually.ts";
 import { withFamilies } from "./support/families.ts";
 import { Accepted, Numbers, Rows, accepted, output } from "./support/generation-outputs.ts";
@@ -42,9 +42,10 @@ const definition = {
   commit: Commit.transaction,
 };
 
-const declaration = (generation = 1) =>
+const declaration = (generation = 1, commit = Commit.transaction) =>
   Projection.process({
     ...definition,
+    commit,
     generation,
     retry: { schedule: Schedule.spaced("1 second") },
     process: (batch, _unit, { outputs: { out } }) =>
@@ -69,6 +70,100 @@ const retiredRoutes = (result: "closed" | "removed") =>
   Array.map(["one", "two"], (date) => ({ output: "out", id: Output.at(at(date)).id, result }));
 
 const host = withFamilies(layerSqlite(), Source, Output);
+
+it.live("absent routed forget skips removal when owner-record listing is unsupported", () =>
+  Effect.gen(function* () {
+    const owner = yield* OwnerRecords;
+
+    const fault = new StorageFault({
+      operation: OWNER_RECORDS_LIST_UNSUPPORTED,
+      message: "Owner-record listing is unsupported",
+      retryable: false,
+    });
+
+    const noListing = Layer.succeed(OwnerRecords, { ...owner, list: () => Effect.fail(fault) });
+
+    const store = yield* CheckpointStore.pipe(
+      Effect.provide(CheckpointStore.layer.pipe(Layer.fresh, Layer.provide(noListing))),
+    );
+
+    const absentStore = { ...store, remove: () => Effect.die("Unexpected checkpoint removal") };
+    let cleaned = 0;
+    const cleanup = Commit.transactionWithCleanup(() => Effect.sync(() => void (cleaned += 1)));
+
+    yield* Projection.forget(declaration().at(params)).pipe(
+      Effect.provideService(CheckpointStore, absentStore),
+    );
+    yield* Projection.forget(declaration(1, cleanup).at(params)).pipe(
+      Effect.provideService(CheckpointStore, absentStore),
+    );
+    expect(cleaned).toBe(1);
+
+    const binding = declaration().at(params);
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    const source = yield* Source;
+    yield* source.wire.remove(Source.at(params).id);
+    expect(
+      yield* Projection.run(binding).pipe(
+        Effect.provideService(CheckpointStore, store),
+        Effect.flip,
+      ),
+    ).toMatchObject({ reason: "unsupported-composition" });
+    expect(Option.getOrThrow((yield* store.load(binding)).record).ended).toBe(true);
+    expect(yield* store.routes!.state(binding, "out", Output.at(at("one")).id)).toBe("live");
+  }).pipe(Effect.provide(host)),
+);
+
+it.live(
+  "absent routed forget propagates owner-record listing failures other than unsupported",
+  () =>
+    Effect.gen(function* () {
+      const owner = yield* OwnerRecords;
+
+      const fault = new StorageFault({
+        operation: "records.list",
+        message: "Listing failed",
+        retryable: true,
+      });
+
+      const failedListing = Layer.succeed(OwnerRecords, {
+        ...owner,
+        list: () => Effect.fail(fault),
+      });
+
+      expect(
+        yield* Projection.forget(declaration().at(params)).pipe(
+          Effect.provide(CheckpointStore.layer.pipe(Layer.fresh, Layer.provide(failedListing))),
+          Effect.flip,
+        ),
+      ).toMatchObject({ reason: "storage-failure", cause: fault });
+    }).pipe(Effect.provide(host)),
+);
+
+it.live("the absent-checkpoint listing exception does not hide a route write failure", () =>
+  Effect.gen(function* () {
+    const unsupported = new ProjectionFault({
+      phase: "checkpoint",
+      reason: "unsupported-composition",
+      message: "The adapter cannot write route records",
+    });
+
+    const { routes } = fromStore({
+      list: () => Effect.succeed([["route", "{}"]]),
+      read: () => Effect.succeedNone,
+      write: () => Effect.fail(unsupported),
+      remove: () => Effect.void,
+      withTransaction: (effect) => effect,
+    });
+
+    expect(
+      yield* routes!
+        .forget(declaration().at(params), { ignoreUnsupportedList: true })
+        .pipe(Effect.flip),
+    ).toBe(unsupported);
+  }),
+);
 
 it.live("opens two routes lazily, reuses them, and preserves older generations", () =>
   Effect.gen(function* () {

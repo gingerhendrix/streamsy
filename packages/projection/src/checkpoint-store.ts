@@ -127,8 +127,11 @@ export interface RouteRecords {
   readonly list: (
     key: ProjectionKey,
   ) => Effect.Effect<ReadonlyArray<RoutedStreamRecord>, ProjectionFault>;
-  /** Mark every route record for the key as forgotten. */
-  readonly forget: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
+  /** Mark every route record for the key as forgotten. An absent checkpoint can tolerate unsupported listing. */
+  readonly forget: (
+    key: ProjectionKey,
+    options?: { readonly ignoreUnsupportedList?: boolean },
+  ) => Effect.Effect<void, ProjectionFault>;
   readonly clear: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
 
@@ -373,12 +376,24 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
           ),
         ),
       ),
-    forget: (key) =>
-      Effect.flatMap(entries(key), (rows) =>
+    forget: (key, options) => {
+      const listed = entries(key);
+
+      const available = options?.ignoreUnsupportedList
+        ? listed.pipe(
+            Effect.catchIf(
+              (fault) => fault.reason === "unsupported-composition",
+              () => Effect.succeed([]),
+            ),
+          )
+        : listed;
+
+      return Effect.flatMap(available, (rows) =>
         Effect.forEach(rows, ([slot]) => store.write(slot, '{"forgotten":true}'), {
           discard: true,
         }),
-      ),
+      );
+    },
     clear: (key) =>
       Effect.flatMap(entries(key), (rows) =>
         Effect.forEach(rows, ([slot]) => store.remove(slot), { discard: true }),

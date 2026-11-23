@@ -36,21 +36,25 @@ const removeWithRoutes = (
 
     const records = yield* requireRouteRecords(store, "checkpoint");
 
-    // Lock the checkpoint before marking routes. Preserve tombstones for close/remove
-    // and treat an undecodable checkpoint like a live one.
-    const forgettable = yield* store.load(key).pipe(
-      Effect.as(true),
+    // An existing row is locked by the load. An absent row cannot be locked,
+    // so do not remove a checkpoint that another runner might create afterward.
+    const checkpoint = yield* store.load(key).pipe(
+      Effect.map(({ record }): "present" | "absent" =>
+        Option.isSome(record) ? "present" : "absent",
+      ),
       Effect.catchIf(
         (fault) => fault.reason === "retired-generation",
-        () => Effect.succeed(false),
+        () => Effect.succeed("retired" as const),
       ),
       Effect.catchIf(
         (fault) => fault.reason === "invalid-record",
-        () => Effect.succeed(true),
+        () => Effect.succeed("present" as const),
       ),
     );
 
-    if (forgettable) {
+    if (checkpoint === "absent") {
+      yield* records.forget(key, { ignoreUnsupportedList: true });
+    } else if (checkpoint === "present") {
       yield* records.forget(key);
       yield* store.remove(key);
     }

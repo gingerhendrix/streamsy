@@ -75,6 +75,12 @@ const checkpoints = (dialect: SqlDialect, url: string) =>
     Layer.provideMerge(dialectClient(dialect, url)),
   );
 
+class RoutedResult extends Streamsy.json<RoutedResult>()(
+  "SqlDialect/RoutedResult",
+  "routed/:shard/g/:generation",
+  { params: { shard: Schema.String, generation: Schema.FiniteFromString }, schema: Schema.Finite },
+) {}
+
 /** Projection checkpoints and transactions joined to storage, as one host process over its own pool. */
 const host = (dialect: SqlDialect, url: string) =>
   Layer.build(
@@ -83,8 +89,25 @@ const host = (dialect: SqlDialect, url: string) =>
         Layer.provideMerge(SqlStorage.layerProtocol()),
         Layer.provideMerge(dialectClient(dialect, url)),
       ),
+      RoutedResult,
     ),
   );
+
+const routed = (id: string) =>
+  Projection.process({
+    id,
+    params: {},
+    inputs: { input },
+    outputs: {
+      result: Projection.perGeneration(RoutedResult, "generation", { routeBy: ["shard"] }),
+    },
+    commit: Commit.transaction,
+    process: ({ input: batch }, _unit, { outputs: { result } }) =>
+      Effect.gen(function* () {
+        if (!Array.isReadonlyArrayNonEmpty(batch.items)) return;
+        yield* Streams.append(yield* result.open({ shard: id }), batch.items);
+      }),
+  });
 
 const count = (sql: SqlClient.SqlClient) =>
   sql<{ readonly n: unknown }>`SELECT COUNT(*) AS n FROM seen`.pipe(
@@ -105,6 +128,69 @@ const failingCheckpoints = Effect.map(CheckpointStore, (owner) =>
 for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`${dialect.name} projection SQL`, () => {
+    test(
+      "routed forget and retire respect owner-record listing support",
+      async () => {
+        if (url === undefined) return;
+        await onFreshDatabase(dialect, url, (fresh) =>
+          Effect.gen(function* () {
+            const context = yield* host(dialect, fresh);
+
+            yield* Effect.gen(function* () {
+              const spec = routed("lifecycle");
+              const binding = spec.at({});
+              const store = yield* CheckpointStore;
+              const target = yield* RoutedResult;
+              const params = { shard: spec.id, generation: 1 };
+              const id = RoutedResult.at(params).id;
+              yield* Projection.forget(binding);
+              expect((yield* store.load(binding)).token).toBe("0");
+
+              yield* initialize;
+              yield* Projection.run(binding);
+              const checkpoint = yield* store.load(binding);
+              expect(yield* store.routes!.state(binding, "result", id)).toBe("live");
+
+              if (dialect.name === "mysql") {
+                const unsupported = { reason: "unsupported-composition" };
+                expect(yield* Projection.forget(binding).pipe(Effect.flip)).toMatchObject(
+                  unsupported,
+                );
+                expect(
+                  yield* Projection.retire(spec, {}, { generation: 1 }).pipe(Effect.flip),
+                ).toMatchObject(unsupported);
+                expect(yield* store.load(binding)).toEqual(checkpoint);
+                expect(yield* store.routes!.state(binding, "result", id)).toBe("live");
+                expect((yield* target.head(params)).closed).toBe(false);
+
+                return;
+              }
+
+              yield* Projection.forget(binding);
+              expect((yield* store.load(binding)).token).toBe("0");
+              expect(yield* store.routes!.state(binding, "result", id)).toBe("forgotten");
+              expect(
+                yield* Projection.retire(spec, {}, { generation: 1, streams: "close" }),
+              ).toEqual({
+                record: "retired",
+                streams: [{ output: "result", id, result: "closed" }],
+              });
+              expect((yield* target.head(params)).closed).toBe(true);
+              expect(yield* Projection.retire(spec, {}, { generation: 1 })).toEqual({
+                record: "already-retired",
+                streams: [{ output: "result", id, result: "removed" }],
+              });
+              expect(yield* target.head(params).pipe(Effect.flip)).toMatchObject({
+                _tag: "StreamNotFound",
+              });
+              expect(yield* store.routes!.list(binding)).toEqual([]);
+            }).pipe(Effect.provide(context));
+          }),
+        );
+      },
+      TIMEOUT_MS,
+    );
+
     test(
       "the checkpoint store reads, writes, overwrites and removes",
       async () => {
@@ -473,6 +559,51 @@ for (const dialect of dialects) {
     );
   });
 }
+
+test.skipIf(sqlDialects.pg.url === undefined)(
+  "Postgres absent routed forget preserves a checkpoint committed after listing routes",
+  async () => {
+    const dialect = sqlDialects.pg;
+
+    if (dialect.url === undefined) return;
+
+    await onFreshDatabase(dialect, dialect.url, (fresh) =>
+      Effect.gen(function* () {
+        const context = yield* host(dialect, fresh);
+        const other = yield* host(dialect, fresh);
+        const store = Context.get(context, CheckpointStore);
+        const routes = store.routes!;
+        const binding = routed("forget-race").at({});
+
+        const commitFromOtherPool = Projection.run(binding).pipe(
+          Effect.provide(other),
+          Effect.orDie,
+        );
+
+        yield* Effect.gen(function* () {
+          yield* initialize;
+
+          const interleaved = {
+            ...store,
+            routes: {
+              ...routes,
+              forget: (...args: Parameters<typeof routes.forget>) =>
+                routes.forget(...args).pipe(Effect.andThen(commitFromOtherPool), Effect.asVoid),
+            },
+          };
+
+          yield* Projection.forget(binding).pipe(
+            Effect.provideService(CheckpointStore, interleaved),
+          );
+          expect((yield* store.load(binding)).token).toBe("1");
+          const id = RoutedResult.at({ shard: binding.id, generation: 1 }).id;
+          expect(yield* routes.state(binding, "result", id)).toBe("live");
+        }).pipe(Effect.provide(context));
+      }),
+    );
+  },
+  TIMEOUT_MS,
+);
 
 class ConcurrentSource extends Streamsy.json<ConcurrentSource>()(
   "SqlConcurrency/Source",
