@@ -101,8 +101,8 @@ If the confirmation reader ends or fails with a typed error, the app clears pend
 
 ## Replay and build measurements
 
-Each page load replays the workspace from the beginning. In one local preview run with 300 issues, the issue list rendered in 559 ms on first load and 379–425 ms across four reloads. These timings include rendering the issue list.
+Each page load replays the workspace from the beginning. Before the change that kept live Views running when write confirmation stops, a local preview measured elapsed time from navigation until the filter count showed 300 and all 300 issue rows appeared in the DOM. The first load took 559 ms. Four reloads took 379–425 ms.
 
-In a local Vite production build, the main JavaScript chunk was 701,553 bytes minified and 198,978 bytes gzipped. The [Foldkit variant](/docs/examples/issue-tracker/foldkit) measured 401,930 bytes minified and 129,711 bytes gzipped in the same comparison.
+That earlier Vite production build measured the main JavaScript chunk at 701,553 bytes minified and 198,978 bytes gzipped. The [Foldkit variant](/docs/examples/issue-tracker/foldkit) measured 401,930 bytes minified and 129,711 bytes gzipped in the same comparison. A production rebuild with the confirmation change measured the main JavaScript chunk at 702,111 bytes minified and 199,160 bytes gzipped.
 
 Run `bun run smoke:issue-tracker-foldkit-views` from the repository root to check replay, live writes, errors, and cancellation against the base API.

@@ -414,7 +414,7 @@ same<Flat<Parameters<WithoutRecords>[1]>, Flat<Parameters<RealWithoutRecords>[1]
 same<ReturnType<WithoutRecords>, ReturnType<RealWithoutRecords>>(true);
 ```
 
-`process` builds the `process` handler of a `Projection.process` declaration with `Commit.transaction`. The declaration must list the State stream of `table` in `outputs`, under the key `spec.output`. The handler writes one collection, `spec.collection`.
+`process` builds the `process` handler of a `Projection.process` declaration on a SQL host. Use `Commit.transaction` to supply the handler’s `SqlClient`, or `Commit.ownerTransaction` with the same client supplied by the host. Both need `Transaction` for the State table’s `sync`. The declaration must list the State stream of `table` in `outputs`, under the key `spec.output`. The handler writes one collection, `spec.collection`.
 
 | Field        | Meaning                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------- |

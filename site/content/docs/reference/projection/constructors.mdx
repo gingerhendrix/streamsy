@@ -45,7 +45,7 @@ Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a sub
 
 Use `Projection.perGeneration(route, generationParam, { routeBy: ["workspace", "date"] })` when a single binding writes to several routes. Each name in `routeBy` must be a distinct route parameter supplied by the handler. The generation parameter comes from the declaration and the remaining route parameters come from the binding with matching decoded types.
 
-Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction` or `Commit.transactionWithCleanup`. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
+Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction` or `Commit.ownerTransaction`. Both commits have cleanup variants that also support routed outputs. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
 
 A live route record is the ownership proof. On later opens, Projection trusts the record and returns the address without checking the stream again. Removing or recreating a routed stream outside Projection is unsupported. To recover, raise `generation`, rebuild, and retire the old generation.
 
@@ -344,7 +344,7 @@ same<
 `fold` declares a projection that folds each entry of a unit into one state value. Each local input entry has `entry.offset`, the storage cursor just after that item; reading from it resumes after the entry. HTTP input entries omit it. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
 
 - `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
-- `commit` is required when `accepted` is set; use `Commit.transaction` or `Commit.producer`. Otherwise it is optional. The default is `Commit.checkpoint`, which saves the encoded value and the input offsets in one compare-and-set write. `Commit.transaction` also fits `fold`.
+- `commit` is required when `accepted` is set. Use `Commit.transaction`, `Commit.ownerTransaction`, or `Commit.producer`. Otherwise `commit` defaults to `Commit.checkpoint`, which saves the encoded value and input offsets in one compare-and-set write.
 - After each unit, the runner encodes the value with `state.schema`. When the value does not encode, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 - When the runner retries a unit, it calls the handler again for each entry. Keep the handler free of external effects. With `Commit.transaction`, the SQL of the handler commits with the checkpoint.
 
@@ -798,8 +798,8 @@ same<typeof wakeAt, typeof Projection.wakeAt>(true);
 
 Return this request from `process` to replace its recorded wake; returning void
 clears it. The time must convert to non-negative safe integer epoch milliseconds,
-otherwise `wakeAt` throws `RangeError`. Timers require `Commit.atLeastOnce` or
-`Commit.transaction`, including compensation wrappers. A typed wake request does
+otherwise `wakeAt` throws `RangeError`. Timers support `Commit.atLeastOnce`, `Commit.transaction`, and
+`Commit.ownerTransaction`, including compensation wrappers. A typed wake request does
 not fit a custom `Commit<void>`. Other handler results are discarded. See
 [Timers](/docs/projections/process#timers) for due units and runner timing.
 
@@ -1093,7 +1093,7 @@ same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 
 - `outputs` names the output streams. Each entry can be a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each output must be a JSON or State stream.
 - The `Emits` object holds an array of items for each output name. A missing name emits nothing. For a name that `outputs` does not declare, the compiler reports an error on `undeclaredOutput`.
-- `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` appends in the SQL transaction of the checkpoint.
+- `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` and `Commit.ownerTransaction` append in the checkpoint owner’s transaction.
 - `at` throws a `RangeError` when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
 - When the value of an output name is not an array, or a change does not fit its collection, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 
@@ -1414,7 +1414,7 @@ same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 
 `mapAccum` declares a projection that keeps a state value and emits output items for each entry. The runner calls the `mapAccum` handler once for each entry, with the state that the previous call returned. The handler returns `[state, emits]`, or an Effect of it.
 
-`state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required: `Commit.producer` or `Commit.transaction`.
+`state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required. Use `Commit.producer`, `Commit.transaction`, `Commit.ownerTransaction`, or a custom commit that accepts the handler result.
 
 ### `Projection.mapAccumBatch`
 

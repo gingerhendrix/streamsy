@@ -34,8 +34,8 @@ convert to a non-negative safe integer; fractional, negative or unsafe times thr
 `RangeError`. Returning nothing clears the timer. Ordinary return values are
 discarded as before.
 
-Timers require `Commit.atLeastOnce` or `Commit.transaction`, including
-`Commit.withCompensation` around either. The compiler rejects a typed wake request
+Timers support `Commit.atLeastOnce`, `Commit.transaction`, and
+`Commit.ownerTransaction`, including compensation wrappers. The compiler rejects a typed wake request
 paired with a custom `Commit<void>`. Custom timer Commits are not supported in this
 release. The context has no timer member.
 
@@ -75,8 +75,8 @@ still run after every input has closed. A due unit contributes no `accepted` row
 Use the recorded `unit.due` to decide what is due. Reading `Clock` is useful for a
 late policy, but must not change which effects a pinned retry repeats. The unit
 key includes the recorded due time, and `Commit.atLeastOnce` pins that time with
-the ranges. `Commit.transaction` saves the next timer with the handler's SQL and
-checkpoint; a failed write rolls them all back.
+the ranges. `Commit.transaction` and `Commit.ownerTransaction` save the next timer
+with the handler's same-owner writes and checkpoint. A failed transaction rolls them all back.
 
 `Projection.run`, `pass` and `follow` make a due unit only when they run at or after
 the time. They do not wait for the deadline. `follow` can discover it on an input

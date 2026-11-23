@@ -318,9 +318,11 @@ Methods available on `TypedExpression<T>` depend on `T`:
 | `ViewBackend.layerMemory`     | `ViewBackend`                                        | `CommitBoundary`      | `never`                                |
 | `ViewBackend.layerMemoryHost` | `ViewBackend`, `CheckpointStore`, `OwnerTransaction` | `never`               | `never`                                |
 
-`layerSql` uses the storage owner's `SqlClient`. Run `View.migrate` with that client before running the circuit. When the transaction for that client is absent, the circuit fails with the non-retryable `ViewFault` `The Views SQL client is outside the storage owner's transaction`.
+`layerSql` uses the storage owner's `SqlClient`. Run `View.migrate` with that client before running the circuit. If the transaction for that client is absent, the fault message is `The Views SQL client is outside the storage owner's transaction`.
 
-`layerMemory` requires an active memory owner transaction on the running fiber when the circuit uses the store. Without it, the operation fails with the non-retryable `ViewFault` `Views memory state requires the active memory owner transaction on this fiber`. `layerMemoryHost` supplies the three services over a memory owner with no streams.
+`layerMemory` requires an active memory owner transaction on the running fiber when the circuit uses the store. If the transaction is absent or belongs to another owner, the fault message is `Views memory state requires the active memory owner transaction on this fiber`. `layerMemoryHost` supplies the three services over a memory owner with no streams.
+
+For either transaction check, a circuit unit fails with a non-retryable `ViewFault`. During `Projection.forget` or `Projection.retire`, the same check fails cleanup with a `ProjectionFault` with phase `checkpoint` and reason `unsupported-composition`. The cleanup fault keeps the same message.
 
 ## Faults
 

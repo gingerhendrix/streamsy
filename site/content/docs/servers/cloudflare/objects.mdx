@@ -109,7 +109,7 @@ A linked stream must come from the link only. When the caller's `layer` also pro
 
 A link is a protocol client. A write through it is a separate request to the owner, so it does not join the caller's transaction:
 
-- `CommitBoundary.withTransaction` and `Commit.transaction` cover the caller's own storage only.
+- `CommitBoundary.withTransaction`, `Commit.transaction`, and `Commit.ownerTransaction` cover the caller's own storage only.
 - A projection that writes to a linked output uses `Commit.producer`. A retry sends the same producer positions, and the owner answers `Duplicate` for an append that it already has. The output must exist before the first append, including wake streams; producer auto-creation covers outputs on its checkpoint owner only. See [Commits](/docs/projections/commits#producer).
 - A fork source and its child must be on the same object.
 - Commits on the owner do not choose bindings of a wakeup on the caller. See [Projections](/docs/servers/cloudflare/alarms#projections).

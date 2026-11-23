@@ -6,7 +6,7 @@ Incrementally maintain Streamsy State collections on SQLite, Postgres, or memory
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Requires Effect 4. The package is pre-1.0. Raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+Requires Effect 4. The package is pre-1.0. Raise a circuit's `generation` when a release note calls for rebuilding after an operator-state layout change. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";
