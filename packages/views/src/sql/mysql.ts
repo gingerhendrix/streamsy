@@ -1,9 +1,12 @@
-import { Array } from "effect";
+import { Array, Effect } from "effect";
+import { ViewFault } from "../view-fault.ts";
 import type { ServerDialect } from "./server.ts";
 
 const text = "LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin";
 
-export const mysql = {
+const migrationLock = "streamsy_view_layout";
+
+export const mysql: ServerDialect = {
   ddl: [
     `CREATE TABLE IF NOT EXISTS streamsy_view_layout (
       id SMALLINT PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL) ENGINE=InnoDB`,
@@ -33,4 +36,33 @@ export const mysql = {
       ", ",
     )}`,
   doNothing: "ON DUPLICATE KEY UPDATE row_hash = row_hash",
-} satisfies Pick<ServerDialect, "ddl" | "upsert" | "doNothing">;
+  layoutExists: (sql) =>
+    sql`SELECT 1 FROM information_schema.tables
+      WHERE table_schema = DATABASE() AND table_name = ${migrationLock}`.pipe(
+      Effect.map(Array.isReadonlyArrayNonEmpty),
+    ),
+  withMigrationLock: (sql, migrate) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connection = yield* sql.reserve;
+
+        // MySQL DDL autocommits. Keep the named lock and every statement on
+        // the reserved session without opening a SQL transaction.
+        return yield* Effect.acquireUseRelease(
+          Effect.gen(function* () {
+            const [row] = yield* sql<{ acquired: number | null }>`SELECT GET_LOCK(
+              ${migrationLock}, 30) AS acquired`;
+
+            if (Number(row?.acquired) !== 1)
+              return yield* new ViewFault({
+                message: `Could not acquire MySQL migration lock ${migrationLock}`,
+              });
+
+            return undefined;
+          }),
+          () => migrate,
+          () => sql`SELECT RELEASE_LOCK(${migrationLock})`.pipe(Effect.ignore),
+        ).pipe(Effect.provideService(sql.transactionService, [connection, 0]));
+      }),
+    ),
+};
