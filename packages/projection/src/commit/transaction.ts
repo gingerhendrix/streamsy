@@ -22,12 +22,12 @@ import {
 
 const removeWithRoutes = (
   key: ProjectionKey,
-): Effect.Effect<void, ProjectionFault, CheckpointStore | Transaction> =>
+  owner: object,
+): Effect.Effect<void, ProjectionFault, CheckpointStore> =>
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
-    const tx = yield* Transaction;
 
-    if (ownerOf(store.load) !== tx.owner)
+    if (ownerOf(store.load) !== owner)
       return yield* new ProjectionFault({
         phase: "checkpoint",
         reason: "unsupported-composition",
@@ -62,9 +62,14 @@ const removeWithRoutes = (
     return yield* Effect.void;
   });
 
-const retireInTransaction = (request: RetireRequest) =>
+type OwnerBoundary = Pick<typeof Transaction.Service, "owner" | "withTransaction">;
+
+interface TransactionContext<P> extends OwnerBoundary {
+  readonly provide: <A, E>(body: Effect.Effect<A, E, P>) => Effect.Effect<A, E>;
+}
+
+const retireInTransaction = (tx: OwnerBoundary, request: RetireRequest) =>
   Effect.gen(function* () {
-    const tx = yield* Transaction;
     const store = yield* CheckpointStore;
 
     if (ownerOf(store.load) !== tx.owner)
@@ -79,6 +84,131 @@ const retireInTransaction = (request: RetireRequest) =>
     );
   });
 
+const makeTransaction = <P, Q>(
+  name: string,
+  context: Effect.Effect<TransactionContext<P>, never, Q>,
+) =>
+  withPrepare(
+    make<Result, P, CheckpointStore | Q>({
+      name,
+      guarantee: "exactly-once",
+      load,
+      remove: (key) =>
+        RoutedOutputs in key
+          ? Effect.flatMap(context, (tx) => tx.withTransaction(removeWithRoutes(key, tx.owner)))
+          : remove(key),
+      retire: (request) => Effect.flatMap(context, (tx) => retireInTransaction(tx, request)),
+      apply: (pending) =>
+        Effect.gen(function* () {
+          const tx = yield* context;
+          const store = yield* CheckpointStore;
+          const { outputs, prepare } = detailsOf(pending);
+          const hasRoutes = RoutedOutputs in pending.key;
+
+          if (hasRoutes && ownerOf(store.load) !== tx.owner)
+            return yield* new ProjectionFault({
+              phase: "checkpoint",
+              reason: "unsupported-composition",
+              message: `The checkpoint store for ${pending.key.id} does not share the transaction owner`,
+            });
+
+          for (const { address, service } of Record.values(outputs)) {
+            if (service.owner !== tx.owner)
+              return yield* new ProjectionFault({
+                phase: "load",
+                reason: "unsupported-composition",
+                message: `Output ${address.id} does not share the transaction owner`,
+              });
+          }
+
+          if (prepare !== undefined) yield* prepare;
+          yield* tx.withTransaction(
+            Effect.gen(function* () {
+              const again = yield* store.load(pending.key);
+
+              if (again.token !== pending.loaded.token)
+                return yield* new ProjectionFault({
+                  phase: "checkpoint",
+                  reason: "token-conflict",
+                  message: `Record of ${pending.key.id} changed while the unit was read. A second writer on the same key is the likely cause. Use one writer per key: the follower or one run at a time.`,
+                });
+
+              if (Option.isNone(again.record)) {
+                for (const { address, service, generation } of Record.values(outputs)) {
+                  if (generation === undefined) continue;
+                  const created = yield* createOutput(address, service.wire);
+
+                  if (!generation.shared && (created.closed || created.nextOffset !== ZERO_OFFSET))
+                    return yield* new ProjectionFault({
+                      phase: "process",
+                      reason: "invalid-output",
+                      message: `Generation-bound output ${address.id} must start empty and open`,
+                    });
+                }
+              }
+
+              const result = yield* pending.run.pipe(
+                tx.provide,
+                Effect.provideService(CurrentOwner, tx.owner),
+                Effect.provideService(TransactionGenerationOutputs, pending.generationOutputs),
+                Effect.provideService(
+                  TransactionRoutedOutputs,
+                  hasRoutes ? routedUnit(pending.key, store) : undefined,
+                ),
+                Effect.catchDefect((defect) =>
+                  isForeignOwner(defect)
+                    ? Effect.fail(
+                        new ProjectionFault({
+                          phase: "process",
+                          reason: "unsupported-composition",
+                          message: defect.message,
+                        }),
+                      )
+                    : Effect.die(defect),
+                ),
+              );
+
+              if (result !== undefined && "outputs" in result) {
+                for (const [name, output] of Record.toEntries(result.outputs)) {
+                  if (!Array.isReadonlyArrayNonEmpty(output.items)) continue;
+                  const resolved = outputs[name];
+
+                  if (resolved === undefined)
+                    return yield* new ProjectionFault({
+                      phase: "process",
+                      reason: "invalid-output",
+                      message: `Undeclared output ${name}`,
+                    });
+                  yield* Streams.append(output.address, output.items).pipe(
+                    Effect.provideService(StreamsWriter, resolved.service.wire),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProjectionFault({
+                          phase: "process",
+                          reason: isStreamsFault(cause)
+                            ? "storage-failure"
+                            : Predicate.isTagged(cause, "StreamBusy")
+                              ? "output-busy"
+                              : "invalid-output",
+                          message: `Cannot append to ${output.address.id}`,
+                          cause,
+                        }),
+                    ),
+                  );
+                }
+              }
+
+              yield* settle(pending, result);
+
+              return yield* Effect.void;
+            }),
+          );
+
+          return yield* Effect.void;
+        }),
+    }),
+  ).pipe(withAccepted);
+
 /**
  * Run and checkpoint a unit on one SQL owner. On the same client the unit joins
  * the outer transaction without a savepoint. With two boundaries over one client,
@@ -92,126 +222,14 @@ const retireInTransaction = (request: RetireRequest) =>
  * Durable Object clients share the driver's transaction, so a second client
  * joins the first. Using a second object's storage on one fiber is unsupported.
  */
-export const transaction = withPrepare(
-  make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
-    name: "transaction",
-    guarantee: "exactly-once",
-    load,
-    remove: (key) =>
-      RoutedOutputs in key
-        ? Transaction.use((tx) => tx.withTransaction(removeWithRoutes(key)))
-        : remove(key),
-    retire: retireInTransaction,
-    apply: (pending) =>
-      Effect.gen(function* () {
-        const tx = yield* Transaction;
-        const store = yield* CheckpointStore;
-        const { outputs, prepare } = detailsOf(pending);
-        const hasRoutes = RoutedOutputs in pending.key;
-
-        if (hasRoutes && ownerOf(store.load) !== tx.owner)
-          return yield* new ProjectionFault({
-            phase: "checkpoint",
-            reason: "unsupported-composition",
-            message: `The checkpoint store for ${pending.key.id} does not share the transaction owner`,
-          });
-
-        for (const { address, service } of Record.values(outputs)) {
-          if (service.owner !== tx.owner)
-            return yield* new ProjectionFault({
-              phase: "load",
-              reason: "unsupported-composition",
-              message: `Output ${address.id} does not share the transaction owner`,
-            });
-        }
-
-        if (prepare !== undefined) yield* prepare;
-        yield* tx.withTransaction(
-          Effect.gen(function* () {
-            const again = yield* store.load(pending.key);
-
-            if (again.token !== pending.loaded.token)
-              return yield* new ProjectionFault({
-                phase: "checkpoint",
-                reason: "token-conflict",
-                message: `Record of ${pending.key.id} changed while the unit was read. A second writer on the same key is the likely cause. Use one writer per key: the follower or one run at a time.`,
-              });
-
-            if (Option.isNone(again.record)) {
-              for (const { address, service, generation } of Record.values(outputs)) {
-                if (generation === undefined) continue;
-                const created = yield* createOutput(address, service.wire);
-
-                if (!generation.shared && (created.closed || created.nextOffset !== ZERO_OFFSET))
-                  return yield* new ProjectionFault({
-                    phase: "process",
-                    reason: "invalid-output",
-                    message: `Generation-bound output ${address.id} must start empty and open`,
-                  });
-              }
-            }
-
-            const result = yield* pending.run.pipe(
-              Effect.provideService(SqlClient.SqlClient, tx.sql),
-              Effect.provideService(CurrentOwner, tx.owner),
-              Effect.provideService(TransactionGenerationOutputs, pending.generationOutputs),
-              Effect.provideService(
-                TransactionRoutedOutputs,
-                hasRoutes ? routedUnit(pending.key, store) : undefined,
-              ),
-              Effect.catchDefect((defect) =>
-                isForeignOwner(defect)
-                  ? Effect.fail(
-                      new ProjectionFault({
-                        phase: "process",
-                        reason: "unsupported-composition",
-                        message: defect.message,
-                      }),
-                    )
-                  : Effect.die(defect),
-              ),
-            );
-
-            if (result !== undefined && "outputs" in result) {
-              for (const [name, output] of Record.toEntries(result.outputs)) {
-                if (!Array.isReadonlyArrayNonEmpty(output.items)) continue;
-                const resolved = outputs[name];
-
-                if (resolved === undefined)
-                  return yield* new ProjectionFault({
-                    phase: "process",
-                    reason: "invalid-output",
-                    message: `Undeclared output ${name}`,
-                  });
-                yield* Streams.append(output.address, output.items).pipe(
-                  Effect.provideService(StreamsWriter, resolved.service.wire),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProjectionFault({
-                        phase: "process",
-                        reason: isStreamsFault(cause)
-                          ? "storage-failure"
-                          : Predicate.isTagged(cause, "StreamBusy")
-                            ? "output-busy"
-                            : "invalid-output",
-                        message: `Cannot append to ${output.address.id}`,
-                        cause,
-                      }),
-                  ),
-                );
-              }
-            }
-
-            yield* settle(pending, result);
-
-            return yield* Effect.void;
-          }),
-        );
-
-        return yield* Effect.void;
-      }),
-  }),
-).pipe(withAccepted);
+export const transaction = makeTransaction<SqlClient.SqlClient, Transaction>(
+  "transaction",
+  Effect.map(Transaction, (tx) => ({
+    owner: tx.owner,
+    withTransaction: (body) => tx.withTransaction(body),
+    provide: Effect.provideService(SqlClient.SqlClient, tx.sql),
+  })),
+);
 
 /**
  * Clean up binding state in the owner's SQL transaction on forget and retire.
@@ -225,14 +243,14 @@ export const transactionWithCleanup = (
     remove: (key: ProjectionKey) =>
       Transaction.use((tx) =>
         tx.withTransaction(
-          (RoutedOutputs in key ? removeWithRoutes(key) : remove(key)).pipe(
+          (RoutedOutputs in key ? removeWithRoutes(key, tx.owner) : remove(key)).pipe(
             Effect.andThen(() => cleanup(key, tx.sql)),
           ),
         ),
       ),
     retire: (request: RetireRequest) =>
       Transaction.use((tx) =>
-        retireInTransaction({
+        retireInTransaction(tx, {
           ...request,
           cleanup: request.cleanup.pipe(Effect.andThen(() => cleanup(request.key, tx.sql))),
         }),
