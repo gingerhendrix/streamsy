@@ -12,10 +12,26 @@ const edge = HttpRouter.toWebHandler(
   { disableLogger: true },
 );
 
+const refused = new Set<string>();
+
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
-  fetch: (request) => edge.handler(request),
+  fetch: (request) => {
+    const { method } = request;
+
+    if (
+      new URL(request.url).pathname === "/streams/shop/recovering" &&
+      (method === "HEAD" || method === "GET") &&
+      !refused.has(method)
+    ) {
+      refused.add(method);
+
+      return new Response("Test server is temporarily unavailable", { status: 503 });
+    }
+
+    return edge.handler(request);
+  },
 });
 
 // oxlint-disable-next-line effecttsgo/global-console -- The parent reads the server address from stdout.

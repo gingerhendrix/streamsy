@@ -1,14 +1,31 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test owns the backend and may instrument one service. */
 import { expect, it } from "@effect/vitest";
-import { Streamsy } from "@streamsy/core";
+import { StorageFault, Streamsy } from "@streamsy/core";
 import { attachOwner, ownerOf } from "@streamsy/core/internal";
-import { CheckpointStore, ProjectionFault } from "@streamsy/projection";
-import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import {
+  CheckpointStore,
+  OwnerTransaction,
+  ProjectionFault,
+  ProjectionRetry,
+} from "@streamsy/projection";
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Schedule,
+  Scope,
+  Stream,
+} from "effect";
 import { View, ViewFault } from "../../src/index.ts";
 import { memoryStateOf } from "../../src/memory/backend.ts";
 import { currentBackend } from "../../src/view-backend.ts";
 import { orders, Shop } from "../circuit/support/shop.ts";
 import { hostFor, sqlite } from "../support/backends.ts";
+import { memoryDump } from "../support/memory.ts";
 import {
   awaitMatch,
   checkpointKey,
@@ -232,5 +249,264 @@ it.live("leaves the caller scope reusable when acquisition itself is interrupted
     yield* awaitMatch(live.rows("orders"), ({ caughtUp }) => caughtUp);
     yield* Scope.close(scope, Exit.void);
     yield* assertClean;
+  }).pipe(Effect.provide(liveHost)),
+);
+
+const catchUpBackoff = Effect.gen(function* () {
+  const shop = yield* Shop;
+  const ambientClock = yield* Clock.Clock;
+  const sleeping = yield* Deferred.make<void>();
+  const stopped = yield* Deferred.make<void>();
+
+  const offline = new StorageFault({
+    operation: "head",
+    message: "head remains unavailable",
+    retryable: true,
+  });
+
+  const clock: Clock.Clock = {
+    currentTimeMillis: ambientClock.currentTimeMillis,
+    currentTimeMillisUnsafe: () => ambientClock.currentTimeMillisUnsafe(),
+    currentTimeNanos: ambientClock.currentTimeNanos,
+    currentTimeNanosUnsafe: () => ambientClock.currentTimeNanosUnsafe(),
+    monotonicTimeNanos: ambientClock.monotonicTimeNanos,
+    monotonicTimeNanosUnsafe: () => ambientClock.monotonicTimeNanosUnsafe(),
+    sleep: (duration: Duration.Duration) =>
+      Duration.toMillis(duration) !== 3_600_000
+        ? ambientClock.sleep(duration)
+        : Deferred.succeed(sleeping, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(stopped, undefined)),
+          ),
+  };
+
+  const open = liveOrders.at(params).pipe(
+    Effect.provideService(Shop, {
+      ...shop,
+      wire: { ...shop.wire, head: () => Effect.fail(offline) },
+    }),
+    Effect.provideService(Clock.Clock, clock),
+    Effect.provideService(ProjectionRetry, Schedule.spaced("1 hour")),
+  );
+
+  return { open, sleeping, stopped };
+});
+
+it.live("a fatal follower fault interrupts the catch-up backoff and fails its waiters", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(1);
+    const store = yield* CheckpointStore;
+    const { open, sleeping, stopped } = yield* catchUpBackoff;
+    const failUnit = yield* Deferred.make<void>();
+
+    const fault = new ProjectionFault({
+      phase: "checkpoint",
+      reason: "invalid-record",
+      message: "the follower cannot settle this unit",
+    });
+
+    const live = yield* open.pipe(
+      Effect.provideService(CheckpointStore, {
+        ...store,
+        compareAndSet: () => Deferred.await(failUnit).pipe(Effect.andThen(fault)),
+      }),
+    );
+
+    yield* Deferred.await(sleeping);
+
+    const ready = yield* live.caughtUp.pipe(
+      Effect.flip,
+      Effect.forkScoped({ startImmediately: true }),
+    );
+
+    yield* Deferred.succeed(failUnit, undefined);
+    expect(yield* Fiber.join(ready)).toBe(fault);
+    expect(yield* live.changes("orders").pipe(Stream.runDrain, Effect.flip)).toBe(fault);
+    expect(yield* Deferred.isDone(stopped)).toBe(true);
+    expect(yield* live.rows("orders")).toEqual({ rows: [], caughtUp: false });
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("scope close interrupts and joins the catch-up backoff", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const { open, sleeping, stopped } = yield* catchUpBackoff;
+    const scope = yield* Scope.fork(yield* Effect.scope);
+    const live = yield* open.pipe(Scope.provide(scope));
+
+    yield* Deferred.await(sleeping);
+    const ready = yield* live.caughtUp.pipe(Effect.forkScoped({ startImmediately: true }));
+
+    yield* Scope.close(scope, Exit.void);
+    expect(yield* Deferred.isDone(stopped)).toBe(true);
+    const exit = yield* Fiber.await(ready);
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    yield* assertClean;
+
+    const reopened = yield* liveOrders.at(params);
+    yield* reopened.caughtUp;
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live(
+  "rolling back a scope close keeps the checkpoint, heap state and reservation together",
+  () =>
+    Effect.gen(function* () {
+      yield* createShop;
+      yield* putOrder(1);
+      const scope = yield* Scope.fork(yield* Effect.scope);
+      const live = yield* liveOrders.at(params).pipe(Scope.provide(scope));
+      yield* live.caughtUp;
+
+      const owner = yield* OwnerTransaction;
+      const store = yield* CheckpointStore;
+      const saved = yield* store.load(checkpointKey);
+      const state = yield* memoryDump;
+      const snapshot = yield* live.rows("orders");
+
+      expect(saved.token).not.toBe("0");
+      expect(state.integrals.length).toBeGreaterThan(0);
+      expect(snapshot.rows).toHaveLength(1);
+      const abort = "rollback the scope close";
+
+      const result = yield* owner
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* Scope.close(scope, Exit.void);
+            yield* assertClean;
+            expect(yield* live.rows("orders")).toBe(snapshot);
+
+            return yield* Effect.fail(abort);
+          }),
+        )
+        .pipe(Effect.flip);
+
+      expect(result).toBe(abort);
+      expect(yield* store.load(checkpointKey)).toEqual(saved);
+      expect(yield* memoryDump).toEqual(state);
+      expect(yield* live.rows("orders")).toBe(snapshot);
+      expect(yield* liveOrders.at(params).pipe(Effect.flip)).toMatchObject({
+        _tag: "ViewFault",
+        message: "View.live live-orders is already active for these parameters",
+      });
+
+      yield* owner.withTransaction(putOrder(2));
+
+      const other = yield* View.live({
+        id: "after-rollback",
+        params: Shop.paramCodecs,
+        views: { orders },
+      }).at(params);
+
+      yield* other.caughtUp;
+      expect((yield* other.rows("orders")).rows[0]?.total).toBe(2);
+      expect(yield* live.rows("orders")).toBe(snapshot);
+      expect(yield* store.load(checkpointKey)).toEqual(saved);
+    }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("a transient poll fault leaves the captured startup tail fixed", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(1);
+    const shop = yield* Shop;
+    const store = yield* CheckpointStore;
+    const pollingFailed = yield* Deferred.make<void>();
+    const retryPoll = yield* Deferred.make<void>();
+    const settlingLaterWrite = yield* Deferred.make<void>();
+    let heads = 0;
+    let holdSettlement = false;
+
+    const offline = new StorageFault({
+      operation: "head",
+      message: "the catch-up poll could not verify the tail",
+      retryable: true,
+    });
+
+    const live = yield* View.live({
+      id: "fixed-start",
+      params: Shop.paramCodecs,
+      views: { orders },
+      retry: Schedule.spaced("10 millis").pipe(
+        Schedule.tap(() =>
+          Deferred.succeed(pollingFailed, undefined).pipe(
+            Effect.andThen(Deferred.await(retryPoll)),
+          ),
+        ),
+      ),
+    })
+      .at(params)
+      .pipe(
+        Effect.provideService(Shop, {
+          ...shop,
+          wire: {
+            ...shop.wire,
+            head: (id) =>
+              Effect.suspend(() => (++heads === 2 ? Effect.fail(offline) : shop.wire.head(id))),
+          },
+        }),
+        Effect.provideService(CheckpointStore, {
+          ...store,
+          compareAndSet: (...args) =>
+            holdSettlement
+              ? Deferred.succeed(settlingLaterWrite, undefined).pipe(Effect.andThen(Effect.never))
+              : store.compareAndSet(...args),
+        }),
+      );
+
+    yield* Deferred.await(pollingFailed);
+    yield* awaitMatch(live.rows("orders"), ({ rows }) => rows[0]?.total === 1);
+    holdSettlement = true;
+    yield* putOrder(2);
+    yield* Deferred.await(settlingLaterWrite);
+
+    yield* Deferred.succeed(retryPoll, undefined);
+    yield* live.caughtUp;
+    const snapshot = yield* live.rows("orders");
+    expect(snapshot).toEqual({
+      rows: [{ orderId: "o1", customerId: "c1", total: 1 }],
+      caughtUp: true,
+    });
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("exhausting a finite retry schedule for a head leaves catch-up pending", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const shop = yield* Shop;
+    let first = true;
+
+    const offline = new StorageFault({
+      operation: "head",
+      message: "one head failed with no scheduled retries",
+      retryable: true,
+    });
+
+    const live = yield* View.live({
+      id: "finite-retry",
+      params: Shop.paramCodecs,
+      views: { orders },
+      retry: Schedule.recurs(0),
+    })
+      .at(params)
+      .pipe(
+        Effect.provideService(Shop, {
+          ...shop,
+          wire: {
+            ...shop.wire,
+            head: (id) =>
+              Effect.suspend(() => {
+                if (!first) return shop.wire.head(id);
+                first = false;
+
+                return Effect.fail(offline);
+              }),
+          },
+        }),
+      );
+
+    yield* live.caughtUp.pipe(Effect.timeout("3 seconds"));
+    expect(yield* live.rows("orders")).toEqual({ rows: [], caughtUp: true });
   }).pipe(Effect.provide(liveHost)),
 );

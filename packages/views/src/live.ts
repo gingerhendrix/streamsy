@@ -7,6 +7,7 @@ import {
   OwnerTransaction,
   Projection,
   ProjectionFault,
+  ProjectionRetry,
   type ProjectionKey,
   type Slices,
   type Unit,
@@ -19,9 +20,9 @@ import {
   Order,
   Predicate,
   Record,
+  Schedule,
   Scope,
   Stream,
-  type Schedule,
 } from "effect";
 import type { Backend } from "./backend.ts";
 import {
@@ -236,6 +237,8 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
   return { bind, names, id, retry };
 }
 
+const retryable = (fault: ProjectionFault) => fault.retryable;
+
 /** Run views in a scoped follower and read committed heap snapshots. */
 export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
   definition: LiveDefinition<C, V>,
@@ -312,17 +315,26 @@ export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
           );
 
           const follow = Effect.gen(function* () {
-            const tails = yield* Projection.tails(binding).pipe(Effect.exit);
+            const schedule = plan.retry ?? (yield* ProjectionRetry);
 
-            const catchUp = Exit.isFailure(tails)
-              ? outputs.finishCatchUp(tails)
-              : Projection.caughtUp(binding, tails.value).pipe(
-                  Effect.exit,
-                  Effect.flatMap(outputs.finishCatchUp),
-                );
+            const retryCheck = <A, R>(check: Effect.Effect<A, ProjectionFault, R>) =>
+              check.pipe(
+                Effect.retry({ while: retryable, schedule }),
+                // A finite policy can run out while the follower is still live.
+                // Start another check at the normal catch-up polling cadence.
+                Effect.retry({ while: retryable, schedule: Schedule.spaced("250 millis") }),
+              );
+
+            const catchUp = retryCheck(Projection.tails(binding)).pipe(
+              Effect.flatMap((tails) => retryCheck(Projection.caughtUp(binding, tails))),
+              Effect.matchEffect({
+                onSuccess: () => outputs.finishCatchUp(Exit.void),
+                onFailure: (fault) => outputs.finishCatchUp(Exit.fail(fault)),
+              }),
+            );
 
             yield* Effect.all(
-              [Projection.follow(binding, { retry: plan.retry }).pipe(Stream.runDrain), catchUp],
+              [Projection.follow(binding, { retry: schedule }).pipe(Stream.runDrain), catchUp],
               { concurrency: "unbounded", discard: true },
             );
           }).pipe(Effect.exit, Effect.flatMap(outputs.finishFollow));
