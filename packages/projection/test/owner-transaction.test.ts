@@ -4,7 +4,14 @@ import { Cause, Context, Effect, Exit, Layer, Option, Ref, Schema } from "effect
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
-import { OwnerRecords } from "@streamsy/core/internal";
+import {
+  CurrentOwner,
+  enlist,
+  isForeignOwner,
+  isMemoryEnlistDefect,
+  ownerOf,
+  OwnerRecords,
+} from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import {
@@ -397,4 +404,265 @@ layer(sqlite)((it) => {
       expect((yield* store.load(projection)).token).toBe("1");
     }),
   );
+});
+
+layer(sqlite, { buildPerTest: true })((it) => {
+  it.effect("retire cleanup sees the transaction owner over the ambient owner", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const tx = yield* OwnerTransaction;
+      const ambient = {};
+
+      const declaration = Projection.process({
+        ...common,
+        id: "retire-current-owner",
+        commit: Commit.ownerTransactionWithCleanup(() =>
+          Effect.map(CurrentOwner, (owner) => {
+            expect(owner).toBe(tx.owner);
+          }),
+        ),
+        process: () => Effect.void,
+      });
+
+      expect(
+        yield* Projection.retire(declaration, {}, { generation }).pipe(
+          Effect.provideService(CurrentOwner, ambient),
+        ),
+      ).toMatchObject({ record: "retired" });
+    }),
+  );
+
+  it.effect("retire cannot enter an application-owned raw SQLite transaction", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let called = false;
+
+      const declaration = Projection.process({
+        ...common,
+        id: "retire-raw-sql",
+        commit: Commit.ownerTransactionWithCleanup(() =>
+          Effect.sync(() => {
+            called = true;
+          }),
+        ),
+        process: () => Effect.void,
+      });
+
+      const exit = yield* sql
+        .withTransaction(Projection.retire(declaration, {}, { generation }))
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
+        message: "Commit boundary cannot enter an unowned ambient SQL transaction",
+      });
+      expect(called).toBe(false);
+    }),
+  );
+
+  it.effect("enlist reports the tagged defect inside a SQLite owner transaction", () =>
+    Effect.gen(function* () {
+      const boundary = yield* CommitBoundary;
+      const participant = { onCommit: () => {}, onRollback: () => {} };
+
+      const exit = yield* boundary
+        .withTransaction(enlist(ownerOf(boundary), participant))
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && isMemoryEnlistDefect(Cause.squash(exit.cause))).toBe(true);
+    }),
+  );
+
+  const foreignSink = Layer.build(MemoryStorage.layer(Streamsy.group(Sink))).pipe(
+    Effect.map(Context.get(Sink)),
+  );
+
+  it.effect("owner commit rejects a foreign handler write and rolls back its output", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const local = yield* Sink;
+      const foreign = yield* foreignSink;
+      const store = yield* CheckpointStore;
+      yield* foreign.create(outputParams);
+
+      const projection = Projection.process({
+        ...common,
+        id: "foreign-handler-write",
+        outputs,
+        commit: Commit.ownerTransaction,
+        process: () =>
+          local
+            .append(outputParams, [1])
+            .pipe(Effect.andThen(() => foreign.append(outputParams, [2]))),
+      }).at({});
+
+      expect(yield* Projection.run(projection).pipe(Effect.flip)).toMatchObject({
+        phase: "process",
+        reason: "unsupported-composition",
+      });
+      expect((yield* store.load(projection)).token).toBe("0");
+      expect(yield* local.head(outputParams).pipe(Effect.flip)).toMatchObject(missing);
+      expect((yield* foreign.collect(outputParams)).items).toEqual([]);
+    }),
+  );
+
+  for (const operation of ["forget", "retire"] as const) {
+    it.effect(`${operation} rejects a foreign write in owner cleanup`, () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const local = yield* Sink;
+        const foreign = yield* foreignSink;
+        const store = yield* CheckpointStore;
+        yield* foreign.create(outputParams);
+
+        const declaration = Projection.process({
+          ...common,
+          id: `foreign-cleanup-${operation}`,
+          outputs,
+          commit: Commit.ownerTransactionWithCleanup(() =>
+            foreign.append(outputParams, [2]).pipe(Effect.asVoid, Effect.orDie),
+          ),
+          process: () => local.append(outputParams, [1]),
+        });
+
+        const projection = declaration.at({});
+        yield* Projection.run(projection);
+        const before = yield* store.load(projection);
+
+        const cleanup =
+          operation === "forget"
+            ? Projection.forget(projection)
+            : Projection.retire(declaration, {}, { generation }).pipe(Effect.asVoid);
+
+        const exit = yield* cleanup.pipe(
+          Effect.provideService(CurrentOwner, foreign.owner),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit) && isForeignOwner(Cause.squash(exit.cause))).toBe(true);
+        expect(yield* store.load(projection)).toEqual(before);
+        expect((yield* local.collect(outputParams)).items).toEqual([1]);
+        expect((yield* foreign.collect(outputParams)).items).toEqual([]);
+      }),
+    );
+
+    it.effect(`${operation} rejects a foreign checkpoint store`, () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const store = yield* CheckpointStore;
+
+        const foreign = Context.get(
+          yield* Layer.build(CheckpointStore.layerMemory),
+          CheckpointStore,
+        );
+
+        let called = false;
+
+        const declaration = Projection.process({
+          ...common,
+          id: `foreign-checkpoint-${operation}`,
+          commit: Commit.ownerTransactionWithCleanup(() =>
+            Effect.sync(() => {
+              called = true;
+            }),
+          ),
+          process: () => Effect.void,
+        });
+
+        const projection = declaration.at({});
+        yield* Projection.run(projection);
+        const before = yield* store.load(projection);
+        yield* foreign.compareAndSet(projection, "0", Option.getOrThrow(before.record));
+        const foreignBefore = yield* foreign.load(projection);
+
+        const cleanup =
+          operation === "forget"
+            ? Projection.forget(projection)
+            : Projection.retire(declaration, {}, { generation }).pipe(Effect.asVoid);
+
+        expect(
+          yield* cleanup.pipe(Effect.provideService(CheckpointStore, foreign), Effect.flip),
+        ).toMatchObject({ phase: "checkpoint", reason: "unsupported-composition" });
+        expect(called).toBe(false);
+        expect(yield* foreign.load(projection)).toEqual(foreignBefore);
+        expect(yield* store.load(projection)).toEqual(before);
+      }),
+    );
+
+    for (const enclosing of [false, true]) {
+      it.effect(
+        `captured SQLite client uses a savepoint during ${operation} ${enclosing ? "inside the owner" : "standalone"}`,
+        () =>
+          Effect.gen(function* () {
+            yield* seed;
+            const sql = yield* SqlClient.SqlClient;
+            const boundary = yield* CommitBoundary;
+            const sink = yield* Sink;
+            const store = yield* CheckpointStore;
+            yield* sql`CREATE TABLE cleanup_effects (id TEXT NOT NULL)`;
+
+            const declaration = Projection.process({
+              ...common,
+              id: `savepoint-${operation}`,
+              outputs,
+              commit: Commit.ownerTransactionWithCleanup((key) =>
+                sql
+                  .withTransaction(
+                    Effect.gen(function* () {
+                      const transaction = yield* Effect.serviceOption(sql.transactionService);
+                      expect(Option.map(transaction, ([, depth]) => depth)).toEqual(
+                        Option.some(enclosing ? 2 : 1),
+                      );
+                      yield* sql`INSERT INTO cleanup_effects VALUES (${key.id})`;
+                    }),
+                  )
+                  .pipe(Effect.orDie),
+              ),
+              process: () => sink.append(outputParams, [1]),
+            });
+
+            const projection = declaration.at({});
+            yield* Projection.run(projection);
+            const before = yield* store.load(projection);
+
+            const cleanup =
+              operation === "forget"
+                ? Projection.forget(projection)
+                : Projection.retire(declaration, {}, { generation }).pipe(Effect.asVoid);
+
+            const checkCleaned = Effect.gen(function* () {
+              expect(yield* sql`SELECT id FROM cleanup_effects`).toEqual([{ id: projection.id }]);
+
+              if (operation === "forget") {
+                expect((yield* store.load(projection)).token).toBe("0");
+              } else {
+                expect(yield* store.load(projection).pipe(Effect.flip, Effect.orDie)).toMatchObject(
+                  {
+                    reason: "retired-generation",
+                  },
+                );
+                expect(
+                  yield* sink.head(outputParams).pipe(Effect.flip, Effect.orDie),
+                ).toMatchObject(missing);
+              }
+            });
+
+            if (enclosing) {
+              const outer = boundary.withTransaction(
+                sql
+                  .withTransaction(cleanup.pipe(Effect.andThen(checkCleaned)))
+                  .pipe(Effect.andThen(Effect.fail("later failure"))),
+              );
+
+              expect(yield* outer.pipe(Effect.flip)).toBe("later failure");
+              expect(yield* sql`SELECT id FROM cleanup_effects`).toEqual([]);
+              expect(yield* store.load(projection)).toEqual(before);
+              expect((yield* sink.collect(outputParams)).items).toEqual([1]);
+            } else {
+              yield* cleanup;
+              yield* checkCleaned;
+            }
+          }),
+      );
+    }
+  }
 });

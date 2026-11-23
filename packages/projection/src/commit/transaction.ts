@@ -1,4 +1,4 @@
-import { Array, Effect, Option, Predicate, Record } from "effect";
+import { Array, Context, Effect, Option, Predicate, Record } from "effect";
 import { SqlClient } from "effect/sql";
 import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner, ownerOf } from "@streamsy/core/internal";
@@ -298,7 +298,11 @@ const removeInOwnerTransaction = <R>(
     }),
   );
 
-/** Commit the unit and checkpoint together on a memory or SQL storage host. */
+/**
+ * Commit the unit and checkpoint together on a memory or SQL storage host.
+ * A SqlClient used by the handler must be the storage owner's client for its
+ * statements to join the transaction.
+ */
 export const ownerTransaction: OwnerCommit<TransactionResult, CheckpointStore | OwnerTransaction> =
   Object.assign(
     makeTransaction<never, OwnerTransaction>(
@@ -339,7 +343,14 @@ export const ownerTransactionWithCleanup = <R>(
         return yield* retireInTransaction(tx, {
           ...request,
           cleanup: request.cleanup.pipe(
-            Effect.andThen(() => cleanup(request.key).pipe(Effect.provideContext(services))),
+            Effect.andThen(() =>
+              cleanup(request.key).pipe(
+                // The boundary installed its owner and connection after capture.
+                Effect.updateContext((inner: Context.Context<never>) =>
+                  Context.merge(services, inner),
+                ),
+              ),
+            ),
           ),
         });
       }),
