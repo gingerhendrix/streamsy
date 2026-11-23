@@ -100,19 +100,28 @@ export interface RoutedStreamRecord {
 
 /** Access the route inventory in the checkpoint owner's transaction. */
 export interface RouteRecords {
+  /** Whether this output owns the stream, including after a forget. */
   readonly has: (
     key: ProjectionKey,
     output: string,
     streamId: string,
   ) => Effect.Effect<boolean, ProjectionFault>;
+  readonly state: (
+    key: ProjectionKey,
+    output: string,
+    streamId: string,
+  ) => Effect.Effect<"absent" | "live" | "forgotten", ProjectionFault>;
   readonly add: (
     key: ProjectionKey,
     output: string,
     streamId: string,
   ) => Effect.Effect<void, ProjectionFault>;
+  /** Lists every route record for the key in unspecified order. */
   readonly list: (
     key: ProjectionKey,
   ) => Effect.Effect<ReadonlyArray<RoutedStreamRecord>, ProjectionFault>;
+  /** Mark every route record for the key as forgotten. */
+  readonly forget: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
   readonly clear: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
 
@@ -297,6 +306,13 @@ const RouteKeyJson = Schema.fromJsonString(
   ]),
 );
 
+const RouteValueJson = Schema.fromJsonString(
+  Schema.Struct({ forgotten: Schema.optionalKey(Schema.Literal(true)) }),
+);
+
+const routeSlot = (key: ProjectionKey, output: string, streamId: string) =>
+  encodeKey([...routeKeyParts(key), output, streamId]);
+
 const routeRecords = (store: EncodedStore): RouteRecords => {
   const entries = (key: ProjectionKey) =>
     store.list === undefined
@@ -311,11 +327,30 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
 
   return {
     has: (key, output, streamId) =>
-      store
-        .read(encodeKey([...routeKeyParts(key), output, streamId]))
-        .pipe(Effect.map(Option.isSome)),
-    add: (key, output, streamId) =>
-      store.write(encodeKey([...routeKeyParts(key), output, streamId]), "{}"),
+      store.read(routeSlot(key, output, streamId)).pipe(Effect.map(Option.isSome)),
+    state: (key, output, streamId) =>
+      Effect.gen(function* () {
+        const encoded = yield* store.read(routeSlot(key, output, streamId));
+
+        if (Option.isNone(encoded)) return "absent";
+
+        const value = yield* Schema.decodeEffect(RouteValueJson, {
+          onExcessProperty: "error",
+        })(encoded.value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectionFault({
+                phase: "process",
+                reason: "invalid-record",
+                message: `Invalid routed output record for ${key.id}: ${output} at ${streamId}`,
+                cause,
+              }),
+          ),
+        );
+
+        return value.forgotten === true ? "forgotten" : "live";
+      }),
+    add: (key, output, streamId) => store.write(routeSlot(key, output, streamId), "{}"),
     list: (key) =>
       Effect.flatMap(entries(key), (rows) =>
         Effect.forEach(rows, ([slot]) =>
@@ -332,6 +367,12 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
             ),
           ),
         ),
+      ),
+    forget: (key) =>
+      Effect.flatMap(entries(key), (rows) =>
+        Effect.forEach(rows, ([slot]) => store.write(slot, '{"forgotten":true}'), {
+          discard: true,
+        }),
       ),
     clear: (key) =>
       Effect.flatMap(entries(key), (rows) =>

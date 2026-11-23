@@ -145,7 +145,7 @@ export const routedHandle = <R>(
 
           const records = yield* requireRouteRecords(unit.store, "process");
 
-          if (!(yield* records.has(key, name, address.id))) {
+          if ((yield* records.state(key, name, address.id)) !== "live") {
             for (const [other, definition] of routed) {
               if (
                 other !== name &&

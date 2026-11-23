@@ -218,6 +218,8 @@ export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup:
   if (!Result.isFailure(rolledBack) || rolledBack.failure._tag !== "StreamNotFound")
     throw new Error("Invalid route left a stream from the failed unit");
 
+  yield* Projection.forget(binding);
+  compare(yield* histories(1), updated, "Forget changed the routed streams");
   const retired = yield* Projection.retire(spec, {}, { generation: 1 });
   const results = retired.routed?.output;
 

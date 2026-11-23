@@ -36,9 +36,10 @@ const removeWithRoutes = (
 
     const records = yield* requireRouteRecords(store, "checkpoint");
 
-    // Load first to serialize with retirement. A tombstone preserves records for close/remove.
-    const live = yield* store.load(key).pipe(
-      Effect.map(({ record }) => Option.isSome(record)),
+    // Lock the checkpoint before marking routes. Preserve tombstones for close/remove
+    // and treat an undecodable checkpoint like a live one.
+    const forgettable = yield* store.load(key).pipe(
+      Effect.as(true),
       Effect.catchIf(
         (fault) => fault.reason === "retired-generation",
         () => Effect.succeed(false),
@@ -49,8 +50,8 @@ const removeWithRoutes = (
       ),
     );
 
-    if (live) {
-      yield* records.clear(key);
+    if (forgettable) {
+      yield* records.forget(key);
       yield* store.remove(key);
     }
 

@@ -1,10 +1,14 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test entry point provisions its own isolated SQLite host. */
 import { expect, test } from "vitest";
 import { it } from "@effect/vitest";
-import { Array, Effect, Option, Result, Schema } from "effect";
+import { Array, Effect, Layer, Option, Result, Schedule, Schema } from "effect";
+import { TestClock } from "effect/testing";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { OwnerRecords } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/projection";
+import { recordKey } from "@streamsy/projection/checkpoint";
+import { eventually } from "./support/eventually.ts";
 import { withFamilies } from "./support/families.ts";
 import { layerSqlite } from "./support/sqlite.ts";
 
@@ -40,6 +44,7 @@ const declaration = (generation = 1) =>
   Projection.process({
     ...definition,
     generation,
+    retry: { schedule: Schedule.spaced("1 second") },
     process: (batch, _unit, { outputs: { out } }) =>
       Effect.gen(function* () {
         const { wire } = yield* Output;
@@ -95,12 +100,16 @@ it.live("opens two routes lazily, reuses them, and preserves older generations",
 
     yield* seed([{ date: "one", n: 4 }]);
 
-    const noCreate = {
+    const noStreamRead = {
       ...target,
-      wire: { ...target.wire, create: () => Effect.die("Opened route was created again") },
+      wire: {
+        ...target.wire,
+        create: () => Effect.die("Opened route was created again"),
+        head: () => Effect.die("Opened route was checked again"),
+      },
     };
 
-    yield* Projection.run(binding).pipe(Effect.provideService(Output, noCreate));
+    yield* Projection.run(binding).pipe(Effect.provideService(Output, noStreamRead));
     const before = yield* target.wire.read(Output.at(at("one")).id, { offset: ZERO_OFFSET });
     yield* Projection.run(newer);
     expect((yield* target.collect(at("one", 2))).items).toEqual([1, 4]);
@@ -160,6 +169,7 @@ it.live("keeps closed routes for a later removal and makes retirement repeatable
     });
     expect(yield* store.routes!.list(binding)).toHaveLength(2);
     yield* Projection.forget(binding);
+    expect(yield* store.routes!.state(binding, "out", Output.at(at("one")).id)).toBe("live");
     expect(yield* retire("remove")).toEqual({
       record: "already-retired",
       outputs: {},
@@ -177,17 +187,261 @@ it.live("keeps closed routes for a later removal and makes retirement repeatable
   }).pipe(Effect.provide(host)),
 );
 
-it.live("forget clears route ownership and a replay still requires empty streams", () =>
+it.live("case A: explicit forget preserves all routes for retirement", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const target = yield* Output;
+    yield* seed([
+      { date: "one", n: 1 },
+      { date: "two", n: 2 },
+    ]);
+    yield* Projection.run(binding);
+    yield* Projection.forget(binding);
+
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
+      record: "retired",
+      outputs: {},
+      routed: retiredRoutes("removed"),
+    });
+
+    for (const date of ["one", "two"]) {
+      expect(yield* target.head(at(date)).pipe(Effect.flip)).toMatchObject({
+        _tag: "StreamNotFound",
+      });
+    }
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("case B: a gone input preserves all routes for retirement", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const source = yield* Source;
+    const target = yield* Output;
+    const store = yield* CheckpointStore;
+    yield* seed([
+      { date: "one", n: 1 },
+      { date: "two", n: 2 },
+    ]);
+    yield* Projection.run(binding);
+    yield* source.wire.remove(Source.at(params).id);
+    expect((yield* Projection.run(binding)).status).toBe("source-closed");
+    expect((yield* store.load(binding)).token).toBe("0");
+
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
+      record: "retired",
+      outputs: {},
+      routed: retiredRoutes("removed"),
+    });
+
+    for (const date of ["one", "two"]) {
+      expect(yield* target.head(at(date)).pipe(Effect.flip)).toMatchObject({
+        _tag: "StreamNotFound",
+      });
+    }
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("replay after forget reclaims a route only if its stream starts empty and open", () =>
   Effect.gen(function* () {
     const binding = declaration().at(params);
     const store = yield* CheckpointStore;
+    const records = yield* OwnerRecords;
+    const routes = store.routes!;
+    const target = yield* Output;
+    const id = Output.at(at("one")).id;
     yield* seed([{ date: "one", n: 1 }]);
     yield* Projection.run(binding);
     yield* Projection.forget(binding);
-    expect(yield* store.routes!.list(binding)).toEqual([]);
-    expect((yield* store.load(binding)).record).toEqual(Option.none());
+    expect(yield* routes.has(binding, "out", id)).toBe(true);
+    expect(yield* routes.state(binding, "out", id)).toBe("forgotten");
+    expect(yield* records.list('["streamsy.projection.routed.v1",')).toEqual([
+      [expect.any(String), '{"forgotten":true}'],
+    ]);
     expect(yield* Projection.run(binding).pipe(Effect.result)).toMatchObject({
       failure: { reason: "invalid-output" },
+    });
+    expect((yield* store.load(binding)).token).toBe("0");
+    expect(yield* routes.state(binding, "out", id)).toBe("forgotten");
+    expect((yield* target.collect(at("one"))).items).toEqual([1]);
+
+    yield* target.wire.remove(id);
+    yield* Projection.run(binding);
+    expect(yield* routes.state(binding, "out", id)).toBe("live");
+    expect((yield* target.collect(at("one"))).items).toEqual([1]);
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("after forget, reopening one route leaves the other forgotten", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const target = yield* Output;
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const one = Output.at(at("one")).id;
+    const two = Output.at(at("two")).id;
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    yield* seed([{ date: "two", n: 2 }]);
+    yield* Projection.run(binding);
+    yield* Projection.forget(binding);
+    yield* target.wire.remove(one);
+
+    yield* Projection.run(binding, { limit: 1 });
+    expect(yield* routes.state(binding, "out", one)).toBe("live");
+    expect(yield* routes.state(binding, "out", two)).toBe("forgotten");
+    const before = yield* store.load(binding);
+    expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
+      reason: "invalid-output",
+    });
+    expect(yield* store.load(binding)).toEqual(before);
+    expect((yield* target.collect(at("two"))).items).toEqual([2]);
+
+    yield* Projection.retire(spec, params, { generation: 1, streams: "close" });
+    expect(yield* routes.state(binding, "out", one)).toBe("live");
+    expect(yield* routes.state(binding, "out", two)).toBe("forgotten");
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
+      record: "already-retired",
+      routed: retiredRoutes("removed"),
+    });
+  }).pipe(Effect.provide(withFamilies(layerSqlite(1), Source, Output))),
+);
+
+it.live("forget marks routes of an undecodable or absent checkpoint for retirement", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const records = yield* OwnerRecords;
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const one = Output.at(at("one")).id;
+    const two = Output.at(at("two")).id;
+    const slot = recordKey(binding);
+    yield* seed([
+      { date: "one", n: 1 },
+      { date: "two", n: 2 },
+    ]);
+    yield* Projection.run(binding);
+    yield* records.write(slot, "{}");
+
+    yield* Projection.forget(binding);
+    expect(yield* records.read(slot)).toEqual(Option.none());
+    expect(yield* routes.state(binding, "out", one)).toBe("forgotten");
+    expect(yield* routes.state(binding, "out", two)).toBe("forgotten");
+
+    yield* routes.add(binding, "out", two);
+    yield* Projection.forget(binding);
+    expect(yield* records.read(slot)).toEqual(Option.none());
+    expect(yield* routes.state(binding, "out", two)).toBe("forgotten");
+
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
+      record: "retired",
+      routed: retiredRoutes("removed"),
+    });
+    expect(yield* routes.state(binding, "out", one)).toBe("absent");
+    expect(yield* routes.state(binding, "out", two)).toBe("absent");
+  }).pipe(Effect.provide(host)),
+);
+
+it.effect("a missing live route rolls back and the attached handler retries StreamNotFound", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const target = yield* Output;
+    const store = yield* CheckpointStore;
+    const routes = store.routes!;
+    const id = Output.at(at("one")).id;
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    const before = yield* store.load(binding);
+    yield* target.wire.remove(id);
+    yield* seed([{ date: "one", n: 2 }]);
+
+    expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
+      _tag: "StreamNotFound",
+    });
+    expect(yield* store.load(binding)).toEqual(before);
+    expect(yield* routes.state(binding, "out", id)).toBe("live");
+
+    yield* Layer.build(Projection.attach(spec));
+    const registry = yield* Projection.Registry;
+    yield* registry.schedule(binding);
+    const failed = registry.failed(spec);
+
+    const failure = Option.some({
+      retryable: true,
+      message: expect.stringContaining("StreamNotFound"),
+    });
+
+    expect(yield* eventually(failed, (rows) => rows[0]?.attempts === 1)).toMatchObject([
+      { attempts: 1, stopped: false, failure },
+    ]);
+    yield* TestClock.adjust("1 second");
+    expect(yield* eventually(failed, (rows) => rows[0]?.attempts === 2)).toMatchObject([
+      { attempts: 2, stopped: false, failure },
+    ]);
+    expect(yield* store.load(binding)).toEqual(before);
+    expect(yield* routes.state(binding, "out", id)).toBe("live");
+  }).pipe(Effect.provide(Layer.merge(host, Projection.Registry.layer))),
+);
+
+it.live("forget and retire keep route records of a and ab separate", () =>
+  Effect.gen(function* () {
+    const a = Projection.process({
+      ...definition,
+      id: "a",
+      process: (_, __, { outputs: { out } }) => out.open({ date: "one" }).pipe(Effect.asVoid),
+    });
+
+    const ab = Projection.process({
+      ...definition,
+      id: "ab",
+      process: (_, __, { outputs: { out } }) => out.open({ date: "two" }).pipe(Effect.asVoid),
+    });
+
+    const shorter = a.at(params);
+    const longer = ab.at(params);
+    const { routes } = yield* CheckpointStore;
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(shorter);
+    yield* Projection.run(longer);
+    yield* Projection.forget(shorter);
+
+    const streamId = Output.at(at("two")).id;
+    expect(yield* routes!.state(longer, "out", streamId)).toBe("live");
+    yield* Projection.retire(a, params, { generation: 1 });
+    expect(yield* routes!.list(shorter)).toEqual([]);
+    expect(yield* routes!.list(longer)).toEqual([{ output: "out", streamId }]);
+    expect((yield* (yield* Output).head(at("two"))).nextOffset).toBe(ZERO_OFFSET);
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("a malformed route value fails open and leaves the stream discoverable for retire", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const records = yield* OwnerRecords;
+    const store = yield* CheckpointStore;
+    const target = yield* Output;
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    const entries = yield* records.list('["streamsy.projection.routed.v1",');
+    const [slot] = entries[0]!;
+    yield* records.write(slot, '{"forgotten":false}');
+    yield* seed([{ date: "one", n: 2 }]);
+    const before = yield* store.load(binding);
+    expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
+      reason: "invalid-record",
+    });
+    expect(yield* store.load(binding)).toEqual(before);
+    expect((yield* target.collect(at("one"))).items).toEqual([1]);
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
+      routed: { out: [{ id: Output.at(at("one")).id, result: "removed" }] },
+    });
+    expect(yield* target.head(at("one")).pipe(Effect.flip)).toMatchObject({
+      _tag: "StreamNotFound",
     });
   }).pipe(Effect.provide(host)),
 );

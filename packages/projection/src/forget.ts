@@ -4,7 +4,8 @@ import { Effect } from "effect";
 import { type ProjectionKey } from "./checkpoint-store.ts";
 
 /**
- * Deletes a live record and preserves retirement tombstones. Stop the follower first,
+ * Deletes a live checkpoint and marks its routed outputs as forgotten so retirement
+ * can still find them. Preserves retirement tombstones. Stop the follower first,
  * or use a new generation.
  * Delete stream outputs first, because forgetting restarts their producer sequences.
  */
