@@ -21,15 +21,18 @@ export const sqlDump = (namespace: string, hashIndexKeys: boolean) =>
           mysql: () => sql`LOWER(HEX(index_hash))`,
           orElse: () => sql`encode(index_hash, 'hex')`,
         });
+
         const rowHash = sql.onDialectOrElse({
           mysql: () => sql`UNHEX(SHA2(row_key, 256))`,
           orElse: () => sql`sha256(row_key)`,
         });
+
         const prefix = sql.onDialectOrElse({
           mysql: () => sql`LEFT(CONCAT(CAST(sort_key AS BINARY), X'00', row_key), 1024)`,
           orElse: () =>
             sql`substring(convert_to(sort_key, 'UTF8') || decode('00', 'hex') || row_key FOR 1024)`,
         });
+
         const ns = new Uint8Array(yield* sha256(namespace));
 
         const integrals = yield* sql<{

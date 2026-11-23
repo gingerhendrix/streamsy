@@ -262,6 +262,7 @@ export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup:
   yield* Projection.forget(declaration(2).at({}));
   compare(yield* histories(2), retained, "Forget changed the routed streams");
   compare(yield* Projection.bindings(spec, { generation: 2 }), [], "Forgotten binding still lists");
+
   if (Option.isSome(sql)) {
     const client = sql.value;
     const afterForget = yield* client`SELECT namespace FROM streamsy_view_circuits`;
