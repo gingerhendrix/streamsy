@@ -359,7 +359,7 @@ export interface BuildDefinition extends Omit<
   "accepted"
 > {
   readonly accepted?: AcceptedOutput | undefined;
-  readonly commit?: Commit.Commit<any, any, any>;
+  readonly commit?: Commit.Commit<any, never, any>;
   readonly state?: StateDefinition<any, any, any>;
   readonly outputs?: RoutedMap;
   readonly fold?: (...args: any[]) => any;
@@ -378,7 +378,7 @@ interface Built extends GenerationOutputBindings, RoutedOutputBindings<Streamsy.
   readonly state: BoundState<any> | undefined;
   readonly streams: Addresses<Inputs>;
   readonly accepted: Streamsy.Address<any, any> | undefined;
-  readonly commit: Commit.Commit<any, any, any> | typeof Commit.checkpoint;
+  readonly commit: Commit.Commit<any, never, any> | typeof Commit.checkpoint;
   readonly prepare:
     | ((batch: Slices<InputMap>, unit: Unit) => Effect.Effect<any, any, any>)
     | undefined;
@@ -406,7 +406,9 @@ export const build = (
       if (kind !== "process") throw new RangeError("Routed outputs require Projection.process");
 
       if (!supportsPrepare(commit))
-        throw new RangeError("Routed outputs require Commit.transaction");
+        throw new RangeError(
+          "Routed outputs require Commit.transaction or Commit.ownerTransaction",
+        );
     }
   }
 
@@ -422,7 +424,7 @@ export const build = (
   );
 
   if (definition.prepare !== undefined && !supportsPrepare(commit))
-    throw new RangeError("prepare requires Commit.transaction");
+    throw new RangeError("prepare requires Commit.transaction or Commit.ownerTransaction");
 
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);

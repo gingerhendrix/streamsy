@@ -2,6 +2,7 @@
 import type { Effect } from "effect";
 import type { SqlClient } from "effect/sql";
 import type { AcceptedOutput } from "./accepted.ts";
+import type { OwnerCommit } from "./commit.ts";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { Slices } from "./batch.ts";
 import {
@@ -41,7 +42,7 @@ export interface OutputsContext<O extends RoutedMap> {
 }
 
 /** Run side effects once per unit, including recorded wakes. Return wakeAt(time) to
- * replace the timer, or void to clear it. Timers require atLeastOnce or transaction.
+ * replace the timer, or void to clear it. Timers require atLeastOnce, transaction or ownerTransaction.
  * prepare runs at least once, outside the transaction. */
 export function process<
   C extends StreamRoute.ParamCodecs,
@@ -84,7 +85,50 @@ export function process<
   HE,
   HR
 >;
-// The outputs overload is last, so the compiler reports a mistake in `outputs` against it.
+export function process<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const O extends RoutedMap,
+  E = never,
+  R = never,
+  Q = never,
+  Prepared = void,
+  PE = never,
+  PR = never,
+  W extends AcceptedOutput | undefined = undefined,
+  HE = never,
+  HR = never,
+  A = void,
+>(
+  definition: Common<C, I, W, HE, HR> & {
+    readonly commit: OwnerCommit<AcceptedResult<TimerResult<A>, W>, Q>;
+    readonly outputs: O & OutputsWithin<C, O>;
+    readonly prepare?: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+      context: OutputsContext<O>,
+    ) => Effect.Effect<Prepared, PE, PR>;
+    readonly process: (
+      batch: Slices<Addresses<I>>,
+      unit: Unit<StreamRoute.Params<C>>,
+      context: ProcessContext<Prepared> & OutputsContext<O>,
+    ) => Effect.Effect<A, E, R>;
+  },
+): OutputDeclaration<
+  C,
+  I,
+  O,
+  E | PE,
+  R,
+  TimerResult<A>,
+  never,
+  Q | PR,
+  never,
+  AcceptedServices<W>,
+  HE,
+  HR
+>;
+// The SQL outputs overload stays last so mistakes in `outputs` are reported against it.
 export function process<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
