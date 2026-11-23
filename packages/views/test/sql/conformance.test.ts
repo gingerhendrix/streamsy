@@ -1,20 +1,20 @@
 import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect, Record as Rec } from "effect";
-import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import type { JsonObject } from "../../src/ir/contracts.ts";
 import { shopPlans } from "./fixtures.ts";
 
-import { identity, materialize } from "./support.ts";
+import { migratedSqliteBackend, identity, materialize } from "./support.ts";
 
 it.live(
   "matches the independent oracle: 200 seeds × 40 random multi-change units, with exact no-op suppression",
   () =>
     Effect.gen(function* () {
       const started = performance.now();
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const plans = shopPlans(true);
       const engine = yield* makeEngine(plans);
 
@@ -67,7 +67,7 @@ it.live(
           if (last && unit % 3 === 0)
             input.push({ sourceId: last.sourceId, kind: "delete", key: last.key }, last);
           const old = new Map(actual);
-          const emitted = yield* engine.process(`seed-${seed}`, input);
+          const emitted = yield* engine.process(backend, `seed-${seed}`, input);
           const unique = new Set(Arr.map(emitted, (c) => identity(c.view, c.key)));
           expect(unique.size).toBe(emitted.length);
           materialize(actual, emitted);
@@ -93,7 +93,8 @@ it.live(
             if (old.get(k) !== expected.get(k)) changed.add(k);
           expect(unique, `no-op suppression seed=${seed} unit=${unit}`).toEqual(changed);
 
-          if (unit % 10 === 0) expect(yield* engine.process(`seed-${seed}`, input)).toEqual([]);
+          if (unit % 10 === 0)
+            expect(yield* engine.process(backend, `seed-${seed}`, input)).toEqual([]);
         }
       }
 

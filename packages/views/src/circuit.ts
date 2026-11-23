@@ -25,13 +25,9 @@ import {
 import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
 import { makeEngine, type StateChange } from "./sql/engine.ts";
-import {
-  circuitState,
-  clearNamespace,
-  migrate as migrateEngine,
-  migrateCircuits,
-  storeFor,
-} from "./sql/sqlite.ts";
+import type { Backend } from "./backend.ts";
+import { backendFor, migrateBackend } from "./sql/backend.ts";
+import { ViewFault } from "./view-fault.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
 import { normalize } from "./sql/normalize.ts";
@@ -42,6 +38,8 @@ import {
   type JsonValue,
   type RelationPlan,
 } from "./ir/contracts.ts";
+
+export { ViewFault } from "./view-fault.ts";
 
 interface CircuitView extends Pick<Relation<unknown>, "expression" | "inputs" | "rowType"> {
   readonly routing?: {
@@ -207,14 +205,6 @@ export class PlanChanged extends Schema.TaggedError<
   }
 }
 
-export class ViewFault extends Schema.TaggedError<ViewFault, { readonly brand: unique symbol }>()(
-  "ViewFault",
-  {
-    message: Schema.String,
-    cause: Schema.optionalKey(Schema.Defect()),
-  },
-) {}
-
 const rowReference = (...path: string[]): Expression => ({ kind: "reference", scope: "row", path });
 
 const outputExpression = (
@@ -275,32 +265,28 @@ function namespaceOf(key: ProjectionKey) {
 
 /** Create operator tables at host startup, like StateTable.migrate(sql). */
 export const migrate = Effect.fn("View.migrate")(function* (sql: SqlClient.SqlClient) {
-  yield* sql.onDialectOrElse({
-    sqlite: () => Effect.void,
-    orElse: () => Effect.fail(new ViewFault({ message: "View requires SQLite" })),
-  });
-  yield* migrateEngine().pipe(Effect.provideService(SqlClient.SqlClient, sql));
-  yield* migrateCircuits(sql);
+  yield* migrateBackend(sql);
 });
 
 const guard = Effect.fn("View.guard")(function* (
-  sql: SqlClient.SqlClient,
+  backend: Backend,
   key: ProjectionKey,
   hash: string,
 ) {
   const namespace = namespaceOf(key);
-  const state = circuitState(sql, namespace);
-  const [previous] = yield* state.load();
+  const state = backend.circuit(namespace);
+  const previous = yield* state.load;
 
   if (previous === undefined) yield* state.save(hash);
-  else if (previous.plan_hash !== hash)
-    return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
+  else if (previous !== hash)
+    return yield* new PlanChanged({ namespace, stored: previous, requested: hash });
 
   return namespace;
 });
 
 const commit = Commit.transactionWithCleanup((key, sql) =>
-  clearNamespace(sql, namespaceOf(key)).pipe(
+  backendFor(sql).pipe(
+    Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
     Effect.mapError(
       (cause) =>
         new ProjectionFault({
@@ -504,7 +490,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     commit,
     process: (batch, unit, { outputs }) =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
+        const backend = yield* backendFor(yield* SqlClient.SqlClient);
         // Unit params are decoded. Re-encode through the declaration to obtain the
         // exact checkpoint identity, including transformed parameter codecs.
         const boundParams: Record<string, string> = {};
@@ -513,7 +499,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
 
         const namespace = yield* guard(
-          sql,
+          backend,
           {
             id: unit.projectionId,
             generation: unit.generation,
@@ -523,7 +509,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         );
 
         const changes: StateChange[] = [];
-        const store = storeFor(sql, namespace);
+        const store = backend.store(namespace);
 
         const active = Array.flatMap([...sources], ([sourceId, input]) => {
           const slice = batch[input.state.key];
@@ -550,7 +536,8 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
           changes.push(
             ...(yield* normalize(
-              store,
+              backend,
+              namespace,
               sourceId,
               source.value.id,
               input.collection,
@@ -561,7 +548,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           );
         }
 
-        const changesOut = yield* engine.process(namespace, changes, unit.params);
+        const changesOut = yield* engine.process(backend, namespace, changes, unit.params);
 
         type HandlerOutput = (typeof outputs)[string];
 

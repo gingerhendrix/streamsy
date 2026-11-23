@@ -15,7 +15,7 @@ import type { Evaluated, ExpressionScopes } from "../../src/runtime/expression.t
 import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 
 import { dataFault } from "../../src/sql/data-fault.ts";
-import type { Entry as StateRow } from "../../src/sql/sqlite.ts";
+import type { Entry as StateRow } from "../../src/store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */

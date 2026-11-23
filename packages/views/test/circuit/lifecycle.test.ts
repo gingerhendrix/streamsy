@@ -11,7 +11,7 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import { PlanChanged, View } from "../../src/index.ts";
-import { storeFor } from "../../src/sql/sqlite.ts";
+import { backendFor } from "../../src/sql/backend.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
@@ -505,7 +505,7 @@ it.live("numeric wire keys, reset and snapshots across units follow State semant
       ]),
     ).toEqual([1, 2]);
     const metadata = (yield* state).circuits[0]!;
-    const store = storeFor(sql, metadata.namespace);
+    const store = (yield* backendFor(sql)).store(metadata.namespace);
     expect(yield* store.get("r0", encodeRowKey(asRowKey(1)))).toBeUndefined();
     expect(yield* store.get("r0", encodeRowKey("1"))).toEqual({ key: "1", row: { id: 1, n: 10 } });
     expect(
@@ -554,7 +554,7 @@ it.live("filters a source integral across snapshots", () =>
       yield* append([numericUpsert(1, 1), numericUpsert(2, 20), numericUpsert(3, 30)]),
     ).toEqual([2, 3]);
     const metadata = (yield* state).circuits[0]!;
-    const store = storeFor(sql, metadata.namespace);
+    const store = (yield* backendFor(sql)).store(metadata.namespace);
     const integralKeys = store.rows("r0").pipe(Effect.map(Array.map((row) => row.key)));
     expect(yield* integralKeys).toEqual(["2", "3"]);
 

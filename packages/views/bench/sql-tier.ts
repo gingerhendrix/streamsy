@@ -6,8 +6,11 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
 import { join } from "node:path";
+import { SqlClient } from "effect/sql";
+import { migrate } from "../src/sql/sqlite.ts";
+import { backendFor } from "../src/sql/backend.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This is a pure compiler, not an Effect service constructor.
-import { makeEngine, migrate, type StateChange, type OutputChange } from "../src/sql/engine.ts";
+import { makeEngine, type StateChange, type OutputChange } from "../src/sql/engine.ts";
 import { canonicalJson, encodeRowKey } from "../src/runtime/key.ts";
 import { shopPlans } from "../test/sql/fixtures.ts";
 import type { JsonObject, RowKey } from "../src/ir/contracts.ts";
@@ -82,7 +85,9 @@ function consume(changes: readonly OutputChange[]) {
 
 await Effect.runPromise(
   Effect.gen(function* () {
-    yield* migrate();
+    const sql = yield* SqlClient.SqlClient;
+    yield* migrate(sql);
+    const backend = yield* backendFor(sql);
     const engine = yield* makeEngine(shopPlans());
     console.log(
       JSON.stringify({
@@ -99,6 +104,7 @@ await Effect.runPromise(
     for (let i = 0; i < customerCount; i += 1000)
       consume(
         yield* engine.process(
+          backend,
           "bench",
           Array.from({ length: Math.min(1000, customerCount - i) }, (_, k) =>
             upCustomer(customer(i + k)),
@@ -109,6 +115,7 @@ await Effect.runPromise(
     for (let i = 0; i < count; i += 1000) {
       consume(
         yield* engine.process(
+          backend,
           "bench",
           Array.from({ length: Math.min(1000, count - i) }, (_, k) => upOrder(order(i + k))),
         ),
@@ -137,7 +144,7 @@ await Effect.runPromise(
       for (let k = 0; k < runs; k++) {
         const input = make(k);
         const start = performance.now();
-        const changes = yield* engine.process("bench", input);
+        const changes = yield* engine.process(backend, "bench", input);
         times.push(performance.now() - start);
         output += changes.length;
         consume(changes);

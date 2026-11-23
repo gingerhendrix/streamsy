@@ -2,19 +2,21 @@ import { expect, it } from "@effect/vitest";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Array as Arr, Effect } from "effect";
 import { SqlClient } from "effect/sql";
-import { storeFor, migrate } from "../../src/sql/sqlite.ts";
+import { View } from "../../src/index.ts";
+import { backendFor } from "../../src/sql/backend.ts";
 import { encodeRowKey } from "../../src/runtime/key.ts";
 
 it.live(
   "migrates idempotently, isolates namespaces, and batches below SQLite's DO bind limit",
   () => {
     return Effect.gen(function* () {
-      yield* migrate();
-      yield* migrate();
       const sql = yield* SqlClient.SqlClient;
+      yield* View.migrate(sql);
+      yield* View.migrate(sql);
+      const backend = yield* backendFor(sql);
 
-      const a = storeFor(sql, "a"),
-        b = storeFor(sql, "b");
+      const a = backend.store("a"),
+        b = backend.store("b");
 
       const entries = Array.from({ length: 201 }, (_, key) => ({
         key,

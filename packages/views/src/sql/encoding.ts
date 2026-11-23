@@ -1,7 +1,7 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { encodeRowKey } from "../runtime/key.ts";
-import type { Entry } from "./sqlite.ts";
+import type { Entry } from "../store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */
 /** Self-delimiting hex keys preserve scalar order under SQLite BINARY collation. */

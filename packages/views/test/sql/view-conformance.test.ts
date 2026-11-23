@@ -16,10 +16,10 @@ import {
 } from "@tanstack/db-ivm";
 import { Array as Arr, Effect, Layer, Option, Order as Ord, Record as Rec, Schema } from "effect";
 import { SqlClient } from "effect/sql";
-import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { backendFor } from "../../src/sql/backend.ts";
+import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import { normalize } from "../../src/sql/normalize.ts";
 import { dataFault } from "../../src/sql/data-fault.ts";
-import { storeFor } from "../../src/sql/sqlite.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 import type { JsonObject, RowKey } from "../../src/ir/contracts.ts";
 import { View } from "../../src/index.ts";
@@ -27,7 +27,7 @@ import { collectPlanIssues } from "../../src/check.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
-import { identity, materialize } from "./support.ts";
+import { migratedSqliteBackend, identity, materialize } from "./support.ts";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 
 const Order = Schema.Struct({
@@ -289,7 +289,9 @@ it.live(
   "matches both oracles for seeded View.from plans and replays generation changes",
   () =>
     Effect.gen(function* () {
-      yield* View.migrate(yield* SqlClient.SqlClient);
+      const sql = yield* SqlClient.SqlClient;
+      yield* View.migrate(sql);
+      const backend = yield* backendFor(sql);
       const inputStream = yield* Orders;
       const outputStream = yield* TopOrders;
 
@@ -387,7 +389,7 @@ it.live(
           }
 
           const before = new Map(actual);
-          const changes = yield* engine.process(`from-${seed}`, input);
+          const changes = yield* engine.process(backend, `from-${seed}`, input);
           materialize(actual, changes);
           const expected = new Map<string, string>();
 
@@ -565,8 +567,7 @@ it.live(
   "matches the full recompute for incremental closure and nearest membership in seeded forests",
   () =>
     Effect.gen(function* () {
-      yield* migrate();
-      const sql = yield* SqlClient.SqlClient;
+      const backend = yield* migratedSqliteBackend;
       const nodeSource = canonicalJson([Graph.key, "node"]);
       const memberSource = canonicalJson([Graph.key, "member"]);
 
@@ -579,7 +580,7 @@ it.live(
         const namespace = `closure-${seed}`;
         const plans = closurePlans(maxDepth);
         const engine = yield* makeEngine(plans);
-        const store = storeFor(sql, namespace);
+        const store = backend.store(namespace);
 
         const sourceRelation = (id: string) => {
           const source = Arr.findFirst(
@@ -603,7 +604,8 @@ it.live(
             const snapshotOpen = state.snapshot !== undefined;
 
             const nodeChanges = yield* normalize(
-              store,
+              backend,
+              namespace,
               nodeSource,
               nodeRelation,
               "node",
@@ -613,7 +615,8 @@ it.live(
             );
 
             const memberChanges = yield* normalize(
-              store,
+              backend,
+              namespace,
               memberSource,
               memberRelation,
               "member",
@@ -624,7 +627,7 @@ it.live(
 
             materialize(
               actual,
-              yield* engine.process(namespace, [...nodeChanges, ...memberChanges]),
+              yield* engine.process(backend, namespace, [...nodeChanges, ...memberChanges]),
             );
             state = DurableState.materialize(state, events);
 
