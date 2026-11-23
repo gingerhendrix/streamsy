@@ -800,7 +800,7 @@ const OWNER_RECORD_CONFLICT = "records.conflict";
 // fitKey reserves one '#' and 64 SHA-256 hex digits in the stored key.
 const MYSQL_OWNER_KEY_PREFIX_LENGTH = MYSQL_OWNER_KEY_LENGTH - 65;
 
-const HASHED_OWNER_KEY_SUFFIX = /#[0-9a-f]{64}$/iu;
+const HASHED_OWNER_KEY_SUFFIX = /#[0-9a-f]{64}$/u;
 
 const upperBound = (prefix: string): string | undefined => {
   const points = Array.fromIterable(prefix);

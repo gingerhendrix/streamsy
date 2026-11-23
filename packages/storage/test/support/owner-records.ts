@@ -5,7 +5,7 @@ import { OwnerRecords } from "@streamsy/core/internal";
 
 const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const ids = ["a", "ab", "A", "a ", 'a"b', "a\\", "a%_", "é", "\uffff", "𐀀", "ends\u{10ffff}"];
+const ids = ["a", "ab", "A", "a ", 'a"b', "a\\", "a%_", "\u00e9", "\uffff", "𐀀", "ends\u{10ffff}"];
 
 const lengths = [1, 30, 40, 446, 447, 448, 511, 512, 513];
 
@@ -18,8 +18,12 @@ const entries = [
       ),
     ),
   ),
-  ["é", "composed"],
+  ["\u00e9", "composed"],
   ["e\u0301", "decomposed"],
+  ["raw-\uffff-tail", "last BMP code point"],
+  ["raw-\u{10000}-tail", "first astral code point"],
+  ["raw-space", "no trailing space"],
+  ["raw-space ", "one trailing space"],
   ["range\ud7fflast", "before surrogates"],
   ["range\ue000", "after surrogates"],
   ["range\u{10ffff}\u{10ffff}tail", "carry across trailing largest scalars"],
@@ -29,9 +33,12 @@ const entries = [
 ] as const;
 
 const prefixes = new Set([
+  "raw-\uffff",
+  "raw-space",
+  "raw-space ",
   "",
   "absent",
-  "É",
+  "\u00c9",
   "range\ud7ff",
   "range\u{10ffff}\u{10ffff}",
   "\u{10ffff}",
@@ -48,6 +55,9 @@ const prefixes = new Set([
 
 export const checkOwnerRecordPrefixes = Effect.gen(function* () {
   const owner = yield* OwnerRecords;
+  // Protect the fixture against editor normalization before testing the owner.
+  expect(Array.fromIterable("\u00e9")).toHaveLength(1);
+  expect(Array.fromIterable("e\u0301")).toHaveLength(2);
 
   for (const [key, value] of entries) yield* owner.write(key, value);
 

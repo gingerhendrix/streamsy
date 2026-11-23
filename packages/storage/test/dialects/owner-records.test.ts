@@ -138,6 +138,7 @@ describe.skipIf(url === undefined)("mysql legacy owner records", () => {
 
         const short = "short:record";
         const exact = "limit:" + "𐀀".repeat(506);
+        const uppercase = "upper:" + "x".repeat(441) + "#" + "A".repeat(64);
         const checkpoint = "legacy:checkpoint:" + "𐀀".repeat(520);
         const route = "legacy:route:" + "𐀀".repeat(520);
 
@@ -146,13 +147,14 @@ describe.skipIf(url === undefined)("mysql legacy owner records", () => {
           yield* sql`INSERT INTO streamsy_owner_records (owner_key, owner_value) VALUES (${stored}, 'value')`;
         });
 
-        for (const key of [short, exact, checkpoint, route]) yield* oldWrite(key);
+        for (const key of [short, exact, uppercase, checkpoint, route]) yield* oldWrite(key);
 
         const opened = yield* Layer.build(storageLayer().pipe(Layer.provide(client)));
         const records = Context.get(opened, OwnerRecords);
 
         expect(yield* records.list("short:")).toEqual([[short, "value"]]);
         expect(yield* records.list("limit:")).toEqual([[exact, "value"]]);
+        expect(yield* records.list("upper:")).toEqual([[uppercase, "value"]]);
         expect(yield* records.list("legacy:").pipe(Effect.flip)).toMatchObject(unsupported(2));
 
         yield* records.write(checkpoint, "healed");
