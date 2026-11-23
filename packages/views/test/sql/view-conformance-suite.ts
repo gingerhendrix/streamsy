@@ -1,9 +1,8 @@
-/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine or test scheduler. */
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own database. */
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine or test scheduler. */
 import { expect, it } from "@effect/vitest";
 import { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
-import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
-import { BunStorage } from "@streamsy/storage/bun";
+import { Projection } from "@streamsy/projection";
 import {
   D2,
   filter,
@@ -16,7 +15,7 @@ import {
   type KeyValue,
   type MultiSet,
 } from "@tanstack/db-ivm";
-import { Array as Arr, Effect, Layer, Option, Order as Ord, Record as Rec, Schema } from "effect";
+import { Array as Arr, Effect, Option, Order as Ord, Record as Rec, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { backendFor } from "../../src/sql/backend.ts";
 import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
@@ -29,8 +28,8 @@ import { collectPlanIssues } from "../../src/check.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
-import { migratedSqliteBackend, identity, materialize } from "./support.ts";
-import { SqliteClient } from "@effect/sql-sqlite-bun";
+import { identity, materialize } from "./support.ts";
+import { createBackend, hostFor, type SqlFixture } from "../support/backends.ts";
 
 const Order = Schema.Struct({
   id: Schema.String,
@@ -64,12 +63,6 @@ class TopOrders extends Streamsy.state<TopOrders>()(
     collections: Orders.collections,
   },
 ) {}
-
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(
-    BunStorage.layer(Streamsy.group(Orders, TopOrders), { client: { filename: ":memory:" } }),
-  ),
-);
 
 type Order = typeof Order.Type;
 
@@ -287,167 +280,6 @@ function tanstack(
   };
 }
 
-it.live(
-  "matches both oracles for seeded View.from plans and replays generation changes",
-  () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* View.migrate(sql);
-      const backend = yield* backendFor(sql);
-      const inputStream = yield* Orders;
-      const outputStream = yield* TopOrders;
-
-      for (let seed = 1; seed <= 48; seed++) {
-        const random = seeded(seed);
-        const minimum = random(9) * 0.25 - 1;
-        const requireMemo = random(2) === 0;
-        const outer = random(2) === 0;
-        const descending = random(2) === 0;
-        const limit = 1 + random(4);
-        const plans = plansFor(minimum, requireMemo, outer, descending, limit);
-        const engine = yield* makeEngine(plans);
-        const ivm = tanstack(minimum, requireMemo, outer, descending, limit);
-        const orders = new Map<string, Order>();
-        const customers = new Map<string, Customer>();
-        const actual = new Map<string, string>();
-        const params = { seed };
-
-        const appendOrders = (
-          entries: Arr.NonEmptyReadonlyArray<DurableState.Entry<typeof Orders.collections>>,
-        ) => inputStream.append(params, DurableState.changes(Orders.at(params), {}, entries));
-
-        const lifecycleRandom = seeded(seed + 48);
-        let generation = 1;
-        let cutoff = minimum;
-
-        const build = () => {
-          const top = topByRegion(eligibleOrders(cutoff, requireMemo), descending, limit);
-
-          return {
-            plan: compilePlan("top", {
-              kind: "key",
-              input: top.expression,
-              key: keyExpression(TopOrders.collections.row.key),
-            }),
-            binding: View.circuit({
-              id: "seeded-top",
-              params: Orders.paramCodecs,
-              generation,
-              output: Projection.perGeneration(TopOrders, "generation"),
-              views: { row: top },
-            }).at(params),
-          };
-        };
-
-        let serving = build();
-        yield* inputStream.create(params);
-        yield* appendOrders([StreamAddress.reset()]);
-
-        for (let unit = 0; unit < 30; unit++) {
-          const input: StateChange[] = [];
-          const orderChanges: [Order, number][] = [];
-          const customerChanges: [Customer, number][] = [];
-
-          for (let n = 1 + random(6); n > 0; n--) {
-            if (random(4) > 0) {
-              const key = `o${random(9)}`;
-              const previous = orders.get(key);
-
-              if (previous) orderChanges.push([previous, -1]);
-
-              if (random(4) === 0) {
-                orders.delete(key);
-                input.push({ sourceId: orderSource, key, kind: "delete" });
-              } else {
-                const row = {
-                  id: key,
-                  customer: `c${random(4)}`,
-                  region: ["α", "中", "🌿"][random(3)]!,
-                  amount: (random(21) - 10) / 8,
-                };
-
-                const next = random(3) === 0 ? row : { ...row, memo: `m/${random(3)}` };
-                orders.set(key, next);
-                orderChanges.push([next, 1]);
-                input.push({ sourceId: orderSource, key, kind: "upsert", value: next });
-              }
-            } else {
-              const key = `c${random(4)}`;
-              const previous = customers.get(key);
-
-              if (previous) customerChanges.push([previous, -1]);
-
-              if (random(4) === 0) {
-                customers.delete(key);
-                input.push({ sourceId: customerSource, key, kind: "delete" });
-              } else {
-                const row = { id: key, label: `顧客 ${random(3)}` };
-                const next = random(2) === 0 ? row : { ...row, tier: `t/${random(2)}` };
-                customers.set(key, next);
-                customerChanges.push([next, 1]);
-                input.push({ sourceId: customerSource, key, kind: "upsert", value: next });
-              }
-            }
-          }
-
-          const before = new Map(actual);
-          const changes = yield* engine.process(backend, `from-${seed}`, input);
-          materialize(actual, changes);
-          const expected = new Map<string, string>();
-
-          const sources = {
-            [orderSource]: Arr.map([...orders], ([key, row]) => ({ key, row })),
-            [customerSource]: Arr.map([...customers], ([key, row]) => ({ key, row })),
-          };
-
-          for (const [name, plan] of Rec.toEntries(plans))
-            for (const { key, row } of fullRecompute({ plan, sources }).rows)
-              expected.set(identity(name, key), canonicalJson(row));
-          ivm.orders.sendData(orderChanges);
-          ivm.customers.sendData(customerChanges);
-          expect(actual, `full recompute seed=${seed} unit=${unit}`).toEqual(expected);
-          expect(actual, `TanStack seed=${seed} unit=${unit}`).toEqual(ivm.rows());
-
-          const changed = Arr.filter(
-            [...new Set([...before.keys(), ...expected.keys()])],
-            (key) => before.get(key) !== expected.get(key),
-          );
-
-          const emitted = Arr.map(changes, (change) => identity(change.view, change.key));
-          expect(emitted).toHaveLength(changed.length);
-          expect(new Set(emitted)).toEqual(new Set(changed));
-
-          if (Arr.isReadonlyArrayNonEmpty(orderChanges))
-            yield* appendOrders(
-              Arr.map(orderChanges, ([row, weight]) =>
-                weight === 1 ? DurableState.upsert("row", row) : DurableState.remove("row", row.id),
-              ),
-            );
-
-          if (lifecycleRandom(8) === 0) {
-            generation++;
-            cutoff += lifecycleRandom(2) === 0 ? -0.125 : 0.125;
-            serving = build();
-          }
-
-          yield* Projection.run(serving.binding);
-
-          const materialized = DurableState.materialize(
-            DurableState.materialized(TopOrders),
-            (yield* outputStream.collect({ ...params, generation })).items,
-          );
-
-          const recomputed = fullRecompute({ plan: serving.plan, sources });
-          expect(
-            materialized.rows.row,
-            `circuit seed=${seed} unit=${unit} generation=${generation}`,
-          ).toEqual(new Map(Arr.map(recomputed.rows, ({ key, row }) => [key, row])));
-        }
-      }
-    }).pipe(Effect.provide(host)),
-  120_000,
-);
-
 const GraphNode = Schema.Struct({
   id: Schema.String,
   parent: Schema.optionalKey(Schema.String),
@@ -463,21 +295,6 @@ class Graph extends Streamsy.state<Graph>()("Conformance/Graph", "graph", {
 }) {}
 
 type GraphEntry = DurableState.Entry<typeof Graph.collections>;
-
-it("compiles a join shared by both concat branches once", () => {
-  const members = View.from(Graph, "member");
-
-  const joined = members.leftJoin(View.from(Graph, "node"), {
-    as: "agent",
-    on: (member, agent) => member.ref.eq(agent.id),
-  });
-
-  const selected = joined.select((row) => ({ ref: row.ref }));
-  const plan = compilePlan("shared", joined.concat(selected).expression);
-
-  expect(Arr.filter(plan.nodes, (node) => node.kind === "left-join")).toHaveLength(1);
-  expect(collectPlanIssues(plan)).toEqual([]);
-});
 
 function closurePlans(maxDepth: number) {
   const nodes = View.from(Graph, "node");
@@ -565,124 +382,308 @@ function editNodes(
   return edits;
 }
 
-it.live(
-  "matches the full recompute for incremental closure and nearest membership in seeded forests",
-  () =>
-    Effect.gen(function* () {
-      const backend = yield* migratedSqliteBackend;
-      const nodeSource = canonicalJson([Graph.key, "node"]);
-      const memberSource = canonicalJson([Graph.key, "member"]);
+export function registerViewConformance(fixture: SqlFixture) {
+  const host = hostFor(fixture, Streamsy.group(Orders, TopOrders));
+  it.live(
+    "matches both oracles for seeded View.from plans and replays generation changes",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* View.migrate(sql);
+        const backend = yield* backendFor(sql);
+        const inputStream = yield* Orders;
+        const outputStream = yield* TopOrders;
 
-      // Closure and concat use the full-recompute oracle. The TanStack plan above uses a different operator set.
-      for (let seed = 1; seed <= 50; seed++) {
-        const random = seeded(seed);
-        const chain = seed > 48;
-        const size = chain ? 66 + random(5) : 5 + random(36);
-        const maxDepth = chain ? 64 : [1, 2, 3, 5, 64][seed % 5]!;
-        const namespace = `closure-${seed}`;
-        const plans = closurePlans(maxDepth);
-        const engine = yield* makeEngine(plans);
-        const store = backend.store(namespace);
+        for (let seed = 1; seed <= 48; seed++) {
+          const random = seeded(seed);
+          const minimum = random(9) * 0.25 - 1;
+          const requireMemo = random(2) === 0;
+          const outer = random(2) === 0;
+          const descending = random(2) === 0;
+          const limit = 1 + random(4);
+          const plans = plansFor(minimum, requireMemo, outer, descending, limit);
+          const engine = yield* makeEngine(plans);
+          const ivm = tanstack(minimum, requireMemo, outer, descending, limit);
+          const orders = new Map<string, Order>();
+          const customers = new Map<string, Customer>();
+          const actual = new Map<string, string>();
+          const params = { seed };
 
-        const sourceRelation = (id: string) => {
-          const source = Arr.findFirst(
-            engine.program.nodes,
-            (node) => node.kind === "source" && node.sourceId === id,
-          );
+          const appendOrders = (
+            entries: Arr.NonEmptyReadonlyArray<DurableState.Entry<typeof Orders.collections>>,
+          ) => inputStream.append(params, DurableState.changes(Orders.at(params), {}, entries));
 
-          return Option.getOrThrowWith(source, () => new Error(`Missing source ${id}`)).id;
-        };
+          const lifecycleRandom = seeded(seed + 48);
+          let generation = 1;
+          let cutoff = minimum;
 
-        const nodeRelation = sourceRelation(nodeSource);
-        const memberRelation = sourceRelation(memberSource);
-        const fault = dataFault({ view: "closure", node: "normalize" });
-        const actual = new Map<string, string>();
-        let state = DurableState.materialized(Graph);
-        let unit = 0;
+          const build = () => {
+            const top = topByRegion(eligibleOrders(cutoff, requireMemo), descending, limit);
 
-        const apply = (entries: readonly GraphEntry[]) =>
-          Effect.gen(function* () {
-            const events = DurableState.changes(Graph.at({}), {}, entries);
-            const snapshotOpen = state.snapshot !== undefined;
+            return {
+              plan: compilePlan("top", {
+                kind: "key",
+                input: top.expression,
+                key: keyExpression(TopOrders.collections.row.key),
+              }),
+              binding: View.circuit({
+                id: "seeded-top",
+                params: Orders.paramCodecs,
+                generation,
+                output: Projection.perGeneration(TopOrders, "generation"),
+                views: { row: top },
+              }).at(params),
+            };
+          };
 
-            const nodeChanges = yield* normalize(
-              backend,
-              namespace,
-              nodeSource,
-              nodeRelation,
-              "node",
-              fault,
-              events,
-              snapshotOpen,
-            );
+          let serving = build();
+          yield* inputStream.create(params);
+          yield* appendOrders([StreamAddress.reset()]);
 
-            const memberChanges = yield* normalize(
-              backend,
-              namespace,
-              memberSource,
-              memberRelation,
-              "member",
-              fault,
-              events,
-              snapshotOpen,
-            );
+          for (let unit = 0; unit < 30; unit++) {
+            const input: StateChange[] = [];
+            const orderChanges: [Order, number][] = [];
+            const customerChanges: [Customer, number][] = [];
 
-            materialize(
-              actual,
-              yield* engine.process(backend, namespace, [...nodeChanges, ...memberChanges]),
-            );
-            state = DurableState.materialize(state, events);
+            for (let n = 1 + random(6); n > 0; n--) {
+              if (random(4) > 0) {
+                const key = `o${random(9)}`;
+                const previous = orders.get(key);
+
+                if (previous) orderChanges.push([previous, -1]);
+
+                if (random(4) === 0) {
+                  orders.delete(key);
+                  input.push({ sourceId: orderSource, key, kind: "delete" });
+                } else {
+                  const row = {
+                    id: key,
+                    customer: `c${random(4)}`,
+                    region: ["α", "中", "🌿"][random(3)]!,
+                    amount: (random(21) - 10) / 8,
+                  };
+
+                  const next = random(3) === 0 ? row : { ...row, memo: `m/${random(3)}` };
+                  orders.set(key, next);
+                  orderChanges.push([next, 1]);
+                  input.push({ sourceId: orderSource, key, kind: "upsert", value: next });
+                }
+              } else {
+                const key = `c${random(4)}`;
+                const previous = customers.get(key);
+
+                if (previous) customerChanges.push([previous, -1]);
+
+                if (random(4) === 0) {
+                  customers.delete(key);
+                  input.push({ sourceId: customerSource, key, kind: "delete" });
+                } else {
+                  const row = { id: key, label: `顧客 ${random(3)}` };
+                  const next = random(2) === 0 ? row : { ...row, tier: `t/${random(2)}` };
+                  customers.set(key, next);
+                  customerChanges.push([next, 1]);
+                  input.push({ sourceId: customerSource, key, kind: "upsert", value: next });
+                }
+              }
+            }
+
+            const before = new Map(actual);
+            const changes = yield* engine.process(backend, `from-${seed}`, input);
+            materialize(actual, changes);
+            const expected = new Map<string, string>();
 
             const sources = {
-              [nodeSource]: Arr.map([...state.rows.node], ([key, row]) => ({ key, row })),
-              [memberSource]: Arr.map([...state.rows.member], ([key, row]) => ({ key, row })),
+              [orderSource]: Arr.map([...orders], ([key, row]) => ({ key, row })),
+              [customerSource]: Arr.map([...customers], ([key, row]) => ({ key, row })),
             };
-
-            const expected = new Map<string, string>();
-            const label = `seed=${seed}, unit=${unit++}`;
 
             for (const [name, plan] of Rec.toEntries(plans))
               for (const { key, row } of fullRecompute({ plan, sources }).rows)
                 expected.set(identity(name, key), canonicalJson(row));
+            ivm.orders.sendData(orderChanges);
+            ivm.customers.sendData(customerChanges);
+            expect(actual, `full recompute seed=${seed} unit=${unit}`).toEqual(expected);
+            expect(actual, `TanStack seed=${seed} unit=${unit}`).toEqual(ivm.rows());
 
-            expect(actual, label).toEqual(expected);
-            const integral = yield* store.rows(engine.program.outputs.lineage!);
+            const changed = Arr.filter(
+              [...new Set([...before.keys(), ...expected.keys()])],
+              (key) => before.get(key) !== expected.get(key),
+            );
+
+            const emitted = Arr.map(changes, (change) => identity(change.view, change.key));
+            expect(emitted).toHaveLength(changed.length);
+            expect(new Set(emitted)).toEqual(new Set(changed));
+
+            if (Arr.isReadonlyArrayNonEmpty(orderChanges))
+              yield* appendOrders(
+                Arr.map(orderChanges, ([row, weight]) =>
+                  weight === 1
+                    ? DurableState.upsert("row", row)
+                    : DurableState.remove("row", row.id),
+                ),
+              );
+
+            if (lifecycleRandom(8) === 0) {
+              generation++;
+              cutoff += lifecycleRandom(2) === 0 ? -0.125 : 0.125;
+              serving = build();
+            }
+
+            yield* Projection.run(serving.binding);
+
+            const materialized = DurableState.materialize(
+              DurableState.materialized(TopOrders),
+              (yield* outputStream.collect({ ...params, generation })).items,
+            );
+
+            const recomputed = fullRecompute({ plan: serving.plan, sources });
             expect(
-              new Map(
-                Arr.map(integral, ({ key, row }) => [identity("lineage", key), canonicalJson(row)]),
-              ),
-              label,
-            ).toEqual(new Map(Arr.filter([...expected], ([id]) => id.startsWith("lineage/"))));
-          });
-
-        yield* apply([
-          ...Arr.makeBy(size, (index) => {
-            const node = { id: String(index), part: index, other: 0 };
-
-            if (index === 0 || (!chain && random(4) === 0))
-              return DurableState.upsert("node", node);
-
-            return DurableState.upsert("node", {
-              ...node,
-              parent: String(chain ? index - 1 : random(index)),
-            });
-          }),
-          DurableState.upsert("member", { id: '["a","0"]', group: "a", ref: "0" }),
-          DurableState.upsert("member", { id: '["a","external"]', group: "a", ref: "external" }),
-          DurableState.upsert("member", { id: '["b","0"]', group: "b", ref: "0" }),
-        ]);
-
-        for (let step = 0; step < 20; step++) {
-          const edits = editNodes(state.rows, size, random);
-
-          if (step === 5 && seed % 2 === 0) edits.unshift(StreamAddress.snapshotStart());
-
-          if (step === 7 && state.snapshot !== undefined) edits.push(StreamAddress.snapshotEnd());
-
-          if (step === 12 && seed % 3 === 0) edits.unshift(StreamAddress.reset());
-          yield* apply(edits);
+              materialized.rows.row,
+              `circuit seed=${seed} unit=${unit} generation=${generation}`,
+            ).toEqual(new Map(Arr.map(recomputed.rows, ({ key, row }) => [key, row])));
+          }
         }
-      }
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
-  120_000,
-);
+      }).pipe(Effect.provide(host)),
+    fixture.server === undefined ? 120_000 : 300_000,
+  );
+
+  it.live(
+    "matches the full recompute for incremental closure and nearest membership in seeded forests",
+    () =>
+      Effect.gen(function* () {
+        const backend = yield* createBackend(fixture);
+        const nodeSource = canonicalJson([Graph.key, "node"]);
+        const memberSource = canonicalJson([Graph.key, "member"]);
+
+        // Closure and concat use the full-recompute oracle. The TanStack plan above uses a different operator set.
+        for (let seed = 1; seed <= 50; seed++) {
+          const random = seeded(seed);
+          const chain = seed > 48;
+          const size = chain ? 66 + random(5) : 5 + random(36);
+          const maxDepth = chain ? 64 : [1, 2, 3, 5, 64][seed % 5]!;
+          const namespace = `closure-${seed}`;
+          const plans = closurePlans(maxDepth);
+          const engine = yield* makeEngine(plans);
+          const store = backend.store(namespace);
+
+          const sourceRelation = (id: string) => {
+            const source = Arr.findFirst(
+              engine.program.nodes,
+              (node) => node.kind === "source" && node.sourceId === id,
+            );
+
+            return Option.getOrThrowWith(source, () => new Error(`Missing source ${id}`)).id;
+          };
+
+          const nodeRelation = sourceRelation(nodeSource);
+          const memberRelation = sourceRelation(memberSource);
+          const fault = dataFault({ view: "closure", node: "normalize" });
+          const actual = new Map<string, string>();
+          let state = DurableState.materialized(Graph);
+          let unit = 0;
+
+          const apply = (entries: readonly GraphEntry[]) =>
+            Effect.gen(function* () {
+              const events = DurableState.changes(Graph.at({}), {}, entries);
+              const snapshotOpen = state.snapshot !== undefined;
+
+              const nodeChanges = yield* normalize(
+                backend,
+                namespace,
+                nodeSource,
+                nodeRelation,
+                "node",
+                fault,
+                events,
+                snapshotOpen,
+              );
+
+              const memberChanges = yield* normalize(
+                backend,
+                namespace,
+                memberSource,
+                memberRelation,
+                "member",
+                fault,
+                events,
+                snapshotOpen,
+              );
+
+              materialize(
+                actual,
+                yield* engine.process(backend, namespace, [...nodeChanges, ...memberChanges]),
+              );
+              state = DurableState.materialize(state, events);
+
+              const sources = {
+                [nodeSource]: Arr.map([...state.rows.node], ([key, row]) => ({ key, row })),
+                [memberSource]: Arr.map([...state.rows.member], ([key, row]) => ({ key, row })),
+              };
+
+              const expected = new Map<string, string>();
+              const label = `seed=${seed}, unit=${unit++}`;
+
+              for (const [name, plan] of Rec.toEntries(plans))
+                for (const { key, row } of fullRecompute({ plan, sources }).rows)
+                  expected.set(identity(name, key), canonicalJson(row));
+
+              expect(actual, label).toEqual(expected);
+              const integral = yield* store.rows(engine.program.outputs.lineage!);
+              expect(
+                new Map(
+                  Arr.map(integral, ({ key, row }) => [
+                    identity("lineage", key),
+                    canonicalJson(row),
+                  ]),
+                ),
+                label,
+              ).toEqual(new Map(Arr.filter([...expected], ([id]) => id.startsWith("lineage/"))));
+            });
+
+          yield* apply([
+            ...Arr.makeBy(size, (index) => {
+              const node = { id: String(index), part: index, other: 0 };
+
+              if (index === 0 || (!chain && random(4) === 0))
+                return DurableState.upsert("node", node);
+
+              return DurableState.upsert("node", {
+                ...node,
+                parent: String(chain ? index - 1 : random(index)),
+              });
+            }),
+            DurableState.upsert("member", { id: '["a","0"]', group: "a", ref: "0" }),
+            DurableState.upsert("member", { id: '["a","external"]', group: "a", ref: "external" }),
+            DurableState.upsert("member", { id: '["b","0"]', group: "b", ref: "0" }),
+          ]);
+
+          for (let step = 0; step < 20; step++) {
+            const edits = editNodes(state.rows, size, random);
+
+            if (step === 5 && seed % 2 === 0) edits.unshift(StreamAddress.snapshotStart());
+
+            if (step === 7 && state.snapshot !== undefined) edits.push(StreamAddress.snapshotEnd());
+
+            if (step === 12 && seed % 3 === 0) edits.unshift(StreamAddress.reset());
+            yield* apply(edits);
+          }
+        }
+      }),
+    fixture.server === undefined ? 120_000 : 300_000,
+  );
+
+  it("compiles a join shared by both concat branches once", () => {
+    const members = View.from(Graph, "member");
+
+    const joined = members.leftJoin(View.from(Graph, "node"), {
+      as: "agent",
+      on: (member, agent) => member.ref.eq(agent.id),
+    });
+
+    const selected = joined.select((row) => ({ ref: row.ref }));
+    const plan = compilePlan("shared", joined.concat(selected).expression);
+
+    expect(Arr.filter(plan.nodes, (node) => node.kind === "left-join")).toHaveLength(1);
+    expect(collectPlanIssues(plan)).toEqual([]);
+  });
+}
