@@ -5,7 +5,7 @@ packages:
 
 ## List projection bindings and manage routed outputs on MySQL
 
-`Projection.bindings`, `Projection.retire`, and `Projection.forget` now work on MySQL for bindings with routed outputs.
+`Projection.bindings` now works on MySQL. `Projection.retire` and `Projection.forget` now also work there for bindings with routed outputs.
 
 **Breaking change:** Opening a MySQL database adds `full_key` to `streamsy_owner_records`, adds `full_params` to `streamsy_projection_pending`, and moves storage to version 4. Streamsy 0.13.0 cannot open a MySQL database at version 4. SQLite and Postgres databases stay at version 3. See the [SQL migration rules](https://streamsy.dev/docs/reference/storage/sql-storage#sqlstoragelayer).
 
