@@ -799,17 +799,23 @@ const OWNER_RECORD_CONFLICT = "records.conflict";
 
 // fitKey reserves one '#' and 64 SHA-256 hex digits in the stored key.
 const MYSQL_OWNER_KEY_PREFIX_LENGTH = MYSQL_OWNER_KEY_LENGTH - 65;
+
 const HASHED_OWNER_KEY_SUFFIX = /#[0-9a-f]{64}$/iu;
 
 const upperBound = (prefix: string): string | undefined => {
   const points = Array.fromIterable(prefix);
+
   for (let i = points.length - 1; i >= 0; i--) {
     const point = points[i]?.codePointAt(0);
+
     if (point === undefined || point === 0x10ffff) continue;
 
     const next = point === 0xd7ff ? 0xe000 : point + 1;
-    return points.slice(0, i).join("") + String.fromCodePoint(next);
+
+    return Array.join(Array.take(points, i), "") + String.fromCodePoint(next);
   }
+
+  return undefined;
 };
 
 interface OwnerRecordRow {
@@ -920,13 +926,11 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
     }),
     list: Effect.fn("SqlStorage.records.list")(function* (prefix: string) {
       if (!prefix.isWellFormed())
-        return yield* Effect.fail(
-          new StorageFault({
-            operation: "records.list",
-            message: "Owner record prefix must be well-formed UTF-16",
-            retryable: false,
-          }),
-        );
+        return yield* new StorageFault({
+          operation: "records.list",
+          message: "Owner record prefix must be well-formed UTF-16",
+          retryable: false,
+        });
 
       const range = (lower: string) => {
         const upper = upperBound(lower);
@@ -937,11 +941,14 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       return yield* sql.onDialectOrElse({
         mysql: () =>
           Effect.gen(function* () {
-            const lower = Array.fromIterable(prefix)
-              .slice(0, MYSQL_OWNER_KEY_PREFIX_LENGTH)
-              .join("");
+            const lower = Array.join(
+              Array.take(Array.fromIterable(prefix), MYSQL_OWNER_KEY_PREFIX_LENGTH),
+              "",
+            );
+
             const transaction = yield* Effect.serviceOption(sql.transactionService);
             const lock = lockingRead(sql, Option.isSome(transaction) ? "share" : undefined);
+
             const rows = yield* attempt(
               "records.list",
               sql<MysqlOwnerRecordRow>`SELECT owner_key, full_key, owner_value FROM streamsy_owner_records WHERE ${range(lower)}${lock}`,
@@ -949,6 +956,7 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
 
             const entries: Array<readonly [string, string]> = [];
             let unlistable = 0;
+
             for (const { owner_key, full_key, owner_value } of rows) {
               if (
                 full_key === null &&
@@ -960,17 +968,16 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
               }
 
               const key = full_key ?? owner_key;
+
               if (key.startsWith(prefix)) entries.push([key, owner_value]);
             }
 
             if (unlistable > 0)
-              return yield* Effect.fail(
-                new StorageFault({
-                  operation: OWNER_RECORDS_LIST_UNSUPPORTED,
-                  message: `MySQL owner record range contains ${unlistable} legacy hashed keys without full keys. Writing the original keys restores listing.`,
-                  retryable: false,
-                }),
-              );
+              return yield* new StorageFault({
+                operation: OWNER_RECORDS_LIST_UNSUPPORTED,
+                message: `MySQL owner record range contains ${unlistable} legacy hashed keys without full keys. Writing the original keys restores listing.`,
+                retryable: false,
+              });
 
             return entries;
           }),

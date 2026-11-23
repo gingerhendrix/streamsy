@@ -118,6 +118,7 @@ const migrateVersions = (
     );
 
     const supported = STORAGE_SCHEMA_VERSION[dialect];
+
     if (current > supported) return yield* newerVersionFault(current, dialect);
 
     for (let version = current + 1; version <= supported; version++) {
@@ -134,6 +135,7 @@ const migrateVersions = (
 
         if (addition !== null) {
           const [, table, column] = addition;
+
           const existing = yield* sqlAttempt(
             "migration.inspect-column",
             sql`SELECT column_name FROM information_schema.columns

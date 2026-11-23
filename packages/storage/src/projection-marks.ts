@@ -68,8 +68,10 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
   const table = sql(TABLE);
   const mysql = sql.onDialectOrElse({ mysql: () => true, orElse: () => false });
   const readParams = sql.literal(mysql ? "COALESCE(full_params, params) AS params" : "params");
+
   const storedParams = (params: string) =>
     mysql ? fitKey(params, MYSQL_PROJECTION_PARAMS_LENGTH) : Effect.succeed(params);
+
   const writeParams = (params: string) =>
     mysql
       ? Effect.map(storedParams(params), (fitted) => ({ params: fitted, full_params: params }))
@@ -80,10 +82,11 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       Array.chunksOf(params, MARK_CHUNK),
       Effect.fnUntraced(function* (chunk) {
         const values = yield* Effect.forEach(chunk, writeParams);
+
         const rows = sql.insert(
-          Array.map(values, (params) => ({
+          Array.map(values, (keys) => ({
             projection,
-            ...params,
+            ...keys,
             seq: 1,
             attempts: 0,
             due_at: 0,
@@ -286,6 +289,7 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       .withTransaction(
         Effect.gen(function* () {
           const key = params === undefined ? undefined : yield* storedParams(params);
+
           const selected = sql`projection = ${projection} AND (stopped <> 0 OR (attempts > 0 AND due_at <> 0))
             ${key === undefined ? sql`` : sql`AND params = ${key}`}`;
 

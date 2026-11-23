@@ -5,6 +5,7 @@ import {
   Effect,
   Exit,
   Option,
+  Predicate,
   PubSub,
   Queue,
   Record,
@@ -345,7 +346,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
     const maxIdLength = limitKey in owner ? owner[limitKey] : undefined;
 
     // An invalid declaration fails at acquisition, like other attach configuration errors.
-    if (typeof maxIdLength === "number" && Array.fromIterable(declaration.id).length > maxIdLength)
+    if (Predicate.isNumber(maxIdLength) && Array.fromIterable(declaration.id).length > maxIdLength)
       return yield* Effect.die(
         new StorageFault({
           operation: "projection.attach",
