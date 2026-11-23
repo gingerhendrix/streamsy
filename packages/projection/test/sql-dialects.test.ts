@@ -22,6 +22,7 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
+import { registerMysqlLifecycle } from "./support/mysql-lifecycle.ts";
 import { initialize, input, output, readAll } from "./support/scenarios.ts";
 import {
   dialectClient,
@@ -251,7 +252,7 @@ for (const dialect of dialects) {
     );
 
     test(
-      "long checkpoint keys stay distinct and only reversible keys can be listed",
+      "long checkpoint keys stay distinct and both bindings can be listed",
       async () => {
         if (url === undefined) return;
 
@@ -275,7 +276,7 @@ for (const dialect of dialects) {
             const bindings = yield* Projection.bindings({
               id: folder("01").id,
               params: { folderId: Schema.String },
-            }).pipe(Effect.provideService(CheckpointStore, store), Effect.result);
+            }).pipe(Effect.provideService(CheckpointStore, store));
 
             return { saved: [yield* saved("01"), yield* saved("02")], bindings };
           }),
@@ -286,20 +287,10 @@ for (const dialect of dialects) {
           ["1", Option.some("other")],
         ]);
 
-        if (dialect.name === "mysql") {
-          expect(Result.getFailure(result.bindings)).toMatchObject(
-            Option.some({
-              reason: "unsupported-composition",
-              message: expect.stringContaining("hashed"),
-            }),
-          );
-        } else {
-          const params = Option.getOrThrow(Result.getSuccess(result.bindings));
-          expect(params).toHaveLength(2);
-          expect(params).toEqual(
-            expect.arrayContaining([folder("01").params, folder("02").params]),
-          );
-        }
+        expect(result.bindings).toHaveLength(2);
+        expect(result.bindings).toEqual(
+          expect.arrayContaining([folder("01").params, folder("02").params]),
+        );
       },
       TIMEOUT_MS,
     );
@@ -807,3 +798,5 @@ for (const dialect of dialects) {
     );
   });
 }
+
+registerMysqlLifecycle();

@@ -238,5 +238,12 @@ export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup:
   const expectedNamespace = canonicalJson([canonicalJson(["routed-proof", 1, {}]), 2]);
   compare(namespaces, [{ namespace: expectedNamespace }], "Retired view namespace remains");
 
+  const retained = yield* histories(2);
+  yield* Projection.forget(declaration(2).at({}));
+  compare(yield* histories(2), retained, "Forget changed the routed streams");
+  compare(yield* Projection.bindings(spec, { generation: 2 }), [], "Forgotten binding still lists");
+  const afterForget = yield* sql`SELECT namespace FROM streamsy_view_circuits`;
+  compare(afterForget, [], "Forgotten view namespace remains");
+
   return { routes: results.length, moved: true, faults: 2 };
 });
