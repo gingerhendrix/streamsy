@@ -161,9 +161,8 @@ export const folderView = {
   at: (params: { folderId: string }) =>
     Projection.fold({
       id: "folder-sync-view",
-      // Version 3 adds parents, tombstones and the retry memory. An older checkpoint has
-      // another key, so it is ignored.
-      version: 3,
+      // Generation 2 rebuilds parents, tombstones and retry memory from the retained changes.
+      generation: 2,
       params: { folderId: FolderKey },
       inputs: { files: Files },
       // The JSON codec stores each map as an array of [key, value] pairs, in insertion order.

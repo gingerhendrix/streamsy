@@ -52,7 +52,7 @@ export function boardChanges(previous: ProjectionState, next: ProjectionState): 
 
 export const boardProjection = Projection.mapAccum({
   id: "hex-domination-board",
-  version: 4,
+  generation: 2,
   commit: Commit.producer,
   // Keep the archived text generation ids (including explicit rebuild names).
   // The output route and checkpoint key both bind the generation parameter.
