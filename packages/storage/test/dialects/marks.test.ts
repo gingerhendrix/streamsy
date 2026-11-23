@@ -28,9 +28,15 @@ describe.skipIf(url === undefined)("mysql projection marks", () => {
         const context = yield* marksContext(url);
         const marks = Context.get(context, ProjectionMarks);
         const sql = Context.get(context, SqlClient.SqlClient);
-        const params = `{"id":"${"x".repeat(591)}"}`;
+        const first = `{"id":"${"x".repeat(590)}a"}`;
+        const second = `{"id":"${"x".repeat(590)}b"}`;
+        const firstKey = yield* fitKey(first, 512);
+        const secondKey = yield* fitKey(second, 512);
+        // The fitted keys sort in the reverse order from the full params.
+        expect(firstKey > secondKey).toBe(true);
+        yield* marks.sleep("due", first, 0, 1);
+        yield* marks.sleep("due", second, 0, 1);
         yield* marks.mark("due", ['{"id":"other"}']);
-        yield* marks.sleep("due", params, 0, 1);
         yield* marks.mark(
           "noise",
           Array.map(Array.range(1, 400), (id) => `{"id":"${id}"}`),
@@ -41,7 +47,7 @@ describe.skipIf(url === undefined)("mysql projection marks", () => {
 
         const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
 
-        const found = yield* marks.due("due", 1, 1).pipe(
+        const found = yield* marks.due("due", 1, 2).pipe(
           Effect.provideService(Statement.CurrentTransformer, (statement) => {
             statements.push(statement.compile());
 
@@ -49,7 +55,6 @@ describe.skipIf(url === undefined)("mysql projection marks", () => {
           }),
         );
 
-        expect(found).toEqual([expect.objectContaining({ params: '{"id":"other"}' })]);
         expect(statements).toHaveLength(1);
         const [query, bindings] = statements[0] ?? ["", []];
 
@@ -61,6 +66,14 @@ describe.skipIf(url === undefined)("mysql projection marks", () => {
         yield* Effect.logInfo("MySQL due EXPLAIN", plan);
         expect(plan[0]?.Extra).not.toMatch(/filesort/iu);
         expect(plan[0]?.key).toBe("idx_streamsy_projection_pending_due");
+        expect(Array.map(found, (mark) => mark.params)).toEqual(['{"id":"other"}', second]);
+
+        const failure = { at: 1, reason: Option.none(), message: "stopped" };
+
+        for (const param of [first, second])
+          yield* marks.fail("due", param, { attempts: 1, dueAt: Option.none(), failure });
+        const failed = yield* marks.failed("due", 10);
+        expect(Array.map(failed, (mark) => mark.params)).toEqual([first, second]);
       }).pipe(Effect.scoped),
     );
   });
