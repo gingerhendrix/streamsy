@@ -839,15 +839,24 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
           orElse: () => select(key, true),
         });
 
-  const upsert = (key: string, encoded: string) => {
-    const row = sql.insert({ owner_key: key, owner_value: encoded });
+  const ownerRow = (key: string, requested: string, encoded: string) => {
+    const row = { owner_key: key, owner_value: encoded };
+
+    return sql.onDialectOrElse({
+      mysql: () => sql.insert({ ...row, full_key: requested }),
+      orElse: () => sql.insert(row),
+    });
+  };
+
+  const upsert = (key: string, requested: string, encoded: string) => {
+    const row = ownerRow(key, requested, encoded);
 
     return execute(
       "records.write",
       sql.onDialectOrElse({
         mysql: () =>
           sql`INSERT INTO streamsy_owner_records ${row}
- ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value)`,
+ ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value), full_key = VALUES(full_key)`,
         orElse: () =>
           sql`INSERT INTO streamsy_owner_records ${row}
  ON CONFLICT (owner_key) DO UPDATE SET owner_value = excluded.owner_value`,
@@ -855,8 +864,8 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
     );
   };
 
-  const insert = (key: string, encoded: string) =>
-    sql`INSERT INTO streamsy_owner_records ${sql.insert({ owner_key: key, owner_value: encoded })}`.pipe(
+  const insert = (key: string, requested: string, encoded: string) =>
+    sql`INSERT INTO streamsy_owner_records ${ownerRow(key, requested, encoded)}`.pipe(
       Effect.mapError((error) =>
         Predicate.isTagged(error.reason, "UniqueViolation")
           ? new StorageFault({
@@ -919,9 +928,9 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
 
       if (absent?.has(key) === true) {
-        yield* insert(key, encoded);
+        yield* insert(key, requested, encoded);
         absent.delete(key);
-      } else yield* upsert(key, encoded);
+      } else yield* upsert(key, requested, encoded);
     }),
     remove: Effect.fn("SqlStorage.records.remove")(function* (requested: string) {
       const key = yield* storedKey(requested);
