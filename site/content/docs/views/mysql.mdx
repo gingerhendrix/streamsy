@@ -7,7 +7,7 @@ description: Configure a MySQL circuit host, run the Views migration, and check 
 
 Use a MySQL client from `@effect/sql-mysql2` with `SqlStorage.layer`. Install `@streamsy/storage` at the same version as `@streamsy/views` for the transaction isolation that Views uses on MySQL.
 
-Use MySQL 8.0.17 or later. The dialect suites covered MySQL 8.4.11 only. MySQL 8.0.17 through 8.4.10 remain untested.
+The storage schema requires MySQL 8.0.17 or later for the `utf8mb4_0900_bin` collation. The dialect suites covered MySQL 8.4.11 only. MySQL 8.0.17 through 8.4.10 remain untested. See [MySQL Unicode collations](https://dev.mysql.com/doc/refman/8.0/en/charset-unicode-sets.html).
 
 If you are opening an existing database, check the [SQL storage migration instructions](/docs/reference/storage/sql-storage#sqlstoragelayer) before you start the host.
 

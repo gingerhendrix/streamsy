@@ -1,6 +1,6 @@
 ---
 title: Ordering and limits
-description: Unit ordering, UTF-16 string comparisons, maxAffectedKeys, permanent faults, storage layout rules, and current scope limits.
+description: Unit ordering, UTF-16 string comparisons, maxAffectedKeys, permanent faults, pre-release storage rules, and current scope limits.
 ---
 
 This page describes the ordering guarantees, safety limits, fault classes, and current boundaries of `@streamsy/views`.
@@ -57,11 +57,11 @@ Under `Projection.attach` and `ProjectionWakeup.attach`, non-retryable faults (`
 
 ## Storage layout and generation rule
 
-A change to the SQL operator-state layout or to internal plan naming requires raising `generation`, so affected bindings rebuild into fresh namespaces and output streams. Check the changelog for a breaking change that requires raising `generation` when you upgrade. See [Lifecycle and rebuilds](/docs/views/lifecycle).
+`@streamsy/views` is pre-1.0. A change to the SQL operator-state layout or to internal plan naming requires raising `generation`, so affected bindings rebuild into fresh namespaces and output streams. A release that changes the layout or plan naming says so in the changelog with a **Breaking change:** marker. Raise `generation` on every affected circuit when you upgrade to that release. See [Lifecycle and rebuilds](/docs/views/lifecycle).
 
 ## Current limits
 
-- **SQL backends.** Views supports SQLite with UTF-8 database encoding, Postgres, and MySQL. See the key and identifier limits for [Postgres](/docs/views/postgres#keys-and-identifiers) and [MySQL](/docs/views/mysql#keys-and-identifiers).
+- **SQL backends.** Views supports SQLite, Postgres, and MySQL. See [Postgres key and identifier limits](/docs/views/postgres#keys-and-identifiers) and [MySQL key and identifier limits](/docs/views/mysql#keys-and-identifiers).
 - **SQL bind limit.** The SQLite store computes index keys in JavaScript and binds at most 100 parameters per statement, fitting Cloudflare Durable Object SQLite limits.
 - **JSON object rows.** Input collection values must be JSON objects, and collection codecs must require no Effect services.
 - **Equi-joins only.** Join conditions must test equality between a left-only expression and a right-only expression.

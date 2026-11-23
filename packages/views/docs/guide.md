@@ -137,7 +137,7 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks non-routed generation outputs in the first unit transaction. Routed output streams open when the circuit first emits to them. All declared outputs must share the transaction's owner. Use normal projection stream services for inputs. The circuit integrates exactly the input pages of its unit.
+Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks non-routed generation outputs in the first unit transaction. It creates or checks each routed stream when the circuit first emits to that stream. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
 
 For a long-lived process, attach with `Projection.attach(shopViews, { durable: true })` over these same host services after migration. Attach the output `StateTable` too when readers need it kept current. Use `Projection.Registry.awaitOffset` for read-your-writes. Do not also run/follow an attached binding. The [README](../README.md) contains the complete example State declarations.
 

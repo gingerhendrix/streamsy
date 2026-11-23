@@ -103,8 +103,9 @@ they are plain reads and take no lock.
 On MySQL the boundary selects `READ COMMITTED` for each transaction it opens,
 overriding the session default, including `SERIALIZABLE`. This applies even
 when the session inherits its default from the server or its pool sets one.
-Transactions that projection marks open directly through `SqlClient` use the
-session default. Marks written by a commit hook join the boundary transaction.
+Other transactions use the session default unless the caller selects another
+level. This includes transactions that projection marks open directly through
+`SqlClient`. Marks written by a commit hook join the boundary transaction.
 Keep the session in autocommit so the boundary can set the isolation before
 beginning.
 
@@ -168,12 +169,18 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 - Only files in the current storage format are accepted. Older Streamsy files,
   including those from earlier 0.4 builds, and newer unknown schemas are
   rejected without being changed. Use a fresh database path.
+- Migration 3 adds explicit stops, last-failure fields, and a nullable `wake_at`
+  field for timers to projection marks. Sequence numbers, attempts, and due times
+  survive the upgrade from version 2. A schema version 2 release cannot reopen
+  the upgraded database.
 - Storage migrates SQLite and Postgres to schema version 3 and MySQL to version 4.
   Stop every 0.13.0 process before opening a MySQL database with storage that
   upgrades it to version 4. See [SQL storage migrations](https://streamsy.dev/docs/reference/storage/sql-storage#sqlstoragelayer).
 - Stream ids are limited to 512 code points, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
-- On MySQL, owner record lookup keys longer than 512 code points use the first
+- The checkpoint store adds no length limit to projection checkpoint keys.
+  SQLite and Postgres keep the full key in the lookup column. On MySQL, owner
+  record lookup keys longer than 512 code points use the first
   447 code points, `#`, and the SHA-256 hex of the full key. Storage saves the
   original key in `full_key`. A listing range that contains a legacy hashed key
   without its full key fails until the record is rewritten with the original key.

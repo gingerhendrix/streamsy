@@ -77,9 +77,9 @@ import { shop } from "./streams.ts";
 const storage = SqlStorage.layer(shop).pipe(Layer.provide(SqlStorage.clientLayer(makeClient)));
 ```
 
-Building the Layer migrates the database to storage schema version 3 on SQLite and Postgres, and version 4 on MySQL. SQLite and Postgres run their migrations in one transaction. Postgres first takes an advisory lock so concurrent hosts migrate one at a time. MySQL commits each DDL statement separately and waits up to 30 seconds for a named lock on one connection. MySQL checks `information_schema.columns` under that lock to resume an interrupted column addition.
+Building the Layer migrates the database to storage schema version 3 on SQLite and Postgres, and version 4 on MySQL. SQLite and Postgres run their migrations in one transaction. Postgres first takes an advisory lock so concurrent hosts migrate one at a time. MySQL commits each DDL statement separately. The migration waits up to 30 seconds for `GET_LOCK` on one connection and checks `information_schema.columns` under that lock to resume an interrupted column addition.
 
-Schema version 3 adds `stopped`, `failed_at`, `failure_reason`, `failure_message`, and nullable `wake_at` to `streamsy_projection_pending`. The upgrade from version 2 preserves pending work and backoff. Existing marks start with `stopped: false` and no recorded failure or wake.
+Schema version 2 introduces `streamsy_projection_pending`. Version 3 adds `stopped`, `failed_at`, `failure_reason`, `failure_message`, and nullable `wake_at`. The automatic upgrade from version 2 preserves pending work and backoff. Existing marks start with `stopped: false` and no recorded failure or wake. A release that supports only schema version 2 cannot reopen the upgraded database.
 
 Before you open a MySQL database with storage that upgrades it to version 4, stop every 0.13.0 process. Storage that supports only schema version 3 rejects the upgraded database. An older process that stays connected can delete a long pending mark without running its binding.
 
@@ -104,7 +104,7 @@ The store follows these rules:
 - Use UTF-8 database encoding on SQLite. Owner record prefix listing uses an ordered range on the text key
 - On Postgres and MySQL, each mutation transaction first locks the rows of the streams that it writes with `SELECT ... FOR UPDATE`, in id order, so writers on several connections commit one after the other
 - A create fails with a `StorageFault` with operation `mutate.stream-id` when the stream id has more than 512 code points. An append fails with operation `mutate.producer-id` when its producer id has more than 255 code points. Every dialect applies these limits, which come from the key columns of the MySQL schema
-- On MySQL, an owner record lookup key over 512 code points uses its first 447 code points, `#`, and the SHA-256 hex of the full key. A lookup key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
+- On MySQL, an owner record lookup key over 512 code points uses its first 447 code points, `#`, and the SHA-256 hex of the full key. The digest distinguishes long keys that share a prefix. A lookup key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
 - To run your SQL and a mutation in one transaction, use [`CommitBoundary.withTransaction`](/docs/reference/core/storage#commitboundaryapi). Inside a transaction that you open with `sql.withTransaction`, a mutation dies, and so does `CommitBoundary.withTransaction`. See [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables)
 
 #### MySQL owner record listing

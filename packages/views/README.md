@@ -6,7 +6,9 @@ Incrementally maintain Streamsy State collections on memory, Bun SQLite, Durable
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Requires Effect 4. On MySQL, install `@streamsy/storage` at the same version as `@streamsy/views`. Raise a circuit's `generation` when a release note calls for rebuilding after an operator-state layout change. See the [guide](docs/guide.md) for host setup and lifecycle, and [Run on MySQL](https://streamsy.dev/docs/views/mysql) for MySQL configuration and limits.
+Requires Effect 4. On MySQL, install `@streamsy/storage` at the same version as `@streamsy/views`. The package is pre-1.0. Raise a circuit's `generation` when a release note calls for rebuilding after an operator-state layout change. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+
+See [Run on MySQL](https://streamsy.dev/docs/views/mysql) for MySQL configuration and limits.
 
 ```ts
 import { Schema } from "effect";
