@@ -94,10 +94,12 @@ await Effect.runPromise(
     yield* View.migrate(sql);
     const owner = yield* OwnerTransaction;
     const engine = yield* makeEngine(shopPlans());
+
     const runUnit = (input: readonly StateChange[]) =>
       owner.withTransaction(
         Effect.flatMap(currentBackend, (backend) => engine.process(backend, "bench", input)),
       );
+
     console.log(
       JSON.stringify({
         orders: count,
