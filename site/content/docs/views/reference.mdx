@@ -28,7 +28,7 @@ import type {
 } from "@streamsy/views";
 ```
 
-Install with `bun add @streamsy/views`. All public APIs are exported from the package root. SQL backends are SQLite and Postgres. Views also supports a memory backend.
+Install with `bun add @streamsy/views`. All public APIs are exported from the package root. Views supports SQLite, Postgres, MySQL, and memory backends.
 
 ## Root exports
 
@@ -62,7 +62,7 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | `View.from`               | Function | Start a `Relation` from a `Streamsy.state` class and collection name                 |
 | `View.circuit`            | Function | Compile views and generation-addressed outputs into a `CircuitDeclaration`           |
 | `View.live`               | Function | Compile named views for a scoped heap reader                                         |
-| `View.migrate`            | Function | Create operator tables on SQLite or Postgres                                         |
+| `View.migrate`            | Function | Create operator tables on SQLite, Postgres, or MySQL                                 |
 | `View.count`              | Function | Count rows in a `groupBy` group                                                      |
 | `View.sum`                | Function | Sum a numeric expression in a `groupBy` group                                        |
 | `View.min`                | Function | Minimum ordered (`number \| string`) expression in a `groupBy` group                 |
@@ -168,7 +168,7 @@ declare const migrate: (
 ) => Effect.Effect<void, ViewFault | SqlError.SqlError>;
 ```
 
-Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. On Postgres it also creates and checks `streamsy_view_layout`. An unsupported SQL dialect fails with `ViewFault`. See [Postgres migration and stored state](/docs/views/postgres#migration-and-stored-state).
+Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. On Postgres and MySQL it also creates and checks `streamsy_view_layout`. An unsupported SQL dialect fails with `ViewFault`. See the migration rules for [Postgres](/docs/views/postgres#migration-and-stored-state) and [MySQL](/docs/views/mysql#migration-and-stored-state).
 
 ### Aggregates
 

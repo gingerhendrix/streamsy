@@ -146,6 +146,8 @@ Forget treats a checkpoint that cannot be decoded as live. If that checkpoint wa
 
 After forgetting a live checkpoint, the next run starts at zero offsets. Handler side effects run again, even when the stream drops duplicate appends.
 
+A legacy hashed route key in the MySQL listing range fails routed forget of an existing checkpoint with `unsupported-composition`. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
+
 | Projection kind                            | Next run at the same generation                                                                                                                                                 |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Fold with no outputs                       | Rebuilds from its initial state.                                                                                                                                                |
@@ -195,6 +197,8 @@ Retirement writes a tombstone even if the checkpoint is absent or cannot be deco
 The result is `{ record, streams }`. `record` is `"retired"` or `"already-retired"`. `streams` is a flat array of `RetiredStream` entries with `{ output, id, result }`, sorted by output name and then stream id in code-unit order. It includes fixed and routed outputs, shared wrapped outputs, and the wrapped accepted stream under `"@streamsy/accepted"`. A `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared and unwrapped streams stay in place. A removed stream with a dependent fork stays reserved by stream storage.
 
 Retirement finds routed streams through the binding's live and forgotten route records. Use a declaration with the original routed output names and routes. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves the routed streams and their records in place. Retirement keeps the records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
+
+Routed retirement also fails with `unsupported-composition` if the MySQL listing range contains a legacy hashed route key without its full key. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 For a binding forgotten under 0.13.0, the old `forget` deleted its route records. To locate those streams, use the storage owner's stream inventory and match ids with the output route's `parse` and the binding's params and generation.
 

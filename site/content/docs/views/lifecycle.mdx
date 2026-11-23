@@ -9,7 +9,7 @@ Retain your input State stream history so circuits can rebuild from the start wh
 
 ## Plan identity and namespaces
 
-The circuit id, generation, and encoded binding params identify the operator namespace. The first unit in a namespace stores the circuit's canonical plan hash. SQLite and Postgres store the hash in `streamsy_view_circuits`. A memory backend keeps it in the heap with the namespace's other state.
+The circuit id, generation, and encoded binding params identify the operator namespace. The first unit in a namespace stores the circuit's canonical plan hash. SQLite, Postgres, and MySQL store the hash in `streamsy_view_circuits`. A memory backend keeps it in the heap with the namespace's other state.
 
 On every subsequent unit in that namespace, the circuit compares the declared plan hash with the stored hash:
 
@@ -154,11 +154,11 @@ The transaction writes the checkpoint tombstone, clears the binding’s operator
 
 Both operations clear the same state for the binding. The backend decides how to clear it.
 
-| Backend  | Cleanup                                                                                                                                        |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| SQLite   | Deletes the binding’s rows from the five Views tables by namespace. The tables stay in place.                                                  |
-| Postgres | Deletes the binding’s rows from the five state tables by namespace digest. The `streamsy_view_layout` table and its version row stay in place. |
-| Memory   | Removes the namespace and its state from the heap. A retirement tombstone also lives in memory and disappears when the host is discarded.      |
+| Backend            | Cleanup                                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite             | Deletes the binding’s rows from the five Views tables by namespace. The tables stay in place.                                                  |
+| Postgres and MySQL | Deletes the binding’s rows from the five state tables by namespace digest. The `streamsy_view_layout` table and its version row stay in place. |
+| Memory             | Removes the namespace and its state from the heap. A retirement tombstone also lives in memory and disappears when the host is discarded.      |
 
 ## Cascade to downstream circuits
 

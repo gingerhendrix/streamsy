@@ -128,7 +128,7 @@ same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
 `CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
 
 - `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`. A retirement tombstone fails with phase `load` and reason `retired-generation`.
-- `list`, when available, returns each generation and encoded params with a live checkpoint for the id, including entries in legacy version slots. Each pair appears once. A record that does not decode fails with phase `load` and reason `invalid-record`. MySQL cannot list historical keys that may have been shortened.
+- `list`, when available, returns each generation and encoded params with a live checkpoint for the id, including entries in legacy version slots. Each pair appears once. A record that does not decode fails with phase `load` and reason `invalid-record`. On MySQL, a listing range that contains a legacy hashed key without its full key fails with phase `load` and reason `unsupported-composition`. In a MySQL transaction, `Projection.bindings` uses a shared locking read. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 - `routes` is the optional [route inventory](#routerecords). The kernel requires it to open a routed output.
 - `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key. A retirement tombstone fails with phase `load` and reason `retired-generation`.
 - `remove` deletes a live or undecodable record of `key`. It ignores absent records and retirement tombstones.
@@ -249,7 +249,7 @@ const key = recordKey({
 // ["streamsy.projection.v1","order-totals","1","2","{\"workspaceId\":\"ws-42\"}"]
 ```
 
-A record key has no length limit. On MySQL, SQL storage stores a key over 512 code points under a hash, as [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer) describes. An `EncodedStore` of your own receives the full key, and must fit it into the key limit of its own store.
+A record key has no length limit in the checkpoint store. On MySQL, SQL storage fits keys over 512 code points into the lookup column with a hash and stores the original in `full_key`. An `EncodedStore` of your own receives the full key and must fit it into the key limit of its own store. See [`SqlStorage.layer`](/docs/reference/storage/sql-storage#sqlstoragelayer).
 
 ### `Identity`
 

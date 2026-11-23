@@ -103,8 +103,10 @@ they are plain reads and take no lock.
 On MySQL the boundary selects `READ COMMITTED` for each transaction it opens,
 overriding the session default, including `SERIALIZABLE`. This applies even
 when the session inherits its default from the server or its pool sets one.
-Other transactions still use the session default. Keep the session in
-autocommit so the boundary can set the isolation before beginning.
+Transactions that projection marks open directly through `SqlClient` use the
+session default. Marks written by a commit hook join the boundary transaction.
+Keep the session in autocommit so the boundary can set the isolation before
+beginning.
 
 At `READ COMMITTED`, also the Postgres default, each plain read takes a fresh
 snapshot of committed rows. `FOR UPDATE` and `FOR SHARE` can hold existing
@@ -123,9 +125,15 @@ the binding inside your transaction's snapshot. It can also cause
 `Projection.forget` to miss a routed binding's first checkpoint when another
 host commits it after the forgetting transaction's first read.
 
-The default begin requires multi-statement support. A custom client with that
-capability disabled fails at its first storage transaction. Effect's mysql2
-client enables it by default. The mysql2 `-MULTI_STATEMENTS` flag disables it.
+The boundary sends `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` and
+`START TRANSACTION` in one request. A custom client with multi-statement
+requests disabled fails at its first storage transaction. Effect's mysql2
+client enables them by default. The mysql2 `-MULTI_STATEMENTS` flag disables
+them.
+
+With binary logging enabled, use `binlog_format=ROW` or `MIXED`. MySQL logs
+InnoDB writes in these transactions by row in `MIXED` mode. See [MySQL
+transaction isolation levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
 
 For a projection on that same connection:
 
@@ -160,15 +168,18 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 - Only files in the current storage format are accepted. Older Streamsy files,
   including those from earlier 0.4 builds, and newer unknown schemas are
   rejected without being changed. Use a fresh database path.
-- Opening a schema version 2 database upgrades it to version 3, adding explicit
-  stops, last-failure fields and a nullable `wake_at` timer index to projection marks. Sequence numbers, attempts
-  and due times survive the upgrade. A schema version 2 release cannot reopen it.
-- Stream ids are limited to 512 characters, and producer ids to 255. A longer
+- Storage migrates SQLite and Postgres to schema version 3 and MySQL to version 4.
+  Stop every 0.13.0 process before opening a MySQL database with storage that
+  upgrades it to version 4. See [SQL storage migrations](https://streamsy.dev/docs/reference/storage/sql-storage#sqlstoragelayer).
+- Stream ids are limited to 512 code points, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
-- Projection checkpoint keys have no length limit. MySQL stores 512 key
-  characters, so on MySQL a longer key is stored as its first 447 characters,
-  `#` and the SHA-256 hex of the full key. The other dialects store every key
-  as it is.
+- On MySQL, owner record lookup keys longer than 512 code points use the first
+  447 code points, `#`, and the SHA-256 hex of the full key. Storage saves the
+  original key in `full_key`. A listing range that contains a legacy hashed key
+  without its full key fails until the record is rewritten with the original key.
+- On MySQL, durable projection ids are limited to 255 Unicode code points.
+  Storage saves original pending mark params in `full_params` so they can exceed
+  the 512-code-point lookup column.
 - Bun defaults the client `busyTimeout` to zero and retries storage-owned
   transactions with a bounded yielding policy. Tune `client.busyTimeout`,
   `transactionRetryAttempts`, and `transactionRetryDelayMs` if you need to.

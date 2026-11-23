@@ -431,6 +431,7 @@ same<typeof attach, typeof Projection.attach>(true);
 - A retryable failed pass in marks, cursor or trigger operations logs an error and runs again under `passRetry`. A binding with a retryable failure uses its declaration's `retry` policy, defaulting to 1 s doubling to 1 hour in either mode. A binding that reaches `limit` runs again next.
 - By default, the set lives in memory. After a crash between a commit and its run, the binding stays behind until its source gets its next write.
 - With `durable: true`, a pending mark in storage covers that gap, and the Layer runs the bindings with due marks when it starts. A failed binding backs off or stops its own mark and does not fail the pass. Non-retryable projection or storage faults stop only their unit; handler errors and defects retry. A start makes stopped marks due once. See [`AttachOptions`](/docs/reference/projection/units#attachoptions).
+- On MySQL, a durable attach with a projection id over 255 Unicode code points dies at Layer acquisition with a non-retryable `StorageFault`. The same limit applies to `ProjectionWakeup.attach` when it uses MySQL storage and durability is enabled.
 - Inputs on another owner need a [trigger stream](/docs/projections/run#trigger-streams) to request binding runs.
 - A binding whose source was removed before its first run is dropped, with a warning.
 
@@ -1037,7 +1038,7 @@ same<typeof forget, typeof Projection.forget>(true);
 - When the Commit has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`. Every built-in Commit has `remove`.
 - Stop and drain the binding's runners before calling `forget`. To rebuild, raise `generation`.
 - For a routed binding, pass the bound declaration from `declaration.at(params)`. This marks route records forgotten so the next open checks that the stream is empty and open. A bare key leaves route records live. [Forget](/docs/projections/checkpoints#forget)
-- Routed forget for an existing checkpoint, including automatic forget after a gone input, requires owner-record listing. MySQL fails with `unsupported-composition`. On MySQL, forgetting an absent checkpoint leaves the route records as they are.
+- Routed forget for an existing checkpoint, including automatic forget after a gone input, requires owner-record listing. MySQL supports listing. A legacy hashed route key in the listing range fails `forget` with `unsupported-composition`. Forgetting an absent checkpoint tolerates unsupported listing and leaves the route records as they are. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 - Forget can delete an undecodable tombstone and allow the generation to run again.
 
 ### `Projection.retire`
@@ -1050,7 +1051,7 @@ Each `Projection.RetiredStream` in `streams` has `output`, `id`, and `result`. T
 
 A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
 
-Retirement uses live and forgotten route records to find routed streams. Pass a declaration with the original routed outputs. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves those streams in place. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
+Retirement uses live and forgotten route records to find routed streams. Pass a declaration with the original routed outputs. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves those streams in place. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. Routed retirement fails with `unsupported-composition` if the owner store lacks listing or if the MySQL listing range contains a legacy hashed route key without its full key. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 ## Helpers
 

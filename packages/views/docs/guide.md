@@ -137,7 +137,7 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks each output stream in the first unit transaction. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
+Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks non-routed generation outputs in the first unit transaction. Routed output streams open when the circuit first emits to them. All declared outputs must share the transaction's owner. Use normal projection stream services for inputs. The circuit integrates exactly the input pages of its unit.
 
 For a long-lived process, attach with `Projection.attach(shopViews, { durable: true })` over these same host services after migration. Attach the output `StateTable` too when readers need it kept current. Use `Projection.Registry.awaitOffset` for read-your-writes. Do not also run/follow an attached binding. The [README](../README.md) contains the complete example State declarations.
 
@@ -151,6 +151,12 @@ The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `t
 bun run --cwd packages/views test:unit
 bun run --cwd packages/views test:workerd
 ```
+
+## MySQL host
+
+Build `SqlStorage.layer` over a MySQL `SqlClient` from `@effect/sql-mysql2`. Use `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql` over storage. Run `View.migrate(sql)` with the storage client before starting any circuits. Concurrent hosts can migrate the same database. Assign one writer to each binding.
+
+Install `@streamsy/storage` at the same version as `@streamsy/views` and keep the storage boundary's default `READ COMMITTED` isolation. Tests covered MySQL 8.4.11 only. See [Run on MySQL](https://streamsy.dev/docs/views/mysql) for the host configuration and database limits.
 
 ## Transaction and State semantics
 
@@ -182,7 +188,7 @@ String expressions compare lexicographically by UTF-16 code units, without local
 
 `View.list(expression)` collects a group's string or finite number values in ascending order and keeps duplicates. Numbers precede strings in a mixed group. Absent operands are skipped. A group with no members has no output row. When a member changes the list, the aggregate emits the whole array. `maxAffectedKeys` does not bound group size.
 
-Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
+Use UTF-8 database encoding on SQLite. Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
 
 A source used only by direct `where` filters keeps rows that pass at least one of those filters. Another consumer of the unfiltered source keeps its full integral.
 

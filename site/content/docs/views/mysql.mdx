@@ -1,0 +1,67 @@
+---
+title: Run on MySQL
+description: Configure a MySQL circuit host, run the Views migration, and check key and identifier limits.
+---
+
+## Build the host
+
+Use a MySQL client from `@effect/sql-mysql2` with `SqlStorage.layer`. Install `@streamsy/storage` at the same version as `@streamsy/views` for the transaction isolation that Views uses on MySQL.
+
+Use MySQL 8.0.17 or later. The dialect suites covered MySQL 8.4.11 only. MySQL 8.0.17 through 8.4.10 remain untested.
+
+If you are opening an existing database, check the [SQL storage migration instructions](/docs/reference/storage/sql-storage#sqlstoragelayer) before you start the host.
+
+Build `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql` over storage. Pass the storage layer's `SqlClient` to `View.migrate(sql)` at startup, before running or attaching a circuit.
+
+```ts no-twoslash
+import { Effect, Layer, Redacted } from "effect";
+import { SqlClient } from "effect/sql";
+import { MysqlClient } from "@effect/sql-mysql2";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, OwnerTransaction, Projection } from "@streamsy/projection";
+import { SqlStorage } from "@streamsy/storage";
+import { View, ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+export const runShop = (databaseUrl: string, shopId: string) => {
+  const client = SqlStorage.clientLayer(MysqlClient.make({ url: Redacted.make(databaseUrl) }));
+  const storage = SqlStorage.layer(Streamsy.group(Orders, ShopViews)).pipe(
+    Layer.provideMerge(client),
+  );
+  const host = Layer.mergeAll(
+    CheckpointStore.layer,
+    OwnerTransaction.layer,
+    ViewBackend.layerSql,
+  ).pipe(Layer.provideMerge(storage));
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* Projection.run(shopCircuit(1).at({ shopId }));
+  }).pipe(Effect.provide(host));
+};
+```
+
+Create the input for `shopId` before running the circuit. See the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes).
+
+Several hosts can use the same database. Assign one writer to each binding and stop and drain its runners before lifecycle operations. See [One writer](/docs/projections/checkpoints#one-writer) and [Lifecycle and rebuilds](/docs/views/lifecycle).
+
+Keep the storage boundary's default `READ COMMITTED` isolation when several hosts use the database. At this level, a circuit can read operator state consistent with its checkpoint when another host advances an existing binding during the transaction. See [MySQL transactions](/docs/reference/storage/sql-storage#mysql-transactions).
+
+## Migration and stored state
+
+`View.migrate` reserves one connection and takes the named lock `streamsy_view_layout`. Concurrent hosts wait up to 30 seconds for that lock. MySQL commits DDL one statement at a time. If the layout table exists, the migration checks its version before any DDL. A newer layout fails with a non-retryable `ViewFault`.
+
+The layout table holds the Views layout version, currently `1`. The migration creates the five operator tables and inserts the version if it is absent. You can rerun the migration after an interrupted startup. Building `SqlStorage.layer` runs the separate [Streamsy storage migration](/docs/reference/storage/sql-storage#sqlstoragelayer).
+
+The operator tables use SHA-256 digests for equality lookups and keep full row, output, and owner keys as bytes. An ordered lookup that fills its limit can read every entry with the last row's 1,024-byte prefix before applying the limit. MySQL uses the same [ordered lookup algorithm as Postgres](/docs/views/postgres#ordered-lookup-cost).
+
+## Keys and identifiers
+
+Views limits stored relation, arrangement, and node identifiers to 255 UTF-8 bytes. For a snapshot arrangement, count `@snapshot/` and the complete JSON array of the State class's service key and collection name, including JSON punctuation and escapes.
+
+An overlong identifier or an encoded row, output, or owner key with a lone UTF-16 surrogate fails the unit with a non-retryable `ViewDataFault`. U+0000 is valid in a key.
+
+Views adds no length limit to row keys or sort keys. Keep MySQL's `sql_mode` strict so MySQL rejects values that exceed a column's length. Without strict mode, MySQL can truncate an overlong binary value. See [MySQL binary column types](https://dev.mysql.com/doc/refman/8.4/en/binary-varbinary.html).
+
+MySQL closes the connection when it receives a packet larger than `max_allowed_packet`. Size the client and server packet limits for the rows and batches your circuit writes. See [MySQL packet limits](https://dev.mysql.com/doc/refman/8.4/en/packet-too-large.html).

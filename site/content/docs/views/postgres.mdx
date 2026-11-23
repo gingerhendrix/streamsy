@@ -36,7 +36,7 @@ export const runShop = (databaseUrl: string, shopId: string) => {
 };
 ```
 
-The example uses the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). Create the input for `shopId` before running the circuit. If the host runs a `StateTable`, add `Transaction.layer` and call `StateTable.migrate(sql)` before starting its runner.
+The example uses the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). Create the input for `shopId` before running the circuit. `StateTable` requires a SQLite host. See [State table operations](/docs/projections/state-table-operations#sqlite-only).
 
 ## Migration and stored state
 

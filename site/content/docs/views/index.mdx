@@ -5,7 +5,7 @@ description: Incrementally maintain derived Durable State collections with decla
 
 `@streamsy/views` maintains derived [Durable State](/docs/streams/durable-state) collections incrementally. A circuit consumes input State pages, updates indexed operator state, appends changed output rows, and saves its checkpoint in one owner transaction.
 
-Views supports SQLite and Postgres for SQL operator state. A [memory host](/docs/views/memory) keeps operator state in the heap. Use [`View.live`](/docs/views/live) to read committed snapshots in a browser. The package is pre-1.0, so read the [storage layout and generation rule](/docs/views/ordering-and-limits#storage-layout-and-generation-rule) before you upgrade.
+Views supports SQLite, Postgres, and MySQL for SQL operator state. A [memory host](/docs/views/memory) keeps operator state in the heap. Use [`View.live`](/docs/views/live) to read committed snapshots in a browser. Before you upgrade, check the [storage layout and generation rule](/docs/views/ordering-and-limits#storage-layout-and-generation-rule).
 
 ## Install
 

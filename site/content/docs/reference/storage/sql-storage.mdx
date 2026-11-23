@@ -77,7 +77,13 @@ import { shop } from "./streams.ts";
 const storage = SqlStorage.layer(shop).pipe(Layer.provide(SqlStorage.clientLayer(makeClient)));
 ```
 
-Building the Layer migrates the database to the current Streamsy format. On SQLite and Postgres, the migration runs in one transaction. On Postgres, it first takes an advisory lock, so several instances migrate one after the other. MySQL commits each DDL statement by itself, so the migration takes a named lock with `GET_LOCK` on one connection instead, and waits at most 30 s for it. Schema version 3 adds `stopped`, `failed_at`, `failure_reason`, `failure_message` and nullable `wake_at` to the `streamsy_projection_pending` table introduced in version 2. Opening a version 2 database upgrades it automatically, preserving pending work and backoff; existing marks start with `stopped: false` and no recorded failure or wake. MySQL checks each column in `information_schema.columns` under its named lock, so a partially applied upgrade can safely resume. A release that supports only schema version 2 cannot reopen the upgraded database.
+Building the Layer migrates the database to storage schema version 3 on SQLite and Postgres, and version 4 on MySQL. SQLite and Postgres run their migrations in one transaction. Postgres first takes an advisory lock so concurrent hosts migrate one at a time. MySQL commits each DDL statement separately and waits up to 30 seconds for a named lock on one connection. MySQL checks `information_schema.columns` under that lock to resume an interrupted column addition.
+
+Schema version 3 adds `stopped`, `failed_at`, `failure_reason`, `failure_message`, and nullable `wake_at` to `streamsy_projection_pending`. The upgrade from version 2 preserves pending work and backoff. Existing marks start with `stopped: false` and no recorded failure or wake.
+
+Before you open a MySQL database with storage that upgrades it to version 4, stop every 0.13.0 process. Storage that supports only schema version 3 rejects the upgraded database. An older process that stays connected can delete a long pending mark without running its binding.
+
+Version 4 adds `streamsy_owner_records.full_key` and `streamsy_projection_pending.full_params`. New writes store the original owner key and encoded pending mark params in those columns, so listing and mark reads can return the original strings. MySQL durable projection ids are limited to 255 Unicode code points.
 
 The build fails with a [`StorageFault`](/docs/reference/core/faults#storagefault) in these cases:
 
@@ -95,10 +101,29 @@ When the format is older or newer, the build does not change the database. Use a
 The store follows these rules:
 
 - The store has `chain` forks, `store` atomic scope, `push` wakes, and an `indexed` expiry index. See [`StorageCapabilities`](/docs/reference/core/storage#storagecapabilities)
+- Use UTF-8 database encoding on SQLite. Owner record prefix listing uses an ordered range on the text key
 - On Postgres and MySQL, each mutation transaction first locks the rows of the streams that it writes with `SELECT ... FOR UPDATE`, in id order, so writers on several connections commit one after the other
 - A create fails with a `StorageFault` with operation `mutate.stream-id` when the stream id has more than 512 code points. An append fails with operation `mutate.producer-id` when its producer id has more than 255 code points. Every dialect applies these limits, which come from the key columns of the MySQL schema
-- On MySQL, an owner record key over 512 code points is stored as its first 447 code points, `#`, and the SHA-256 hex of the full key, so two long keys that share their first 512 code points stay apart. A key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
+- On MySQL, an owner record lookup key over 512 code points uses its first 447 code points, `#`, and the SHA-256 hex of the full key. A lookup key of at most 512 code points is stored as it is. SQLite and Postgres store every key as it is
 - To run your SQL and a mutation in one transaction, use [`CommitBoundary.withTransaction`](/docs/reference/core/storage#commitboundaryapi). Inside a transaction that you open with `sql.withTransaction`, a mutation dies, and so does `CommitBoundary.withTransaction`. See [Commit with your own tables](/docs/storage/sqlite#commit-with-your-own-tables)
+
+#### MySQL owner record listing
+
+Version 4 supports prefix listing for `Projection.bindings`, startup inventory, and routed `Projection.retire` and `Projection.forget`. A range that contains a legacy hashed key without its full key fails with `OWNER_RECORDS_LIST_UNSUPPORTED`. The checkpoint store maps the fault to `unsupported-composition`. Point reads still work. Writing the original key restores listing for that record.
+
+Outside a transaction, listing is a plain read. Inside a MySQL transaction, `Projection.bindings` uses `FOR SHARE` on the owner record range it reads. At `READ COMMITTED`, these are shared locks on existing rows. Another host can insert a new binding for the same projection while the listing transaction is open.
+
+#### MySQL transactions
+
+The storage boundary opens MySQL transactions at `READ COMMITTED`. This applies to `CommitBoundary.withTransaction` and transactions the boundary opens for mutations. The setting overrides the session default, including `SERIALIZABLE` and defaults inherited from the pool or server. Transactions that projection marks open directly through `SqlClient` use the session default. Marks written by a commit hook join the boundary transaction.
+
+At `READ COMMITTED`, each plain read sees a fresh snapshot of committed rows. A locking read can hold existing rows until commit. To protect an absent key or prevent inserts into a range, enforce a unique key or have writers lock an existing parent row. `FOR UPDATE` and `FOR SHARE` alone cannot protect those gaps at this isolation level. See [MySQL transaction isolation levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
+
+To use the session default, provide Effect's `SqlClient.BeginTransaction` with `"START TRANSACTION"`. With `REPEATABLE READ`, a circuit can see stale operator state if another host advances its binding after the transaction's first plain read. `Projection.forget` can also miss a routed checkpoint that another host commits between that first read and the checkpoint load.
+
+Keep the session in autocommit. The boundary sends `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` and `START TRANSACTION` in one request. MySQL applies the isolation setting to that transaction. A custom client with multi-statement requests disabled fails when the boundary first opens a transaction. Effect's mysql2 client enables multi-statement requests by default. The mysql2 flag `-MULTI_STATEMENTS` disables them.
+
+With binary logging enabled, use `binlog_format=ROW` or `MIXED`. In `MIXED` mode, MySQL logs InnoDB writes in these transactions by row. See [MySQL transaction isolation levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
 
 ### `SqlStorage.layerProtocol`
 

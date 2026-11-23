@@ -3,7 +3,7 @@ title: Declare and run a circuit
 description: Build relations with View.from, wrap outputs in Projection.perGeneration, migrate operator tables, and run a circuit on a SQL host.
 ---
 
-A Views circuit reads one or more `Streamsy.state` collections, maintains their relational operators incrementally, and writes generation-addressed `Streamsy.state` outputs. SQL hosts use SQLite or Postgres. For heap storage, see [Run Views in memory](/docs/views/memory). Install it with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`.
+A Views circuit reads one or more `Streamsy.state` collections, maintains their relational operators incrementally, and writes generation-addressed `Streamsy.state` outputs. SQL hosts use SQLite, Postgres, or MySQL. For heap storage, see [Run Views in memory](/docs/views/memory). Install it with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`.
 
 ## Declare input and output State classes
 
@@ -168,7 +168,7 @@ Call `View.migrate(sql)` during SQL host startup, before running or attaching an
 - `streamsy_view_key_owners`
 - `streamsy_view_circuits`
 
-For the Postgres setup and layout, see [Run on Postgres](/docs/views/postgres). If the host uses `StateTable`, also provide `Transaction.layer` and call `StateTable.migrate(sql)` at startup.
+For server SQL hosts, see [Run on Postgres](/docs/views/postgres) or [Run on MySQL](/docs/views/mysql). If your SQLite host uses `StateTable`, also provide `Transaction.layer` and call `StateTable.migrate(sql)` at startup.
 
 ## Run on Bun SQLite
 

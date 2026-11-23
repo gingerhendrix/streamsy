@@ -138,7 +138,7 @@ A live checkpoint in a legacy version slot can keep a binding in the inventory a
 
 Startup skips a binding when the input head check for fixed wrapped outputs fails with `history-unavailable`. For example, an inventory entry can outlive a deleted input. The listing reports checkpoint bindings independently of whether replay can read their inputs.
 
-MySQL owner records can contain irreversible shortened keys, so `Projection.bindings` fails there and attach skips implicit inventory. Adapters without checkpoint listing also skip implicit inventory. Supply `bindings` from your application on those hosts. Live commits and configured triggers continue to schedule work.
+MySQL supports checkpoint inventory. If a listing range contains a legacy hashed key without its full key, `Projection.bindings` fails with `unsupported-composition` and attach logs a warning and skips implicit inventory. Supply `bindings` from your application when inventory fails, or when your adapter has no checkpoint listing. Live commits and configured triggers continue to schedule work. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 Attach also skips startup replay and logs the cause when a checkpoint record under the id does not decode, or when the `bindings` Effect fails. `Projection.bindings` fails on such a record and on stored params that the current codecs no longer accept. Live commits and triggers still run, but no binding is queued for replay until the next start. Fix the record or the list, then restart the host.
 

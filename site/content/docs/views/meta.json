@@ -4,6 +4,7 @@
     "index",
     "declare-and-run",
     "postgres",
+    "mysql",
     "memory",
     "live",
     "lifecycle",

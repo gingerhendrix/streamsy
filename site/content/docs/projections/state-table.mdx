@@ -54,7 +54,7 @@ Call `StateTable.migrate(sql)` once at host start, before any table runs. It cre
 | `streamsy_state_heads` | One head for each stream: the offset that the rows reflect, and snapshot state |
 | `streamsy_state_rows`  | One row for each stream, collection and key, with the value as canonical JSON  |
 
-The table migration sits outside the storage migrations and does not change their schema version. Opening SQL storage upgrades it to schema version 3; a release that supports only version 2 cannot reopen it. See [Storage migrations](/docs/reference/storage/sql-storage#sqlstoragelayer). `migrate` supports the SQLite family only. On another dialect it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`.
+The table migration is separate from the SQL storage migration. `StateTable.migrate` supports the SQLite family only. On another dialect it fails with a `ProjectionFault` with phase `load` and reason `unsupported-composition`. See [Storage migrations](/docs/reference/storage/sql-storage#sqlstoragelayer).
 
 ## Keep the table current
 
