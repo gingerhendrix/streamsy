@@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
 import { DurableState, Streamsy } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
 import { Commit, Projection } from "@streamsy/projection";
-import { Deferred, Effect, Exit, Layer, Scope, Stream } from "effect";
+import { Context, Deferred, Effect, Exit, Layer, Scope, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { expect } from "vitest";
 import { View, ViewBackend } from "../../src/index.ts";
@@ -95,11 +95,32 @@ it.live("replays and follows the same remote State from two independent page lay
       views: { orders },
     });
 
+    const shop = Context.get(firstPage, Shop);
+    let waiting = 0;
+
+    const observed = Context.add(firstPage, Shop, {
+      ...shop,
+      wire: {
+        ...shop.wire,
+        readNext: (...args) =>
+          Effect.acquireUseRelease(
+            Effect.sync(() => {
+              waiting++;
+            }),
+            () => shop.wire.readNext(...args),
+            () =>
+              Effect.sync(() => {
+                waiting--;
+              }),
+          ),
+      },
+    });
+
     const scope = yield* Scope.fork(yield* Effect.scope);
 
     const first = yield* declaration
       .at(params)
-      .pipe(Scope.provide(scope), Effect.provideContext(firstPage));
+      .pipe(Scope.provide(scope), Effect.provideContext(observed));
 
     const second = yield* declaration.at(params).pipe(Effect.provideContext(secondPage));
 
@@ -111,7 +132,12 @@ it.live("replays and follows the same remote State from two independent page lay
     yield* awaitMatch(first.rows("orders"), ({ rows }) => rows[0]?.total === 4);
     yield* awaitMatch(second.rows("orders"), ({ rows }) => rows[0]?.total === 4);
 
+    yield* awaitMatch(
+      Effect.sync(() => waiting),
+      (active) => active > 0,
+    );
     yield* Scope.close(scope, Exit.void);
+    expect(waiting).toBe(0);
     yield* append(5);
     expect(
       (yield* awaitMatch(second.rows("orders"), ({ rows }) => rows[0]?.total === 5)).caughtUp,
