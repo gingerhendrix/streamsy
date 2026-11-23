@@ -52,6 +52,8 @@ export function boardChanges(previous: ProjectionState, next: ProjectionState): 
 
 export const boardProjection = Projection.mapAccum({
   id: "hex-domination-board",
+  // Replay appends rows to existing board1 streams. Run scripts/rebuild.ts before
+  // serving existing games to replay into a fresh board stream.
   generation: 2,
   commit: Commit.producer,
   // Keep the archived text generation ids (including explicit rebuild names).
