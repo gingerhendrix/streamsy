@@ -37,15 +37,15 @@ A declaration is inert. It reads and writes nothing. `orderTotals.at({})` binds 
 | `outputs`    | Required for `emit`, `mapAccum`, and `mapAccumBatch`; optional for transactional `process`. JSON or State stream classes or fixed addresses. See [Output streams](/docs/projections/outputs) |
 | `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                           |
 | `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)         |
-| `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)                                  |
-| `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                  |
+| `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction`, `Commit.ownerTransaction`, or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)      |
+| `prepare`    | Optional, for `process` with `Commit.transaction` or `Commit.ownerTransaction`. See [Tables and effects](/docs/projections/process)                                                          |
 | The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                           |
 
 `Projection.wake` takes `input` and `output` in place of `inputs`, `outputs`, `commit`, and a handler. See [Wake streams](/docs/streams/wake#write-rows).
 
 A declaration that the compiler accepts can still throw a `RangeError`:
 
-- The constructor throws `prepare requires Commit.transaction` when `prepare` has another Commit.
+- An unsupported commit throws `prepare requires Commit.transaction or Commit.ownerTransaction` when the definition declares `prepare`.
 - `at` throws when a parameter value does not encode with its codec.
 - `at` throws when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
 

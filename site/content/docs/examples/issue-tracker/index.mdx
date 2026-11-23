@@ -40,13 +40,14 @@ The issue tracker is designed as a family of examples built around one shared co
 
 Because both sides program strictly to that contract, **any server variant can pair with any client variant**, and each variant page only covers what changes from the base app:
 
-| Side        | Variant                                                     | What it uses                                                                             |
-| ----------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Base server | **This page**                                               | Direct Durable State stream as database (`workspaces.decide` + `Serve.mount`)            |
-| Server      | [Event sourced](/docs/examples/issue-tracker/event-sourced) | Domain event log (`Streamsy.json`) + `Projection.mapAccum` projecting into `Workspaces`  |
-| Base client | **This page**                                               | React + `@durable-streams/state` (`createStreamDB`) + TanStack DB (`useLiveQuery`)       |
-| Client      | [Foldkit](/docs/examples/issue-tracker/foldkit)             | Elm architecture on Effect (`Model`, `Message`, `update`, `Subscription`, `Command`)     |
-| Client      | [Effect Atom](/docs/examples/issue-tracker/atom)            | `effect/reactivity` + `@effect/atom-react`, `Stream.scan` replica, typed `HttpApiClient` |
+| Side        | Variant                                                          | What it uses                                                                             |
+| ----------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Base server | **This page**                                                    | Direct Durable State stream as database (`workspaces.decide` + `Serve.mount`)            |
+| Server      | [Event sourced](/docs/examples/issue-tracker/event-sourced)      | Domain event log (`Streamsy.json`) + `Projection.mapAccum` projecting into `Workspaces`  |
+| Base client | **This page**                                                    | React + `@durable-streams/state` (`createStreamDB`) + TanStack DB (`useLiveQuery`)       |
+| Client      | [Foldkit](/docs/examples/issue-tracker/foldkit)                  | Elm architecture on Effect (`Model`, `Message`, `update`, `Subscription`, `Command`)     |
+| Client      | [Foldkit with Views](/docs/examples/issue-tracker/foldkit-views) | Foldkit subscription with a browser-local `View.live` circuit                            |
+| Client      | [Effect Atom](/docs/examples/issue-tracker/atom)                 | `effect/reactivity` + `@effect/atom-react`, `Stream.scan` replica, typed `HttpApiClient` |
 
 ## How the base app works
 

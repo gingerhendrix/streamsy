@@ -69,12 +69,13 @@ export const tripled = Projection.emit({
 | `Streamsy.json`  | Items of the stream's schema                                                      |
 | `Streamsy.state` | Durable State row changes and State controls. See [State outputs](#state-outputs) |
 
-An output projection has no default Commit. Set `commit` to `Commit.producer` or `Commit.transaction`, or to a custom Commit. See [Commits](/docs/projections/commits).
+An output projection has no default Commit. Set `commit` to `Commit.producer`, `Commit.transaction`, `Commit.ownerTransaction`, or a custom Commit. See [Commits](/docs/projections/commits).
 
-| Commit               | Outputs                                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| `Commit.producer`    | Appends each output with a producer position, so a retry writes nothing twice. Works on any host |
-| `Commit.transaction` | Appends the outputs in the SQL transaction of the checkpoint. Needs a SQL host                   |
+| Commit                    | Outputs                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Commit.producer`         | Appends each output with a producer position, so a retry writes nothing twice. Works on any host |
+| `Commit.transaction`      | Appends the outputs in the SQL transaction of the checkpoint. Needs a SQL host                   |
+| `Commit.ownerTransaction` | Appends the outputs in the checkpoint owner’s transaction. Works on memory and SQL hosts         |
 
 ## Generation-addressed outputs
 
@@ -111,7 +112,7 @@ const pinned = Doubled.at({ user: "u1", rev: 2 });
 
 Both addresses for `doubled` in the example are `doubled/u1/g/2`. Choose a deterministic route codec that encodes each generation you use to a distinct segment and decodes it back to the same value. A codec that encodes two numbers identically, or a custom route that ignores the parameter, can send two generations to one address. A value the route cannot encode fails when you bind it.
 
-- `Commit.transaction` creates every wrapped stream, including `accepted`, inside the first unit's transaction before the handler. An existing stream must have compatible create options and start empty and open. Creation rolls back if the unit fails. Later units use the existing streams.
+- `Commit.transaction` and `Commit.ownerTransaction` create every wrapped stream, including `accepted`, inside the first unit's transaction before the handler. An existing stream must have compatible create options and start empty and open. Creation rolls back if the unit fails. Later units use the existing streams.
 - `Commit.producer` creates a missing wrapped stream on the checkpoint owner when an unpinned unit has items for that stream. Before the first pin for an output, an open head at the initial offset passes the check. The head exposes no fork metadata, so an empty fork can pass that check. A pinned retry uses its saved producer position.
 - Both commits report a failed first-write check as non-retryable `invalid-output`. Use one writer per derived stream by default. An empty stream can pass the check for multiple writers, and producer writers can race between checking and appending. Use `{ shared: true }` only when you intend to share a stream and coordinate which data each writer owns. This option skips the empty-stream check. A replay can append duplicate items or fold over existing rows. Ordinary stream write and create rules still apply.
 - If there is no unit to commit, neither Commit creates a stream. Call `Projection.createOutputs(bound)` when a pinned reader needs to see an empty stream early or when a producer output lives on another owner. It creates each wrapped stream through its own service, including wrapped `accepted`. Repeating the call succeeds for compatible existing streams. Creation across owners can succeed for some streams before another fails.

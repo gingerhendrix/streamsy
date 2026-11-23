@@ -1,0 +1,108 @@
+---
+title: Issue tracker, Foldkit with Views
+description: Run the Foldkit issue tracker with a browser-local circuit for derived rows and counts.
+---
+
+This [issue tracker](/docs/examples/issue-tracker) client uses a single `View.live` circuit to maintain the workspace's projects, joined issues, comments, project totals, and status counts. It uses the base server's State route and JSON write API.
+
+The source lives in [`examples/issue-tracker-demo-foldkit-views`](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo-foldkit-views).
+
+## Run it
+
+Install and build from the repository root.
+
+```bash
+bun install --frozen-lockfile
+bun run build
+```
+
+Start the API and the browser app in separate terminals.
+
+```bash
+bun run --cwd examples/issue-tracker-demo-foldkit-views dev:api
+bun run --cwd examples/issue-tracker-demo-foldkit-views dev
+```
+
+Open `http://localhost:1338`. Vite proxies `/api` and `/streams` to the base server on port `1339`. Set `ISSUE_TRACKER_DB` on the API process to persist workspaces in a SQLite file.
+
+## Maintain rows and counts in one circuit
+
+The browser declares the same workspace route and row schemas as the server. Group counts by project and status so UI selections can reuse the circuit. The excerpt paths are relative to the example directory.
+
+```ts title="src/workspace-views.ts"
+const projects = View.from(Workspaces, "project");
+
+const issues = View.from(Workspaces, "issue");
+
+const comments = View.from(Workspaces, "comment");
+
+export const workspaceViews = View.live({
+  id: "issue-tracker-page",
+  params: Workspaces.paramCodecs,
+  views: {
+    projects,
+    visibleIssues: issues.join(projects, {
+      as: "project",
+      on: (issue, project) => issue.projectId.eq(project.id),
+    }),
+    commentsOn: comments,
+    issueCountByProject: issues
+      .groupBy((issue) => ({ projectId: issue.projectId }))
+      .aggregate(() => ({ count: View.count() })),
+    statusCounts: issues
+      .groupBy((issue) => ({ projectId: issue.projectId, status: issue.status }))
+      .aggregate(() => ({ count: View.count() })),
+  },
+});
+```
+
+## Open the reader in a subscription
+
+`workspaceMessages` merges the remote input layer with `ViewBackend.layerMemoryHost`. The Foldkit subscription owns the scope for the binding. It waits for initial catch-up before showing the tracker. On a change notification, it reads all five current snapshots for one `ReceivedViews` message. That keeps the lists and counts in the same update.
+
+```ts title="src/subscription.ts"
+    const host = Layer.merge(
+      ViewBackend.layerMemoryHost,
+      RemoteStreams.layer(Streamsy.group(Workspaces), { baseUrl }).pipe(
+        Layer.provide(FetchHttpClient.layer),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const params = { workspaceId };
+      const live = yield* workspaceViews.at(params);
+      const workspaces = yield* Workspaces;
+// ...
+export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
+  workspaceStream: entry(
+    { workspaceId: Schema.String },
+    {
+      modelToDependencies: (model) => ({ workspaceId: model.workspaceId }),
+      dependenciesToStream: ({ workspaceId }) =>
+        workspaceMessages(workspaceId, new URL("/streams", window.location.origin).href),
+    },
+  ),
+}));
+```
+
+## Confirm writes
+
+The page reads the same workspace stream twice. The circuit reads it to maintain rows and counts. A separate `workspaces.follow(params)` reads the `txid` headers the snapshots leave out, and sends `ConfirmedWrites` messages to the Model. Both readers belong to the subscription scope.
+
+```ts title="src/subscription.ts"
+const confirmations = workspaces.follow(params).pipe(
+  // ...
+  Stream.catch(() => Stream.empty),
+  Stream.concat(Stream.succeed(Message.StoppedConfirmingWrites())),
+);
+```
+
+If the confirmation reader ends or fails with a typed error, the app clears pending indicators and shows a warning. HTTP writes and live view updates continue. Reload the page to restart confirmation. A live follower or startup catch-up failure reaches the workspace error display.
+
+## Replay and build measurements
+
+Each page load replays the workspace from the beginning. In one local preview run with 300 issues, the issue list rendered in 559 ms on first load and 379–425 ms across four reloads. These timings include rendering the issue list.
+
+In a local Vite production build, the main JavaScript chunk was 701,553 bytes minified and 198,978 bytes gzipped. The [Foldkit variant](/docs/examples/issue-tracker/foldkit) measured 401,930 bytes minified and 129,711 bytes gzipped in the same comparison.
+
+Run `bun run smoke:issue-tracker-foldkit-views` from the repository root to check replay, live writes, errors, and cancellation against the base API.

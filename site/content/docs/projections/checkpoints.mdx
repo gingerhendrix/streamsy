@@ -27,6 +27,8 @@ The runner does not detect a codec change that keeps the content type. Declare a
 
 `CheckpointStore.layer` stores the records on the storage owner of the streams. Every local storage host provides that owner: `MemoryStorage.layer`, `BunStorage.layer`, `DurableObjectStorage.layer` and `SqlStorage.layer`. A record write then commits in the same transaction as the stream writes of that owner. With this Layer, `Commit.producer` creates a missing output on the owner.
 
+For `Commit.ownerTransaction`, provide `OwnerTransaction.layer` and `CheckpointStore.layer` over the same memory or SQL storage layer. See [OwnerTransaction](/docs/reference/projection/commit#ownertransaction).
+
 On a SQL host, add `Transaction.layer` for `Commit.transaction`:
 
 ```ts

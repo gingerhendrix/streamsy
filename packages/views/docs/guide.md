@@ -100,15 +100,24 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
-import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
-import { View } from "@streamsy/views";
+import {
+  CheckpointStore,
+  OwnerTransaction,
+  Projection,
+  StateTable,
+  Transaction,
+} from "@streamsy/projection";
+import { View, ViewBackend } from "@streamsy/views";
 
 const storage = BunStorage.layer(Streamsy.group(Shop, ShopViews), {
   client: { filename: "./shop.sqlite" },
 });
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-  Layer.provideMerge(storage),
-);
+const host = Layer.mergeAll(
+  CheckpointStore.layer,
+  OwnerTransaction.layer,
+  ViewBackend.layerSql,
+  Transaction.layer,
+).pipe(Layer.provideMerge(storage));
 const ShopViewsTable = StateTable.define(ShopViews);
 
 const program = Effect.gen(function* () {
@@ -128,13 +137,13 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Build the host once for its lifetime. Migrate before starting runners. Projection creates or checks each output stream in the first unit transaction. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
+Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks each output stream in the first unit transaction. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
 
 For a long-lived process, attach with `Projection.attach(shopViews, { durable: true })` over these same host services after migration. Attach the output `StateTable` too when readers need it kept current. Use `Projection.Registry.awaitOffset` for read-your-writes. Do not also run/follow an attached binding. The [README](../README.md) contains the complete example State declarations.
 
 ## Durable Object host
 
-Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer` and `Transaction.layer`. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
+Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql`. Add `Transaction.layer` for `StateTable`. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
 
 The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals, per-customer top 3 and order lineage against the full-recompute oracle after each unit. It also checks a no-op unit, a shared `txid` on every emitted change and a generation-2 lineage replay.
 

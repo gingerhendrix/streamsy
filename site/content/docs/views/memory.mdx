@@ -1,0 +1,36 @@
+---
+title: Run Views in memory
+description: Choose the Views memory layer for a host that owns State streams or a reader with external inputs.
+---
+
+Use `ViewBackend.layerMemory` when your application already owns streams with `MemoryStorage`. Use `ViewBackend.layerMemoryHost` when the application only needs an owner for Views state and checkpoints, as in a browser reading remote State streams.
+
+## Use an existing memory owner
+
+Build `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerMemory` over one `MemoryStorage.layer`. The circuit's operator state, checkpoints, and outputs share that owner's transaction.
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews } from "./streams.ts";
+
+export const host = Layer.mergeAll(
+  CheckpointStore.layer,
+  OwnerTransaction.layer,
+  ViewBackend.layerMemory,
+).pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Orders, ShopViews))));
+```
+
+At the start of each outer transaction, `MemoryStorage` copies the owner's stream state, including stored message bytes, into a transaction draft. A host that owns streams pays that cost even when a unit writes only a small part of its view state. The Views backend records its own changes in an undo journal.
+
+## Use a memory owner for a live reader
+
+`ViewBackend.layerMemoryHost` provides the backend, checkpoint store, and owner transaction over an internal memory owner with no streams. Supply your declared input services separately. See [Read live snapshots](/docs/views/live) for a complete host.
+
+Both layers keep their state in memory and need no migration. Operator state, checkpoints, and streams owned by your memory host disappear when you discard the host. The lifetime of any external input belongs to its own host.

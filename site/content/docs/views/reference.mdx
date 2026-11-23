@@ -4,13 +4,21 @@ description: Root exports, the View namespace, Relation operators, expression me
 ---
 
 ```ts
-import { PlanChanged, PlanCheckFailed, View, ViewDataFault, ViewFault } from "@streamsy/views";
+import {
+  PlanChanged,
+  PlanCheckFailed,
+  View,
+  ViewBackend,
+  ViewDataFault,
+  ViewFault,
+} from "@streamsy/views";
 import type {
   BooleanExpression,
   CircuitBinding,
   CircuitDeclaration,
   CircuitError,
   Input,
+  LiveSnapshot,
   ParameterExpressions,
   Reference,
   Relation,
@@ -20,13 +28,15 @@ import type {
 } from "@streamsy/views";
 ```
 
-Install with `bun add @streamsy/views`. All public APIs are exported from the package root. Views supports SQLite only.
+Install with `bun add @streamsy/views`. All public APIs are exported from the package root. SQL backends are SQLite and Postgres. Views also supports a memory backend.
 
 ## Root exports
 
 | Export                     | Kind                         | Purpose                                                                                              |
 | -------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `View`                     | Namespace                    | Relation builders, aggregates, expressions, `circuit`, and `migrate`                                 |
+| `View`                     | Namespace                    | Relation builders, aggregates, expressions, `circuit`, `live`, and `migrate`                         |
+| `ViewBackend`              | Service                      | Host-selected operator storage                                                                       |
+| `LiveSnapshot`             | Type                         | Committed rows and initial catch-up status                                                           |
 | `PlanChanged`              | Class (`Schema.TaggedError`) | Non-retryable fault (`_tag: "ViewPlanChanged"`) when a namespace's plan hash changes                 |
 | `ViewFault`                | Class (`Schema.TaggedError`) | Operational or setup fault (`_tag: "ViewFault"`)                                                     |
 | `ViewDataFault`            | Class (`Schema.TaggedError`) | Non-retryable row-level or `maxAffectedKeys` fault (`_tag: "ViewDataFault"`)                         |
@@ -51,7 +61,8 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | ------------------------- | -------- | ------------------------------------------------------------------------------------ |
 | `View.from`               | Function | Start a `Relation` from a `Streamsy.state` class and collection name                 |
 | `View.circuit`            | Function | Compile views and generation-addressed outputs into a `CircuitDeclaration`           |
-| `View.migrate`            | Function | Create the five Views SQLite tables on a `SqlClient`                                 |
+| `View.live`               | Function | Compile named views for a scoped heap reader                                         |
+| `View.migrate`            | Function | Create operator tables on SQLite or Postgres                                         |
 | `View.count`              | Function | Count rows in a `groupBy` group                                                      |
 | `View.sum`                | Function | Sum a numeric expression in a `groupBy` group                                        |
 | `View.min`                | Function | Minimum ordered (`number \| string`) expression in a `groupBy` group                 |
@@ -132,6 +143,19 @@ Declaration-time checks:
 - Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, an invalid `maxAffectedKeys`, or a defined `version` option.
 - Fails with `PlanCheckFailed` if the compiled plan fails static validation.
 
+### `View.live`
+
+`View.live({ id, params, views, maxAffectedKeys?, retry? })` compiles named relations and returns a declaration with `at(params)`. Pass a record of relations or a function from typed parameter expressions to that record. The declaration uses the same input parameter checks and affected-key limit as `View.circuit`. Routed relations throw `RangeError`. An invalid compiled plan throws `PlanCheckFailed`.
+
+| Member          | Result                                    | Behavior                                                                                                                                   |
+| --------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `at(params)`    | Effect of the reader, with `CircuitError` | Opens a binding in `Scope`. Requires `ViewBackend`, `OwnerTransaction`, `CheckpointStore`, and the input State services                    |
+| `rows(name)`    | `Effect<LiveSnapshot<Row>>`               | Reads the latest committed snapshot                                                                                                        |
+| `changes(name)` | `Stream<LiveSnapshot<Row>, CircuitError>` | Emits snapshots on subscription, on committed output changes, and when catch-up succeeds. Slow subscribers can skip intermediate snapshots |
+| `caughtUp`      | `Effect<void, CircuitError>`              | Waits for the initial input tails. A failed startup check can fail this Effect while the follower continues                                |
+
+`at` fails with `ViewFault` when the backend is SQL, the memory backend and checkpoint store do not share the transaction owner, the binding is already active on that owner, or the checkpoint is already in use. Loading the checkpoint can fail with `ProjectionFault`. Follower errors propagate to `changes` and `caughtUp`, including `ViewDataFault` from a bad input row and `ProjectionFault` with reason `history-unavailable` when required history is missing. See [Read live snapshots](/docs/views/live) for retry and scope behavior.
+
 ### `View.migrate`
 
 ```ts
@@ -144,7 +168,7 @@ declare const migrate: (
 ) => Effect.Effect<void, ViewFault | SqlError.SqlError>;
 ```
 
-Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. Fails with `ViewFault` on non-SQLite dialects.
+Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. On Postgres it also creates and checks `streamsy_view_layout`. An unsupported SQL dialect fails with `ViewFault`. See [Postgres migration and stored state](/docs/views/postgres#migration-and-stored-state).
 
 ### Aggregates
 
@@ -284,6 +308,20 @@ Methods available on `TypedExpression<T>` depend on `T`:
 | Optional      | `undefined` is assignable to `T`              | `isPresent()`, `unwrap()`, `orElse(fallback)`                                                                       |
 | Object fields | `Exclude<T, undefined>` is an object          | Property access `expr.prop` for each field, propagating optionality; use `View.field` when a name overlaps a method |
 
+## `ViewBackend`
+
+`ViewBackend` is an opaque Effect service. Supply it through a layer.
+
+| Layer                         | Provides                                             | Requires              | Layer error                            |
+| ----------------------------- | ---------------------------------------------------- | --------------------- | -------------------------------------- |
+| `ViewBackend.layerSql`        | `ViewBackend`                                        | `SqlClient.SqlClient` | `ViewFault` for an unsupported dialect |
+| `ViewBackend.layerMemory`     | `ViewBackend`                                        | `CommitBoundary`      | `never`                                |
+| `ViewBackend.layerMemoryHost` | `ViewBackend`, `CheckpointStore`, `OwnerTransaction` | `never`               | `never`                                |
+
+`layerSql` uses the storage owner's `SqlClient`. Run `View.migrate` with that client before running the circuit. When the transaction for that client is absent, the circuit fails with the non-retryable `ViewFault` `The Views SQL client is outside the storage owner's transaction`.
+
+`layerMemory` requires an active memory owner transaction on the running fiber when the circuit uses the store. Without it, the operation fails with the non-retryable `ViewFault` `Views memory state requires the active memory owner transaction on this fiber`. `layerMemoryHost` supplies the three services over a memory owner with no streams.
+
 ## Faults
 
 ### `PlanChanged`
@@ -353,6 +391,23 @@ interface PlanCheckFailed {
 
 ## Types
 
+### `LiveSnapshot`
+
+```ts
+import type { LiveSnapshot as ExportedSnapshot } from "@streamsy/views";
+import { same } from "./reference-check.ts";
+// ---cut---
+interface LiveSnapshot<Row> {
+  readonly rows: ReadonlyArray<Row>;
+  readonly caughtUp: boolean;
+}
+
+// ---cut-after---
+same<LiveSnapshot<{ id: string }>, ExportedSnapshot<{ id: string }>>(true);
+```
+
+The snapshot and its rows are read-only. `caughtUp` records completion of the initial replay. Rows are ordered by the encoded relation key. The key is absent unless the view selects it as a row field.
+
 ### `CircuitError`
 
 ```ts
@@ -364,4 +419,4 @@ type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
 
 ### `CircuitBinding` and `CircuitDeclaration`
 
-`CircuitDeclaration<C, V, O, HE, HR>` extends `@streamsy/projection`'s `Declaration<C, CircuitBinding<V, O>, HE, HR>`. Calling `declaration.at(params)` returns a `CircuitBinding<V, O>` that `Projection.pass`, `Projection.run`, `Projection.follow`, and `Projection.forget` accept. `Projection.attach`, `ProjectionWakeup.attach`, and `Projection.retire` accept the `CircuitDeclaration`.
+`CircuitDeclaration<C, V, O, HE, HR>` extends `@streamsy/projection`'s `Declaration<C, CircuitBinding<V, O>, HE, HR>`. Calling `declaration.at(params)` returns a `CircuitBinding<V, O>` that `Projection.pass`, `Projection.run`, `Projection.follow`, and `Projection.forget` accept. `Projection.attach`, `ProjectionWakeup.attach`, and `Projection.retire` accept the `CircuitDeclaration`. The binding uses `Commit.OwnerCommit<void | WakeAt, CheckpointStore | OwnerTransaction | ViewBackend>`. Its handler requires `ViewBackend` and the output State services.

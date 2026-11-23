@@ -21,7 +21,7 @@ A source consumed only by direct `where` filters keeps rows that match at least 
 
 ## String, extrema, and top ordering
 
-String comparisons (`eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`), `View.min`, `View.max`, and `top` orderings use **lexicographic UTF-16 code-unit ordering**. Views performs no locale collation, case folding, or Unicode normalization.
+String comparisons (`eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`), `View.min`, `View.max`, and `top` orderings use **lexicographic UTF-16 code-unit ordering**. Views performs no locale collation, case folding, or Unicode normalization. Equal encoded sort keys are ordered by encoded row key in UTF-8 byte order.
 
 Rules for `top`:
 
@@ -36,7 +36,7 @@ Set the optional `maxAffectedKeys` option on `View.circuit` to a positive safe i
 Closure checks candidate nodes within `maxDepth - 1` edges below each changed edge in both graph images. Reparenting a subtree of `s` nodes between chains of heights `h1` and `h2` can change up to `s * (min(h1, maxDepth) + min(h2, maxDepth))` closure rows. These changes count toward the unit limit. Each stored path has one part per edge, so a single descendant's paths grow quadratically with its depth up to `maxDepth`. Summed over all descendants, an untruncated chain's path storage grows cubically in its height.
 
 - Passing a value that is not a positive safe integer throws `RangeError` at declaration time.
-- When a unit exceeds the limit, the SQL transaction rolls back completely. Operator tables, output streams, and the checkpoint remain at their pre-unit state.
+- When a unit exceeds the limit, the unit rolls back. Operator state, output streams, and the checkpoint keep their pre-unit state.
 - The unit fails with a permanent `ViewDataFault` identifying the offending key.
 - `maxAffectedKeys` is not part of the plan hash. You can raise or adjust it and retry without raising `generation`.
 - The limit bounds changed keys rather than unchanged rows read by an operator (for example, recomputing a fractional sum still reads the group's rows).
@@ -49,7 +49,7 @@ A circuit unit can fail with a `CircuitError` (`PlanChanged | ViewFault | ViewDa
 | ----------------- | ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PlanChanged`     | `"ViewPlanChanged"` | No (`[NonRetryable] = true`) | The declared plan hash differs from the hash stored in `streamsy_view_circuits` for the binding's namespace. Exposes `namespace`, `stored`, and `requested`. Commits nothing                                                                                         |
 | `ViewDataFault`   | `"ViewDataFault"`   | No (`[NonRetryable] = true`) | Row-boundary or limit error during evaluation, such as exceeding `maxAffectedKeys`, an input key disagreeing with its key expression, `unwrap()` on an absent value, or an invalid predicate value. Exposes `view`, `node`, `key`, and `reason`. Rolls back the unit |
-| `ViewFault`       | `"ViewFault"`       | Depends on context           | Setup or operational failure: `View.migrate` on a non-SQLite dialect, an unwrapped output passed to `View.circuit`, schema encode/decode error, or an internal engine error. Exposes `message` and optional `cause`                                                  |
+| `ViewFault`       | `"ViewFault"`       | Depends on context           | Setup or operational failure: `View.migrate` on an unsupported SQL dialect, an unwrapped output passed to `View.circuit`, schema encode/decode error, or an internal engine error. Exposes `message` and optional `cause`                                            |
 | `PlanCheckFailed` | `"PlanCheckFailed"` | No (compile time)            | Invalid compiled plan IR during declaration. Exposes `issues`, each with `code`, `view`, optional `nodeId`, `path`, and `message`                                                                                                                                    |
 | `ProjectionFault` | `"ProjectionFault"` | By reason                    | Storage, checkpoint, output, identity, or retirement faults from `@streamsy/projection`. See [`ProjectionFault`](/docs/reference/projection/faults)                                                                                                                  |
 
@@ -61,9 +61,9 @@ Under `Projection.attach` and `ProjectionWakeup.attach`, non-retryable faults (`
 
 ## Current limits
 
-- **SQLite only.** Operator tables require Bun SQLite, Durable Object SQLite, or another SQLite `SqlClient`. `View.migrate` fails on Postgres and MySQL with `ViewFault`.
+- **SQL backends.** Views supports SQLite and Postgres. See [Postgres key and identifier limits](/docs/views/postgres#keys-and-identifiers).
 - **SQL bind limit.** The SQLite store computes index keys in JavaScript and binds at most 100 parameters per statement, fitting Cloudflare Durable Object SQLite limits.
 - **JSON object rows.** Input collection values must be JSON objects, and collection codecs must require no Effect services.
 - **Equi-joins only.** Join conditions must test equality between a left-only expression and a right-only expression.
-- **Separate binding namespaces.** Circuit parameters bind separate namespaces with independent SQL state. Dynamic parameters-as-data across bindings are not supported.
-- **Unsupported features.** `avg`, `distinct`, fact folds, the memory tier, frontier rows, and `old_value` on emitted upserts are not supported.
+- **Separate binding namespaces.** Circuit parameters bind separate namespaces with independent operator state. Dynamic parameters-as-data across bindings are not supported.
+- **Unsupported features.** `avg`, `distinct`, fact folds, frontier rows, and `old_value` on emitted upserts are not supported.

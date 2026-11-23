@@ -1,12 +1,12 @@
 # @streamsy/views
 
-Incrementally maintain Streamsy State collections on SQLite. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
+Incrementally maintain Streamsy State collections on SQLite, Postgres, or memory. A circuit consumes input pages, updates indexed operator state, appends changed output rows, and saves its checkpoint in one owner transaction.
 
 ```sh
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Runs on Bun SQLite and Durable Object SQLite only. Requires Effect 4. The package is pre-1.0: raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+Requires Effect 4. The package is pre-1.0. Raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";
@@ -72,7 +72,7 @@ Supported operators: `where`, `select`, equality `join`, `leftJoin`, `groupBy` w
 
 String comparisons use **lexicographic UTF-16 code-unit ordering**, without locale comparison, case folding or Unicode normalization. This applies to comparisons, extrema and top ordering. Include the unique row key as the last top sort term. State rows have no result-list order; `StateTable.list` orders by its wire keys.
 
-Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`.
+On SQL hosts, run `View.migrate(sql)` at startup and provide `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql` over the same storage layer. If the host uses `StateTable`, also provide `Transaction.layer` and run `StateTable.migrate(sql)`. See [Declare and run a circuit](https://streamsy.dev/docs/views/declare-and-run). A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`.
 
 Before starting an upgraded process, prepare the output addresses and retain the input history. If a circuit used a `version` other than `1`, stop its old runners and follow the reader cutover and retirement steps. [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
@@ -80,8 +80,8 @@ To discard progress, pass the binding from `circuit.at(params)` to `Projection.f
 
 Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
 
-Unsupported features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
+Unsupported features include `avg`, `distinct`, fact folds, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Retain input history for rebuilding.
 
-| Export            | Purpose                         |
-| ----------------- | ------------------------------- |
-| `@streamsy/views` | `View`, fault classes and types |
+| Export            | Purpose                                        |
+| ----------------- | ---------------------------------------------- |
+| `@streamsy/views` | `View`, `ViewBackend`, fault classes and types |

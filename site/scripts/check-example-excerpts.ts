@@ -44,6 +44,7 @@ export const pageExamples = new Map<string, readonly [string, ...Array<string>]>
       "examples/issue-tracker-demo-contract",
     ],
   ],
+  ["issue-tracker/foldkit-views", ["examples/issue-tracker-demo-foldkit-views"]],
   [
     "issue-tracker/atom",
     [

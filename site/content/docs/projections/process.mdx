@@ -165,7 +165,7 @@ An append that the handler makes to a stream on the same storage commits with th
 
 ## Declared outputs
 
-Under `Commit.transaction`, a `process` declaration can list `outputs`, as `emit` does. Each output is a stream declaration or a fixed address, and each declaration must take a subset of `params`. The handler gets the bound address of each output in `context.outputs`, and it appends to them itself.
+With `Commit.transaction` or `Commit.ownerTransaction`, a `process` declaration can list `outputs`. Each output is a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each declaration takes a subset of `params` after Projection supplies the generation and any routed parameters. The handler writes the outputs through the addresses or routed handles in `context.outputs`.
 
 ```ts
 // @filename: streams.ts
@@ -196,11 +196,11 @@ const copyTotals = Projection.process({
 });
 ```
 
-- Before `prepare` and the handler run, the Commit checks that every output shares the storage of the `Transaction` service. An output on other storage fails the unit with phase `load` and reason `unsupported-composition`, and the handler does not run.
+- Before `prepare` and the handler run, the Commit checks that every output shares the transaction owner. An output on other storage fails the unit with phase `load` and reason `unsupported-composition`, and the handler does not run.
 - The appends commit with the checkpoint, or roll back with it.
 - The Commit does not create the outputs. Create each output first, or create it in the handler.
 - `prepare` gets the same addresses in its `context.outputs`.
-- `Commit.atLeastOnce` does not provide `SqlClient`, so the compiler rejects `outputs` with it.
+- `outputs` with `Commit.atLeastOnce` or a compensated owner commit is a type error.
 
 [`FoldByKey.process`](/docs/projections/fold-by-key) builds a handler of this shape, which folds rows of a State stream.
 
@@ -208,7 +208,7 @@ const copyTotals = Projection.process({
 
 `prepare(batch, unit)` runs before the transaction opens. Use it for work that must not hold the transaction open, such as a slow read from another system. Its result reaches `process` as `context.prepared`. When the declaration lists `outputs`, `prepare` also gets `{ outputs }` as its third argument.
 
-- `prepare` needs `Commit.transaction`, or `Commit.transaction` wrapped with `Commit.withCompensation`. With any other Commit, `Projection.process` throws a `RangeError` with the message `prepare requires Commit.transaction`.
+- `prepare` supports either transaction commit, including a compensation wrapper. With an unsupported commit, `Projection.process` throws `RangeError` with `prepare requires Commit.transaction or Commit.ownerTransaction`.
 - `prepare` runs at least once for each unit. A retry runs it again. It must not make effects that a second run would repeat.
 - When `prepare` fails, the run fails with its error and the transaction does not open.
 - The runner's caller provides the services that `prepare` needs.

@@ -17,4 +17,4 @@ bun run smoke:views-shop
 ```
 
 After building, `bun run smoke` also works from `examples/views-shop`. This example
-is a private workspace package. Views supports SQLite only.
+is a private workspace package. For SQLite and Postgres host setup, see [Declare and run a circuit](https://streamsy.dev/docs/views/declare-and-run).

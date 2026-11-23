@@ -1,12 +1,13 @@
 ---
 title: Commit
-description: Reference for the Commit namespace and the Transaction service in @streamsy/projection. A Commit decides how a projection writes each unit and its checkpoint, and which guarantee it gives.
+description: Reference for the Commit namespace and transaction services in @streamsy/projection. A Commit decides how a projection writes each unit and its checkpoint, and which guarantee it gives.
 ---
 
 ```ts
 import {
   Commit,
   HandlerFailed,
+  OwnerTransaction,
   Transaction,
   type Accumulated,
   type CheckpointRecord,
@@ -27,12 +28,13 @@ import type { SqlClient } from "effect/sql";
 
 A Commit takes the unit that a runner read, runs the handler, and writes the checkpoint. Its result type decides which constructors it fits, and its guarantee says how often the effects of a unit happen. See [Commits](/docs/projections/commits) and [Custom Commits](/docs/projections/commits#custom-commits).
 
-| Commit               | Result                   | Guarantee                           | Needs                            |
-| -------------------- | ------------------------ | ----------------------------------- | -------------------------------- |
-| `Commit.checkpoint`  | `Folded`                 | Exactly once for the saved value    | `CheckpointStore`                |
-| `Commit.transaction` | Any                      | Exactly once in the SQL transaction | `CheckpointStore`, `Transaction` |
-| `Commit.producer`    | `Emitted`, `Accumulated` | Effectively once for the outputs    | `CheckpointStore`                |
-| `Commit.atLeastOnce` | `void` or `WakeAt`       | At least once                       | `CheckpointStore`                |
+| Commit                    | Result                   | Guarantee                             | Needs                                 |
+| ------------------------- | ------------------------ | ------------------------------------- | ------------------------------------- |
+| `Commit.checkpoint`       | `Folded`                 | Exactly once for the saved value      | `CheckpointStore`                     |
+| `Commit.transaction`      | Any                      | Exactly once in the SQL transaction   | `CheckpointStore`, `Transaction`      |
+| `Commit.ownerTransaction` | Any                      | Exactly once in the owner transaction | `CheckpointStore`, `OwnerTransaction` |
+| `Commit.producer`         | `Emitted`, `Accumulated` | Effectively once for the outputs      | `CheckpointStore`                     |
+| `Commit.atLeastOnce`      | `void` or `WakeAt`       | At least once                         | `CheckpointStore`                     |
 
 ## Commits
 
@@ -120,6 +122,65 @@ same<
 
 If `cleanup` fails, the lifecycle call returns that fault. The transaction rolls back the checkpoint deletion or tombstone write, any owned output changes, and any SQL run with the supplied client.
 
+### `Commit.ownerTransaction`
+
+```ts
+import {
+  Commit,
+  type Accumulated,
+  type CheckpointStore,
+  type Emitted,
+  type Folded,
+  type OwnerTransaction,
+  type WakeAt,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+// ---cut---
+declare const ownerTransaction: Commit.OwnerCommit<
+  | void
+  | WakeAt
+  | Folded<unknown>
+  | Emitted<Readonly<Record<string, never>>>
+  | Accumulated<unknown, Readonly<Record<string, never>>>,
+  CheckpointStore | OwnerTransaction
+>;
+// ---cut-after---
+same<typeof ownerTransaction, typeof Commit.ownerTransaction>(true);
+```
+
+Commits the handler's owner writes, declared output appends, checkpoint, and any returned wake request in one transaction. The checkpoint store and declared outputs must share the transaction owner. A store or output on another owner fails with `unsupported-composition`. The commit supports `prepare` and accepted streams.
+
+The commit supplies no handler services. A `SqlClient` used by the handler must be the storage owner's client for its statements to join the transaction. The type system allows a handler to require a client from the host.
+
+### `Commit.ownerTransactionWithCleanup`
+
+```ts
+import type { Effect } from "effect";
+import {
+  Commit,
+  type CheckpointStore,
+  type OwnerTransaction,
+  type ProjectionFault,
+  type ProjectionKey,
+} from "@streamsy/projection";
+import { same } from "./reference-check.ts";
+type Result =
+  typeof Commit.ownerTransaction extends Commit.OwnerCommit<
+    infer A,
+    CheckpointStore | OwnerTransaction
+  >
+    ? A
+    : never;
+// ---cut---
+declare const ownerTransactionWithCleanup: <R>(
+  cleanup: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, R>,
+) => Commit.OwnerCommit<Result, CheckpointStore | OwnerTransaction | R>;
+// ---cut-after---
+same<typeof ownerTransactionWithCleanup, typeof Commit.ownerTransactionWithCleanup>(true);
+```
+
+Uses the same result types as `ownerTransaction` and adds the services required by `cleanup`. During `Projection.forget` or `Projection.retire`, it runs `cleanup(key)` inside the owner's transaction. If the owner transaction aborts, the checkpoint and owned writes roll back together. Cleanup receives the checkpoint key and gets any required services from the host. A nested memory transaction joins its outer transaction and has no savepoint.
+
 ### `Commit.producer`
 
 ```ts
@@ -185,7 +246,7 @@ declare function make<Result, Provides = never, Requires = never>(
 same<typeof make, typeof Commit.make>(true);
 ```
 
-Custom Commits do not support timer handlers in this release. A typed `WakeAt` result does not fit a custom `Commit<void>`; use `Commit.atLeastOnce` or `Commit.transaction`, including compensation wrappers, for timers.
+Custom Commits do not support timer handlers in this release. A typed `WakeAt` result does not fit a custom `Commit<void>`; use `Commit.atLeastOnce`, `Commit.transaction`, or `Commit.ownerTransaction`, including compensation wrappers, for timers.
 
 `make` returns a custom Commit from its `name`, `guarantee`, `load`, `apply`, and optional `remove`. `make` infers the result and the required services from `apply` and `load`. When the Commit provides handler services, write the `Result`, `Provides`, and `Requires` type arguments.
 
@@ -288,6 +349,10 @@ A `Commit` writes the units of a projection. `Result` is the handler result that
 | `retire`    | The optional function that fences checkpoint writes for a key, then runs the request's cleanup. `Projection.retire` calls it |
 
 A Commit with a result type that does not fit a constructor fails at the `commit:` field of the definition.
+
+### `Commit.OwnerCommit`
+
+`Commit.OwnerCommit<Result, Requires>` extends `Commit.Commit<Result, never, Requires>` with a brand that the `Projection.process` overload for owner transactions and `outputs` checks. `Commit.withCompensation` returns a general `Commit` without that brand. Passing a compensated owner commit to `Projection.process` with `outputs` is a type error.
 
 ### `Commit.Pending`
 
@@ -533,3 +598,26 @@ same<Transaction, Real.Transaction>(true);
 `Transaction` is the service of the SQL transaction that [`Commit.transaction`](#committransaction) uses. `owner` is the storage owner of the transaction, `sql` is the client that the handler gets, and `withTransaction` runs an Effect in the transaction.
 
 `Transaction.layer` builds the service from the `CommitBoundary` and the `SqlClient` of a SQL storage host. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/checkpoints).
+
+### `OwnerTransaction`
+
+```ts
+import type { CommitBoundary } from "@streamsy/core";
+import { OwnerTransaction, type ProjectionFault } from "@streamsy/projection";
+import type { Effect, Layer } from "effect";
+import { same } from "./reference-check.ts";
+// ---cut---
+interface OwnerTransactionService {
+  readonly owner: object;
+  readonly withTransaction: <A, E, R>(
+    body: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProjectionFault, R>;
+}
+
+declare const layer: Layer.Layer<OwnerTransaction, never, CommitBoundary>;
+// ---cut-after---
+same<OwnerTransactionService, typeof OwnerTransaction.Service>(true);
+same<typeof layer, typeof OwnerTransaction.layer>(true);
+```
+
+`OwnerTransaction.layer` builds the service from a memory or SQL host's `CommitBoundary`. `owner` identifies the storage owner. `withTransaction` runs the effect in that owner's transaction and maps `SqlError` to a `ProjectionFault` with phase `checkpoint` and reason `storage-failure`.
