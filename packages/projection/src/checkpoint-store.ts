@@ -72,14 +72,19 @@ const CheckpointKeyJson = Schema.fromJsonString(
   ]),
 );
 
+export const assertCheckpointKeyVersion = (key: ProjectionKey): void => {
+  if ("version" in key && key.version !== undefined && key.version !== 1)
+    throw new RangeError(`Projection ${key.id}: version was removed from checkpoint keys.`);
+};
+
+const keyParts = (key: ProjectionKey) => {
+  assertCheckpointKeyVersion(key);
+
+  return [key.id, STORED_VERSION_SLOT, String(key.generation), canonicalParams(key.params)];
+};
+
 export const recordKey = (key: ProjectionKey): string =>
-  encodeKey([
-    CHECKPOINT_NAMESPACE,
-    key.id,
-    STORED_VERSION_SLOT,
-    String(key.generation),
-    canonicalParams(key.params),
-  ]);
+  encodeKey([CHECKPOINT_NAMESPACE, ...keyParts(key)]);
 
 /** Token "0" means no record is stored yet. */
 const ABSENT_TOKEN = "0";
@@ -289,13 +294,7 @@ const decodeStored = (id: string, encoded: string) =>
 
 const ROUTED_NAMESPACE = "streamsy.projection.routed.v1";
 
-const routeKeyParts = (key: ProjectionKey) => [
-  ROUTED_NAMESPACE,
-  key.id,
-  STORED_VERSION_SLOT,
-  String(key.generation),
-  canonicalParams(key.params),
-];
+const routeKeyParts = (key: ProjectionKey) => [ROUTED_NAMESPACE, ...keyParts(key)];
 
 const RouteKeyJson = Schema.fromJsonString(
   Schema.Tuple([
@@ -317,8 +316,10 @@ const routeSlot = (key: ProjectionKey, output: string, streamId: string) =>
   encodeKey([...routeKeyParts(key), output, streamId]);
 
 const routeRecords = (store: EncodedStore): RouteRecords => {
-  const entries = (key: ProjectionKey) =>
-    store.list === undefined
+  const entries = (key: ProjectionKey) => {
+    const prefix = `${encodeKey(routeKeyParts(key)).slice(0, -1)},`;
+
+    return store.list === undefined
       ? Effect.fail(
           new ProjectionFault({
             phase: "checkpoint",
@@ -326,7 +327,8 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
             message: "This CheckpointStore does not support listing routed outputs",
           }),
         )
-      : store.list(`${encodeKey(routeKeyParts(key)).slice(0, -1)},`);
+      : store.list(prefix);
+  };
 
   return {
     has: (key, output, streamId) =>
