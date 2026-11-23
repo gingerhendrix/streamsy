@@ -7,7 +7,6 @@ import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
 import {
   STORAGE_MIGRATIONS,
-  STORAGE_SCHEMA_VERSION,
   STORAGE_VERSION_TABLE,
   STORAGE_VERSION_TABLE_DDL,
 } from "../../src/schema.ts";
@@ -59,7 +58,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       );
 
       expect(result).toEqual({
-        versions: Array.range(1, STORAGE_SCHEMA_VERSION),
+        versions: dialect.name === "mysql" ? [1, 2, 3, 4] : [1, 2, 3],
         tables: [
           "streamsy_messages",
           "streamsy_owner_records",
@@ -121,7 +120,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             stopped: false,
             failure: Option.none(),
           },
-          versions: [1, 2, 3],
+          versions: dialect.name === "mysql" ? [1, 2, 3, 4] : [1, 2, 3],
         });
       }
       // MySQL builds six fresh databases here. On a CI runner that takes about 5 s.

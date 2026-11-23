@@ -44,7 +44,7 @@ test("fresh creation and repeated open retain the current version", async () => 
     db
       .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
       .get()?.version,
-  ).toBe(STORAGE_SCHEMA_VERSION);
+  ).toBe(STORAGE_SCHEMA_VERSION.sqlite);
   db.close(false);
 });
 
@@ -126,7 +126,7 @@ test("upgrades a nonempty v1 database to the current version", async () => {
     upgraded
       .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
       .get()?.version,
-  ).toBe(STORAGE_SCHEMA_VERSION);
+  ).toBe(STORAGE_SCHEMA_VERSION.sqlite);
   expect(
     upgraded
       .query("SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_pending'")
@@ -258,7 +258,9 @@ test("legacy and too-new files reject without changing retained bytes", async ()
       db.run(
         `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
       );
-      db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (?, 1)`, [STORAGE_SCHEMA_VERSION + 1]);
+      db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (?, 1)`, [
+        STORAGE_SCHEMA_VERSION.sqlite + 1,
+      ]);
     }
 
     db.close(false);

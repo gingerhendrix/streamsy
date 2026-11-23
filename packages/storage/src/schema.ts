@@ -1,6 +1,6 @@
 import type { DialectSql } from "./dialect.ts";
 
-export const STORAGE_SCHEMA_VERSION = 3;
+export const STORAGE_SCHEMA_VERSION: DialectSql<number> = { sqlite: 3, pg: 3, mysql: 4 };
 
 export const STORAGE_VERSION_TABLE = "streamsy_schema";
 
@@ -183,6 +183,14 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
+    ],
+  },
+  // 4: the complete key beside the existing bounded primary key.
+  {
+    sqlite: [],
+    pg: [],
+    mysql: [
+      `ALTER TABLE streamsy_owner_records ADD COLUMN full_key LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL`,
     ],
   },
 ];
