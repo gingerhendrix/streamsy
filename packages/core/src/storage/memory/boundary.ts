@@ -61,7 +61,10 @@ export interface TransactionParticipant {
 
 const MemoryEnlistDefectType = Symbol.for("@streamsy/core/internal/MemoryEnlistDefect");
 
-class MemoryEnlistDefect extends Schema.TaggedError<MemoryEnlistDefect>()("MemoryEnlistDefect", {
+class MemoryEnlistDefect extends Schema.TaggedError<
+  MemoryEnlistDefect,
+  { readonly brand: unique symbol }
+>()("MemoryEnlistDefect", {
   message: Schema.String,
 }) {
   readonly [MemoryEnlistDefectType] = true;
