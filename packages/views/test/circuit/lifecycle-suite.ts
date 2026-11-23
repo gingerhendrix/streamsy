@@ -1,12 +1,21 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own database. */
 import { expect, it } from "@effect/vitest";
-import { Array, Effect, Layer, Record, Schema } from "effect";
-import { SqlClient } from "effect/sql";
-import { hostFor, migrateTestReader, type SqlFixture } from "../support/backends.ts";
+import { Array, Effect, Layer, Option, Order, Record, Schema } from "effect";
+import { SqlClient, SqlError } from "effect/sql";
+import {
+  circuitHost,
+  inBackend,
+  memoryDump,
+  migrateReader,
+  migrateViews,
+  readSql,
+  type Fixture,
+} from "../support/memory.ts";
 import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { NonRetryable, Projection, StateTable } from "@streamsy/projection";
-import { PlanChanged, View } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
+import { PlanChanged, View, ViewBackend } from "../../src/index.ts";
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Inject a failure after the real memory backend clears its state.
+import { currentBackend, makeViewBackend } from "../../src/view-backend.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
@@ -34,10 +43,9 @@ const order = { orderId: "o1", customerId: "c1", total: 10 };
 const customer = { customerId: "c1", name: "One", tier: "gold" };
 
 const seed = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* View.migrate(sql);
-  yield* View.migrate(sql);
-  yield* migrateTestReader(sql);
+  yield* migrateViews;
+  yield* migrateViews;
+  yield* migrateReader;
   const input = yield* Shop;
   yield* input.create(params);
   yield* input.append(
@@ -79,8 +87,44 @@ const restoreCleanup = (sql: SqlClient.SqlClient, name: string) =>
     orElse: () => sql`DROP TRIGGER ${sql(name)}`,
   });
 
+const withCleanupFailure = <A, E, R>(name: string, run: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+
+    if (Option.isSome(sql)) {
+      yield* failCleanup(sql.value, name);
+
+      return yield* run.pipe(Effect.ensuring(restoreCleanup(sql.value, name).pipe(Effect.orDie)));
+    }
+
+    const backend = yield* currentBackend;
+
+    const broken = makeViewBackend(
+      Effect.succeed({
+        ...backend,
+        clear: (namespace) =>
+          backend.clear(namespace).pipe(
+            Effect.andThen(
+              new SqlError.SqlError({
+                reason: new SqlError.ConnectionError({
+                  cause: undefined,
+                  message: "cleanup failed",
+                }),
+              }),
+            ),
+          ),
+      }),
+    );
+
+    return yield* run.pipe(Effect.provideService(ViewBackend, broken));
+  });
+
 const state = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
+  const client = yield* Effect.serviceOption(SqlClient.SqlClient);
+
+  if (Option.isNone(client)) return yield* memoryDump;
+
+  const sql = client.value;
 
   return yield* sql.onDialectOrElse({
     pg: () =>
@@ -121,6 +165,23 @@ const state = Effect.gen(function* () {
       }),
   });
 });
+
+const resultRows = <C extends keyof typeof Results.collections>(
+  address: typeof first,
+  collection: C,
+) =>
+  Effect.gen(function* () {
+    const table = Table.at(address);
+    const rows = yield* readSql(Projection.run(table).pipe(Effect.andThen(table.list(collection))));
+
+    if (Option.isSome(rows))
+      return new Map(Array.map(rows.value.rows, ({ key, value }) => [key, value] as const));
+
+    const { items } = yield* (yield* Results).collect(address);
+    const materialized = DurableState.materialize(DurableState.materialized(Results), items);
+
+    return materialized.rows[collection];
+  });
 
 const checkRecompute = (
   address: typeof first,
@@ -191,6 +252,21 @@ const numericCircuit = View.circuit({
 
 const NumericTable = StateTable.define(NumericResult);
 
+const numericIds = Effect.gen(function* () {
+  const table = NumericTable.at({ generation: 1 });
+  const rows = yield* readSql(Projection.run(table).pipe(Effect.andThen(table.list("row"))));
+
+  if (Option.isSome(rows)) return Array.map(rows.value.rows, ({ value }) => value.id);
+
+  const { items } = yield* (yield* NumericResult).collect({ generation: 1 });
+  const materialized = DurableState.materialize(DurableState.materialized(NumericResult), items);
+
+  return Array.sort(
+    Array.map(Array.fromIterable(materialized.rows.row.values()), ({ id }) => id),
+    Order.Number,
+  );
+});
+
 const numericUpsert = (id: number, n: number) => DurableState.upsert("row", { id, n });
 
 const WireKey = Schema.Union([Schema.String, Schema.Finite]);
@@ -213,11 +289,11 @@ class WireOutput extends Streamsy.state<WireOutput>()(
   },
 ) {}
 
-export function registerLifecycle(fixture: SqlFixture) {
-  const host = hostFor(fixture, group);
-  const numericHost = hostFor(fixture, Streamsy.group(Numeric, NumericResult));
+export function registerLifecycle(fixture: Fixture) {
+  const host = circuitHost(fixture, group);
+  const numericHost = circuitHost(fixture, Streamsy.group(Numeric, NumericResult));
 
-  it.live("a changed plan faults without changing SQL, output or checkpoint", () => {
+  it.live("a changed plan faults without changing operator state, output or checkpoint", () => {
     return Effect.gen(function* () {
       yield* seed;
       const before = yield* state;
@@ -230,8 +306,7 @@ export function registerLifecycle(fixture: SqlFixture) {
       expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
       expect((yield* (yield* Results).head(first)).nextOffset).toBe(head.nextOffset);
       yield* Projection.run(circuit().at(params));
-      yield* Projection.run(Table.at(first));
-      expect((yield* Table.at(first).get("customerTotals", "c1")).value?.revenue).toBe(20);
+      expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(20);
     }).pipe(Effect.provide(host));
   });
 
@@ -274,8 +349,7 @@ export function registerLifecycle(fixture: SqlFixture) {
         expect((yield* output.head(first)).nextOffset).toBe(head.nextOffset);
 
         expect((yield* Projection.run(circuit(1, false, 100).at(params))).units).toBe(1);
-        yield* Projection.run(Table.at(first));
-        expect((yield* Table.at(first).get("goldOrder", "o1")).value?.customerName).toBe("Renamed");
+        expect((yield* resultRows(first, "goldOrder")).get("o1")?.customerName).toBe("Renamed");
       }).pipe(Effect.provide(host)),
   );
 
@@ -291,10 +365,8 @@ export function registerLifecycle(fixture: SqlFixture) {
         DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", small)]),
       );
       yield* Projection.run(circuit().at(params));
-      const pinned = Table.at(first);
-      yield* Projection.run(pinned);
-      const before = (yield* pinned.list("goldOrder")).rows;
-      expect(Array.map(before, ({ key }) => key)).toEqual(["o1", "o2"]);
+      const before = yield* resultRows(first, "goldOrder");
+      expect([...before.keys()]).toEqual(["o1", "o2"]);
       const oldStream = yield* output.collect(first);
       expect(yield* output.head(second).pipe(Effect.flip)).toMatchObject({
         _tag: "StreamNotFound",
@@ -304,18 +376,13 @@ export function registerLifecycle(fixture: SqlFixture) {
       const recomputed = yield* checkRecompute(second, [order, small], changedViews);
       expect([...recomputed.goldOrder.keys()]).toEqual(["o1"]);
       expect(yield* output.collect(first)).toEqual(oldStream);
-      expect((yield* Projection.run(pinned)).units).toBe(0);
-      expect((yield* pinned.list("goldOrder")).rows).toEqual(before);
+      const rerun = yield* readSql(Projection.run(Table.at(first)));
 
-      const repinned = Table.at(second);
-      yield* Projection.run(repinned);
+      if (Option.isSome(rerun)) expect(rerun.value.units).toBe(0);
+      expect(yield* resultRows(first, "goldOrder")).toEqual(before);
 
-      for (const name of Record.keys(Results.collections)) {
-        const rows = (yield* repinned.list(name)).rows;
-        expect(new Map(Array.map(rows, ({ key, value }) => [key, value]))).toEqual(
-          recomputed[name],
-        );
-      }
+      for (const name of Record.keys(Results.collections))
+        expect(yield* resultRows(second, name)).toEqual(recomputed[name]);
     }).pipe(Effect.provide(host)),
   );
 
@@ -389,17 +456,13 @@ export function registerLifecycle(fixture: SqlFixture) {
       const currentStream = yield* output.collect(second);
       const currentCheckpoint = yield* Projection.read(serving);
       const retire = Projection.retire(declaration, params, { generation: 1 });
-      const sql = yield* SqlClient.SqlClient;
-
-      yield* failCleanup(sql, "fail_retire");
-      expect(yield* retire.pipe(Effect.flip)).toMatchObject({
+      expect(yield* withCleanupFailure("fail_retire", retire.pipe(Effect.flip))).toMatchObject({
         phase: "checkpoint",
         reason: "storage-failure",
       });
       expect(yield* state).toEqual(before);
       expect(yield* Projection.read(old)).toEqual(oldCheckpoint);
       expect(yield* output.collect(first)).toEqual(oldStream);
-      yield* restoreCleanup(sql, "fail_retire");
 
       expect(yield* retire).toEqual({
         record: "retired",
@@ -432,35 +495,50 @@ export function registerLifecycle(fixture: SqlFixture) {
     }).pipe(Effect.provide(host)),
   );
 
-  it.live("forget keeps output and replay requires a fresh generation", () =>
-    Effect.gen(function* () {
-      yield* seed;
-      const binding = circuit().at(params);
-      const output = yield* Results;
-      const before = yield* output.collect(first);
-      yield* Projection.forget(binding);
+  it.live(
+    "forget clears one namespace, preserves the output and replays into a fresh generation",
+    () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const binding = circuit().at(params);
+        const neighbor = circuit(2).at(params);
+        const output = yield* Results;
+        const before = yield* output.collect(first);
+        const forgotten = (yield* state).circuits[0]!.namespace_id;
+        yield* Projection.run(neighbor);
 
-      const empty = {
-        integrals: [],
-        arrangements: [],
-        accumulators: [],
-        owners: [],
-        circuits: [],
-      };
+        const neighborOffset = yield* Projection.read(neighbor);
+        const neighborOutput = yield* output.collect(second);
+        const both = yield* state;
 
-      expect(yield* state).toEqual(empty);
-      expect((yield* Projection.read(binding)).offsets).toEqual({ [Shop.key]: ZERO_OFFSET });
-      expect(yield* output.collect(first)).toEqual(before);
-      expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
-        phase: "process",
-        reason: "invalid-output",
-        retryable: false,
-      });
-      expect(yield* state).toEqual(empty);
-      expect((yield* Projection.read(binding)).offsets).toEqual({ [Shop.key]: ZERO_OFFSET });
-      yield* Projection.run(circuit(2).at(params));
-      yield* checkRecompute(second, [order], views);
-    }).pipe(Effect.provide(host)),
+        const keepNeighbor = Effect.gen(function* () {
+          const after = yield* state;
+
+          for (const name of Record.keys(both)) {
+            expect(Array.some(both[name], (row) => row.namespace_id === forgotten)).toBe(true);
+            expect(after[name]).toEqual(
+              Array.filter(both[name], (row) => row.namespace_id !== forgotten),
+            );
+          }
+
+          expect(yield* Projection.read(neighbor)).toEqual(neighborOffset);
+          expect(yield* output.collect(second)).toEqual(neighborOutput);
+        });
+
+        yield* Projection.forget(binding);
+        yield* keepNeighbor;
+        expect((yield* Projection.read(binding)).offsets).toEqual({ [Shop.key]: ZERO_OFFSET });
+        expect(yield* output.collect(first)).toEqual(before);
+        expect(yield* Projection.run(binding).pipe(Effect.flip)).toMatchObject({
+          phase: "process",
+          reason: "invalid-output",
+          retryable: false,
+        });
+        yield* keepNeighbor;
+        expect((yield* Projection.read(binding)).offsets).toEqual({ [Shop.key]: ZERO_OFFSET });
+        yield* Projection.run(circuit(3).at(params));
+        yield* checkRecompute({ ...params, generation: 3 }, [order], views);
+      }).pipe(Effect.provide(host)),
   );
 
   it.live("forget rolls back its checkpoint deletion when state cleanup fails", () => {
@@ -468,9 +546,11 @@ export function registerLifecycle(fixture: SqlFixture) {
       yield* seed;
       const before = yield* state;
       const checkpoint = yield* Projection.read(circuit().at(params));
-      const sql = yield* SqlClient.SqlClient;
-      yield* failCleanup(sql, "fail_cleanup");
-      yield* Projection.forget(circuit().at(params)).pipe(Effect.flip);
+      const forget = Projection.forget(circuit().at(params)).pipe(Effect.flip);
+      expect(yield* withCleanupFailure("fail_cleanup", forget)).toMatchObject({
+        phase: "checkpoint",
+        reason: "storage-failure",
+      });
       expect(yield* state).toEqual(before);
       expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
     }).pipe(Effect.provide(host));
@@ -502,17 +582,15 @@ export function registerLifecycle(fixture: SqlFixture) {
         ]),
       );
       yield* Projection.run(circuit().at(other));
-      yield* Projection.run(Table.at(first));
-      yield* Projection.run(Table.at({ ...other, generation: 1 }));
-      expect((yield* Table.at(first).get("customerTotals", "c1")).value?.revenue).toBe(10);
+      expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(10);
       expect(
-        (yield* Table.at({ ...other, generation: 1 }).get("customerTotals", "c1")).value?.revenue,
+        (yield* resultRows({ ...other, generation: 1 }, "customerTotals")).get("c1")?.revenue,
       ).toBe(99);
       expect((yield* state).circuits).toHaveLength(2);
     }).pipe(Effect.provide(host));
   });
 
-  it.live("reordering view declarations preserves the plan and SQL identities", () => {
+  it.live("reordering view declarations preserves the plan and operator identities", () => {
     return Effect.gen(function* () {
       yield* seed;
       yield* update;
@@ -530,16 +608,14 @@ export function registerLifecycle(fixture: SqlFixture) {
       });
 
       yield* Projection.run(reordered.at(params));
-      yield* Projection.run(Table.at(first));
-      expect((yield* Table.at(first).get("customerTotals", "c1")).value?.revenue).toBe(20);
+      expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(20);
     }).pipe(Effect.provide(host));
   });
 
   it.live("numeric wire keys, reset and snapshots across units follow State semantics", () => {
     return Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* View.migrate(sql);
-      yield* migrateTestReader(sql);
+      yield* migrateViews;
+      yield* migrateReader;
       const input = yield* Numeric;
       yield* input.create({});
 
@@ -549,12 +625,8 @@ export function registerLifecycle(fixture: SqlFixture) {
         Effect.gen(function* () {
           yield* input.append({}, DurableState.changes(Numeric.at({}), {}, entries));
           yield* Projection.run(numericCircuit.at({}));
-          yield* Projection.run(NumericTable.at({ generation: 1 }));
 
-          return Array.map(
-            (yield* NumericTable.at({ generation: 1 }).list("row")).rows,
-            ({ value }) => value.id,
-          );
+          return yield* numericIds;
         });
 
       expect(
@@ -564,9 +636,12 @@ export function registerLifecycle(fixture: SqlFixture) {
         ]),
       ).toEqual([1, 2]);
       const metadata = (yield* state).circuits[0]!;
-      const store = (yield* backendFor(sql)).store(metadata.namespace);
-      expect(yield* store.get("r0", encodeRowKey(asRowKey(1)))).toBeUndefined();
-      expect(yield* store.get("r0", encodeRowKey("1"))).toEqual({
+
+      const get = (key: string) =>
+        inBackend((backend) => backend.store(metadata.namespace).get("r0", key));
+
+      expect(yield* get(encodeRowKey(asRowKey(1)))).toBeUndefined();
+      expect(yield* get(encodeRowKey("1"))).toEqual({
         key: "1",
         row: { id: 1, n: 10 },
       });
@@ -588,9 +663,8 @@ export function registerLifecycle(fixture: SqlFixture) {
 
   it.live("filters a source integral across snapshots", () =>
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* View.migrate(sql);
-      yield* migrateTestReader(sql);
+      yield* migrateViews;
+      yield* migrateReader;
       const input = yield* Numeric;
       yield* input.create({});
 
@@ -607,20 +681,26 @@ export function registerLifecycle(fixture: SqlFixture) {
         Effect.gen(function* () {
           yield* input.append({}, DurableState.changes(Numeric.at({}), {}, entries));
           yield* Projection.run(binding);
-          yield* Projection.run(NumericTable.at({ generation: 1 }));
 
-          return Array.map(
-            (yield* NumericTable.at({ generation: 1 }).list("row")).rows,
-            ({ value }) => value.id,
-          );
+          return yield* numericIds;
         });
 
       expect(
         yield* append([numericUpsert(1, 1), numericUpsert(2, 20), numericUpsert(3, 30)]),
       ).toEqual([2, 3]);
       const metadata = (yield* state).circuits[0]!;
-      const store = (yield* backendFor(sql)).store(metadata.namespace);
-      const integralKeys = store.rows("r0").pipe(Effect.map(Array.map((row) => row.key)));
+
+      const integralKeys = inBackend((backend) =>
+        backend.store(metadata.namespace).rows("r0"),
+      ).pipe(
+        Effect.map((rows) =>
+          Array.sort(
+            Array.map(rows, (row) => String(row.key)),
+            Order.String,
+          ),
+        ),
+      );
+
       expect(yield* integralKeys).toEqual(["2", "3"]);
 
       expect(
@@ -639,13 +719,7 @@ export function registerLifecycle(fixture: SqlFixture) {
   );
 
   it.live("an attached circuit advances through the normal Projection registry", () => {
-    const migrate = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* View.migrate(sql);
-        yield* migrateTestReader(sql);
-      }),
-    );
+    const migrate = Layer.effectDiscard(migrateViews.pipe(Effect.andThen(migrateReader)));
 
     const attached = Projection.attach(circuit(), { durable: true }).pipe(
       Layer.provideMerge(Projection.Registry.layer),
@@ -665,8 +739,7 @@ export function registerLifecycle(fixture: SqlFixture) {
       yield* registry
         .awaitOffset(circuit().at(params), Shop.key, receipt.offset)
         .pipe(Effect.timeout("5 seconds"));
-      yield* Projection.run(Table.at(first));
-      expect((yield* Table.at(first).get("customerTotals", "c1")).value?.revenue).toBe(10);
+      expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(10);
     }).pipe(Effect.provide(attached));
   });
 
@@ -680,11 +753,10 @@ export function registerLifecycle(fixture: SqlFixture) {
         views: { row: View.from(WireInput, "row") },
       }).at({});
 
-      const local = hostFor(fixture, Streamsy.group(WireInput, WireOutput));
+      const local = circuitHost(fixture, Streamsy.group(WireInput, WireOutput));
 
       return Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* View.migrate(sql);
+        yield* migrateViews;
         const input = yield* WireInput;
         yield* input.create({});
         yield* input.append(

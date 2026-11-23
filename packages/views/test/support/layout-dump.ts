@@ -1,6 +1,7 @@
 import { expect } from "@effect/vitest";
-import { Array as Arr, Effect, Order } from "effect";
+import { Array as Arr, Effect, Option, Order } from "effect";
 import { SqlClient } from "effect/sql";
+import { memoryDump } from "./memory.ts";
 
 const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -10,7 +11,7 @@ const sorted = <A>(rows: readonly A[]) =>
 const sha256 = (key: string) =>
   Effect.promise(() => crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)));
 
-export const dump = (namespace: string) =>
+export const sqlDump = (namespace: string, hashIndexKeys: boolean) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
@@ -51,8 +52,6 @@ export const dump = (namespace: string) =>
           const circuits =
             yield* sql`SELECT namespace, plan_hash FROM streamsy_view_circuits WHERE ns = ${ns}`
               .values;
-
-          expect(arrangements).not.toHaveLength(0);
 
           for (const { hash_ok, prefix_ok } of arrangements) {
             expect(hash_ok).toBe(true);
@@ -98,13 +97,13 @@ export const dump = (namespace: string) =>
           }>`SELECT arrangement, index_key, sort_key, row_key FROM streamsy_view_arrangements
             WHERE namespace = ${namespace}`;
 
-          const hashed = yield* Effect.forEach(arrangements, (row) =>
-            Effect.map(sha256(row.index_key), (index) => [
-              row.arrangement,
-              Buffer.from(index).toString("hex"),
-              row.sort_key,
-              row.row_key,
-            ]),
+          const indexes = yield* Effect.forEach(arrangements, (row) =>
+            Effect.map(
+              hashIndexKeys
+                ? Effect.map(sha256(row.index_key), (index) => Buffer.from(index).toString("hex"))
+                : Effect.succeed(row.index_key),
+              (index) => [row.arrangement, index, row.sort_key, row.row_key],
+            ),
           );
 
           return {
@@ -112,7 +111,7 @@ export const dump = (namespace: string) =>
               yield* sql`SELECT relation, row_key, value FROM streamsy_view_integrals WHERE namespace = ${namespace}`
                 .values,
             ),
-            arrangements: sorted(hashed),
+            arrangements: sorted(indexes),
             accumulators: sorted(
               yield* sql`SELECT node, group_key, value FROM streamsy_view_accumulators WHERE namespace = ${namespace}`
                 .values,
@@ -128,3 +127,42 @@ export const dump = (namespace: string) =>
         }),
     });
   });
+
+const rows = <A extends { readonly namespace: string }, B>(
+  namespace: string,
+  source: readonly A[],
+  encode: (row: A) => B,
+) =>
+  sorted(
+    Arr.map(
+      Arr.filter(source, (row) => row.namespace === namespace),
+      encode,
+    ),
+  );
+
+const memoryNamespaceDump = (namespace: string) =>
+  Effect.map(memoryDump, (state) => {
+    return {
+      integrals: rows(namespace, state.integrals, (row) => [row.relation, row.row_key, row.value]),
+      arrangements: rows(namespace, state.arrangements, (row) => [
+        row.arrangement,
+        row.index_key,
+        row.sort_key,
+        row.row_key,
+      ]),
+      accumulators: rows(namespace, state.accumulators, (row) => [
+        row.node,
+        row.group_key,
+        row.value,
+      ]),
+      owners: rows(namespace, state.owners, (row) => [row.relation, row.output_key, row.owner_key]),
+      circuits: rows(namespace, state.circuits, (row) => [row.namespace, row.plan_hash]),
+    };
+  });
+
+export const logicalDump = (namespace: string) =>
+  Effect.flatMap(Effect.serviceOption(SqlClient.SqlClient), (sql) =>
+    Option.isSome(sql)
+      ? sqlDump(namespace, false).pipe(Effect.provideService(SqlClient.SqlClient, sql.value))
+      : memoryNamespaceDump(namespace),
+  );

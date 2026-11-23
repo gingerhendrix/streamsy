@@ -1,8 +1,10 @@
-import { Array, Effect, Record, Result, Schema } from "effect";
+import { Array, Effect, Option, Record, Result, Schema } from "effect";
 import { SqlClient } from "effect/sql";
-import { DurableState, Streamsy } from "@streamsy/core";
+import { CommitBoundary, DurableState, Streamsy } from "@streamsy/core";
 import { Projection, ProjectionWakeup } from "@streamsy/projection";
 import { View } from "../../../src/index.ts";
+import { namespaceOf } from "../../../src/circuit.ts";
+import { currentBackend } from "../../../src/view-backend.ts";
 import { canonicalJson } from "../../../src/runtime/key.ts";
 
 const Fact = Schema.Struct({
@@ -59,8 +61,9 @@ function compare<A>(actual: A, expected: NoInfer<A>, message: string) {
 
 /** Same routed oracle under a direct Bun run and a workerd wakeup. */
 export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup: boolean) {
-  const sql = yield* SqlClient.SqlClient;
-  yield* View.migrate(sql);
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+
+  if (Option.isSome(sql)) yield* View.migrate(sql.value);
   const input = yield* RoutedFacts;
   const output = yield* RoutedRows;
   const spec = declaration();
@@ -234,9 +237,26 @@ export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup:
   compare(yield* histories(1), [[], [], []], "Retired streams still have data");
   yield* check(2);
 
-  const namespaces = yield* sql`SELECT namespace FROM streamsy_view_circuits`;
-  const expectedNamespace = canonicalJson([canonicalJson(["routed-proof", 1, {}]), 2]);
-  compare(namespaces, [{ namespace: expectedNamespace }], "Retired view namespace remains");
+  const expectedNamespace = namespaceOf(declaration(2).at({}));
+
+  if (Option.isSome(sql)) {
+    const client = sql.value;
+    const namespaces = yield* client`SELECT namespace FROM streamsy_view_circuits`;
+    compare(namespaces, [{ namespace: expectedNamespace }], "Retired view namespace remains");
+  } else {
+    const boundary = yield* CommitBoundary;
+    yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const backend = yield* currentBackend;
+
+        if ((yield* backend.circuit(namespaceOf(binding)).load) !== undefined)
+          throw new Error("Retired view namespace remains");
+
+        if ((yield* backend.circuit(expectedNamespace).load) === undefined)
+          throw new Error("Retirement removed the serving namespace");
+      }),
+    );
+  }
 
   return { routes: results.length, moved: true, faults: 2 };
 });

@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own database. */
 /* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine or test scheduler. */
 import { expect, it } from "@effect/vitest";
-import { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
+import { CommitBoundary, DurableState, StreamAddress, Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import {
   D2,
@@ -29,7 +29,8 @@ import { compilePlan } from "../../src/relation.ts";
 import { keyExpression, type Reference } from "../../src/expression.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
 import { identity, materialize } from "./support.ts";
-import { createBackend, hostFor, type SqlFixture } from "../support/backends.ts";
+import { circuitHost, migrateViews, type Fixture } from "../support/memory.ts";
+import { currentBackend } from "../../src/view-backend.ts";
 
 const Order = Schema.Struct({
   id: Schema.String,
@@ -382,15 +383,21 @@ function editNodes(
   return edits;
 }
 
-export function registerViewConformance(fixture: SqlFixture) {
-  const host = hostFor(fixture, Streamsy.group(Orders, TopOrders));
+const engineBackend = Effect.flatMap(Effect.serviceOption(SqlClient.SqlClient), (sql) =>
+  Option.isSome(sql) ? backendFor(sql.value) : currentBackend,
+);
+
+export function registerViewConformance(fixture: Fixture) {
+  const host = circuitHost(fixture, Streamsy.group(Orders, TopOrders));
+  const closureHost = circuitHost(fixture, Streamsy.group(Graph));
+  const withOwner = "memory" in fixture;
   it.live(
     "matches both oracles for seeded View.from plans and replays generation changes",
     () =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* View.migrate(sql);
-        const backend = yield* backendFor(sql);
+        yield* migrateViews;
+        const backend = yield* engineBackend;
+        const boundary = yield* CommitBoundary;
         const inputStream = yield* Orders;
         const outputStream = yield* TopOrders;
 
@@ -488,7 +495,8 @@ export function registerViewConformance(fixture: SqlFixture) {
             }
 
             const before = new Map(actual);
-            const changes = yield* engine.process(backend, `from-${seed}`, input);
+            const process = engine.process(backend, `from-${seed}`, input);
+            const changes = yield* withOwner ? boundary.withTransaction(process) : process;
             materialize(actual, changes);
             const expected = new Map<string, string>();
 
@@ -544,14 +552,16 @@ export function registerViewConformance(fixture: SqlFixture) {
           }
         }
       }).pipe(Effect.provide(host)),
-    fixture.server === undefined ? 120_000 : 300_000,
+    "server" in fixture && fixture.server !== undefined ? 300_000 : 120_000,
   );
 
   it.live(
     "matches the full recompute for incremental closure and nearest membership in seeded forests",
     () =>
       Effect.gen(function* () {
-        const backend = yield* createBackend(fixture);
+        yield* migrateViews;
+        const backend = yield* engineBackend;
+        const boundary = yield* CommitBoundary;
         const nodeSource = canonicalJson([Graph.key, "node"]);
         const memberSource = canonicalJson([Graph.key, "member"]);
 
@@ -582,7 +592,7 @@ export function registerViewConformance(fixture: SqlFixture) {
           let state = DurableState.materialized(Graph);
           let unit = 0;
 
-          const apply = (entries: readonly GraphEntry[]) =>
+          const applyBatch = (entries: readonly GraphEntry[]) =>
             Effect.gen(function* () {
               const events = DurableState.changes(Graph.at({}), {}, entries);
               const snapshotOpen = state.snapshot !== undefined;
@@ -640,6 +650,12 @@ export function registerViewConformance(fixture: SqlFixture) {
               ).toEqual(new Map(Arr.filter([...expected], ([id]) => id.startsWith("lineage/"))));
             });
 
+          const apply = (entries: readonly GraphEntry[]) => {
+            const batch = applyBatch(entries);
+
+            return withOwner ? boundary.withTransaction(batch) : batch;
+          };
+
           yield* apply([
             ...Arr.makeBy(size, (index) => {
               const node = { id: String(index), part: index, other: 0 };
@@ -668,8 +684,8 @@ export function registerViewConformance(fixture: SqlFixture) {
             yield* apply(edits);
           }
         }
-      }),
-    fixture.server === undefined ? 120_000 : 300_000,
+      }).pipe(Effect.provide(closureHost)),
+    "server" in fixture && fixture.server !== undefined ? 300_000 : 120_000,
   );
 
   it("compiles a join shared by both concat branches once", () => {

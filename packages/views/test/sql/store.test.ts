@@ -7,7 +7,7 @@ import { backendFor } from "../../src/sql/backend.ts";
 import { client, createBackend, sqlite } from "../support/backends.ts";
 import { storeContract } from "../support/store-contract.ts";
 
-storeContract(`${sqlite.name} Store`, () => createBackend(sqlite));
+storeContract(`${sqlite.name} Store`, (run) => Effect.flatMap(createBackend(sqlite), run));
 
 it.live("migrates the SQLite tables idempotently", () =>
   Effect.gen(function* () {

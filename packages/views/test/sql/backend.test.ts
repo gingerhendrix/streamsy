@@ -1,8 +1,8 @@
 import { expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, Statement } from "effect/sql";
-import { View, ViewFault } from "../../src/index.ts";
+import { View, ViewBackend, ViewFault } from "../../src/index.ts";
 import { backendFor } from "../../src/sql/backend.ts";
 
 it.live("rejects unsupported SQL dialects in backend selection and the public migration", () =>
@@ -17,6 +17,10 @@ it.live("rejects unsupported SQL dialects in backend selection and the public mi
 
       for (const fault of [
         yield* backendFor(sql).pipe(Effect.flip),
+        yield* Layer.build(ViewBackend.layerSql).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.flip,
+        ),
         yield* View.migrate(sql).pipe(Effect.flip),
       ]) {
         expect(fault).toBeInstanceOf(ViewFault);

@@ -1,10 +1,17 @@
 /* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine or test scheduler. */
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test is an entry point with its own in-memory host. */
 import { expect, it } from "@effect/vitest";
-import { Array, Context, Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Array, Context, Effect, Layer, Option, Order, Schedule, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
-import { hostFor, migrateTestReader, type SqlFixture } from "../support/backends.ts";
+import {
+  circuitHost,
+  memoryDump,
+  migrateReader,
+  migrateViews,
+  readSql,
+  type Fixture,
+} from "../support/memory.ts";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Projection, ProjectionWakeup, StateTable } from "@streamsy/projection";
 import { AlarmSlot } from "../../../serve/src/cloudflare/alarm.ts";
@@ -83,9 +90,8 @@ const append = (
   );
 
 const seed = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* View.migrate(sql);
-  yield* migrateTestReader(sql);
+  yield* migrateViews;
+  yield* migrateReader;
   const source = yield* Source;
 
   for (const params of bindings) yield* source.create(params);
@@ -147,9 +153,46 @@ const namedParameterCircuit = (name: "minimum" | "other") =>
     views: (params) => ({ row: buildResult("label", 1)(params[name]) }),
   });
 
-export function registerApi(fixture: SqlFixture) {
+const planHashes = Effect.gen(function* () {
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+
+  if (Option.isNone(sql))
+    return Array.map((yield* memoryDump).circuits, ({ plan_hash }) => plan_hash);
+
+  const client = sql.value;
+
+  return Array.map(
+    yield* client<{ plan_hash: string }>`SELECT plan_hash FROM streamsy_view_circuits`,
+    ({ plan_hash }) => plan_hash,
+  );
+});
+
+const resultRows = (params: { readonly minimum: number; readonly generation: number }) =>
+  Effect.gen(function* () {
+    const table = Table.at(params);
+    const rows = yield* readSql(Projection.run(table).pipe(Effect.andThen(table.list("row"))));
+
+    if (Option.isSome(rows))
+      return new Map(Array.map(rows.value.rows, ({ key, value }) => [key, value]));
+
+    const history = yield* (yield* Results).collect(params);
+
+    const materialized = DurableState.materialize(
+      DurableState.materialized(Results),
+      history.items,
+    );
+
+    return new Map(
+      Array.sort(
+        [...materialized.rows.row],
+        Order.mapInput(Order.String, (entry: readonly [string, typeof Result.Type]) => entry[0]),
+      ),
+    );
+  });
+
+export function registerApi(fixture: Fixture) {
   const host = Projection.Registry.layer.pipe(
-    Layer.provideMerge(hostFor(fixture, Streamsy.group(Source, Results, Mirror))),
+    Layer.provideMerge(circuitHost(fixture, Streamsy.group(Source, Results, Mirror))),
   );
 
   it.effect("resolves missing function arguments and binds decoded parameters per namespace", () =>
@@ -159,32 +202,21 @@ export function registerApi(fixture: SqlFixture) {
 
       for (const minimum of [1, 3]) {
         yield* Projection.run(declaration.at({ minimum }));
-        yield* Projection.run(Table.at({ minimum, generation: 1 }));
       }
 
-      expect(
-        Array.map(
-          (yield* Table.at({ minimum: 1, generation: 1 }).list("row")).rows,
-          ({ value }) => value,
-        ),
-      ).toEqual([
+      expect([...(yield* resultRows({ minimum: 1, generation: 1 })).values()]).toEqual([
         { id: "missing-alias", label: "no alias" },
         { id: "missing-leaf", label: "no label" },
         { id: "present", label: "original", original: "original" },
       ]);
-      expect(
-        Array.map(
-          (yield* Table.at({ minimum: 3, generation: 1 }).list("row")).rows,
-          ({ value }) => value,
-        ),
-      ).toEqual([{ id: "present", label: "original", original: "original" }]);
-      const sql = yield* SqlClient.SqlClient;
-      expect(yield* sql`SELECT DISTINCT plan_hash FROM streamsy_view_circuits`).toHaveLength(1);
+      expect([...(yield* resultRows({ minimum: 3, generation: 1 })).values()]).toEqual([
+        { id: "present", label: "original", original: "original" },
+      ]);
+      expect(new Set(yield* planHashes).size).toBe(1);
 
       yield* append([DurableState.remove("details", "present")]);
       yield* Projection.run(declaration.at({ minimum: 1 }));
-      yield* Projection.run(Table.at({ minimum: 1, generation: 1 }));
-      expect((yield* Table.at({ minimum: 1, generation: 1 }).get("row", "present")).value).toEqual({
+      expect((yield* resultRows({ minimum: 1, generation: 1 })).get("present")).toEqual({
         id: "present",
         label: "no alias",
       });
@@ -213,15 +245,11 @@ export function registerApi(fixture: SqlFixture) {
       yield* Projection.run(circuit().at({ minimum: 1 }));
       yield* Projection.run(multiple.at({ minimum: 3 }));
 
-      const sql = yield* SqlClient.SqlClient;
-
-      const stored = yield* sql<{
-        plan_hash: string;
-      }>`SELECT plan_hash FROM streamsy_view_circuits`;
+      const stored = yield* planHashes;
 
       expect(stored).toHaveLength(2);
-      expect(stored[0]?.plan_hash).toMatch(/^[0-9a-f]{8}$/);
-      expect(stored[0]?.plan_hash).toBe(stored[1]?.plan_hash);
+      expect(stored[0]).toMatch(/^[0-9a-f]{8}$/);
+      expect(stored[0]).toBe(stored[1]);
     }).pipe(Effect.provide(host)),
   );
 
@@ -246,16 +274,14 @@ export function registerApi(fixture: SqlFixture) {
       });
 
       const minimum = 3;
-      const table = Table.at({ minimum, generation: 1 });
-
       yield* Projection.run(declaration.at({ minimum }));
-      yield* Projection.run(table);
+      const rows = yield* resultRows({ minimum, generation: 1 });
 
-      expect((yield* table.get("row", "missing-alias")).value).toEqual({
+      expect(rows.get("missing-alias")).toEqual({
         id: "missing-alias",
         label: "3: no alias",
       });
-      expect((yield* table.get("row", "present")).value).toEqual({
+      expect(rows.get("present")).toEqual({
         id: "present",
         label: "3: original",
       });
@@ -298,18 +324,25 @@ export function registerApi(fixture: SqlFixture) {
 
         const params = { minimum: 1 };
         expect((yield* Projection.run(declaration.at(params))).wakeAt).toEqual(Option.some(100));
-        yield* Projection.run(Table.at({ ...params, generation: 1 }));
-        yield* Projection.run(MirrorTable.at({ ...params, generation: 1 }));
-        expect((yield* Table.at({ ...params, generation: 1 }).list("row")).rows).toHaveLength(3);
-        expect((yield* MirrorTable.at({ ...params, generation: 1 }).list("row")).rows).toHaveLength(
-          4,
-        );
+        const outputParams = { ...params, generation: 1 };
+        expect((yield* resultRows(outputParams)).size).toBe(3);
+        const mirror = yield* Mirror;
+        const table = MirrorTable.at(outputParams);
+        const rows = yield* readSql(Projection.run(table).pipe(Effect.andThen(table.list("row"))));
+
+        const count = Option.isSome(rows)
+          ? rows.value.rows.length
+          : DurableState.materialize(
+              DurableState.materialized(Mirror),
+              (yield* mirror.collect(outputParams)).items,
+            ).rows.row.size;
+
+        expect(count).toBe(4);
         yield* TestClock.adjust(100);
         const wake = yield* Projection.run(declaration.at(params));
         expect(wake).toMatchObject({ units: 1, items: 0, wakeAt: Option.none() });
         expect((yield* Projection.run(declaration.at(params))).units).toBe(0);
 
-        const mirror = yield* Mirror;
         const tail = (yield* mirror.head({ ...params, generation: 1 })).nextOffset;
         const checkpoint = yield* Projection.read(declaration.at(params));
         yield* (yield* Results).append({ ...params, generation: 1 }, [], { close: true });

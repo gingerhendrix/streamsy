@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Array, Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState, Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
@@ -47,7 +47,7 @@ const totals = entries
   .groupBy((entry) => ({ team: entry.team }))
   .aggregate(() => ({ entries: View.count() }));
 
-const circuit = View.circuit({
+export const layoutCircuit = View.circuit({
   id: "layout",
   params: Source.paramCodecs,
   generation: 2,
@@ -57,14 +57,36 @@ const circuit = View.circuit({
 
 export const layoutGroup = Streamsy.group(Source, Output);
 
+export const layoutParams = { board: "b" };
+
+export const layoutBinding = layoutCircuit.at(layoutParams);
+
+const outputParams = { ...layoutParams, generation: layoutBinding.generation };
+
+export const layoutOutput = Effect.flatMap(Output, (stream) => stream.collect(outputParams));
+
+export const layoutHead = Effect.flatMap(Output, (stream) => stream.head(outputParams));
+
+export const startLayout = Effect.gen(function* () {
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+
+  if (Option.isSome(sql)) yield* View.migrate(sql.value);
+  yield* (yield* Source).create(layoutParams);
+});
+
+const appendLayout = (
+  changes: Array.NonEmptyReadonlyArray<DurableState.Entry<typeof Source.collections>>,
+) =>
+  Effect.flatMap(Source, (source) =>
+    source.append(layoutParams, DurableState.changes(Source.at(layoutParams), {}, changes)),
+  );
+
+export const editLayout = appendLayout([
+  DurableState.upsert("entry", { id: "z", team: "t", score: 1 }),
+]);
+
 export const runLayoutUnits = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* View.migrate(sql);
-  const source = yield* Source;
-  const params = { board: "b" };
-  const binding = circuit.at(params);
-  const address = Source.at(params);
-  yield* source.create(params);
+  yield* startLayout;
 
   const units = [
     [
@@ -76,8 +98,8 @@ export const runLayoutUnits = Effect.gen(function* () {
   ] as const;
 
   for (const changes of units) {
-    yield* source.append(params, DurableState.changes(address, {}, changes));
-    expect((yield* Projection.run(binding, { limit: 1 })).units).toBe(1);
+    yield* appendLayout(changes);
+    expect((yield* Projection.run(layoutBinding, { limit: 1 })).units).toBe(1);
   }
 });
 

@@ -97,6 +97,6 @@ export const engineConformance = (backend: Backend, seeds: number) =>
     }
 
     yield* Effect.log(
-      `SQL conformance: ${seeds} seeds × 40 units; ${(performance.now() - started).toFixed(0)} ms`,
+      `Engine conformance: ${seeds} seeds × 40 units; ${(performance.now() - started).toFixed(0)} ms`,
     );
   });

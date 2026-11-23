@@ -14,6 +14,11 @@ interface Namespace {
   readonly keyOwners: Table<string>;
 }
 
+const memoryState = new WeakMap<Backend, ReadonlyMap<string, Namespace>>();
+
+/** Internal state for test dumps, read while the owner transaction is open. */
+export const memoryStateOf = (backend: Backend) => memoryState.get(backend);
+
 const emptyNamespace = (): Namespace => ({
   hash: undefined,
   integrals: new Map(),
@@ -68,8 +73,8 @@ function findEntry(bucket: readonly IndexEntry[], entry: IndexEntry, first: numb
 export function makeMemoryBackend(
   // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is the opaque core transaction identity.
   owner: object,
-  namespaces = new Map<string, Namespace>(),
 ): Backend {
+  const namespaces = new Map<string, Namespace>();
   const journal: (() => void)[] = [];
 
   function undoTo(mark: number) {
@@ -231,7 +236,7 @@ export function makeMemoryBackend(
     };
   };
 
-  return {
+  const backend: Backend = {
     store,
     circuit: (namespace) => ({
       load: withAccess(() => namespaces.get(namespace)?.hash),
@@ -261,4 +266,8 @@ export function makeMemoryBackend(
         ),
       ),
   };
+
+  memoryState.set(backend, namespaces);
+
+  return backend;
 }

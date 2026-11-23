@@ -250,7 +250,7 @@ const outputExpression = (
 };
 
 /** Same projection binding and generation, independent of the unit's ranges. */
-function namespaceOf(key: ProjectionKey) {
+export function namespaceOf(key: ProjectionKey) {
   const params = Record.fromEntries(
     Array.map(Array.sort(Record.keys(key.params), Order.String), (name) => [
       name,

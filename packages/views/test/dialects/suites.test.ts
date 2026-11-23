@@ -8,7 +8,7 @@ import { createBackend, hostFor, postgres } from "../support/backends.ts";
 import { storeContract } from "../support/store-contract.ts";
 
 describe.skipIf(postgres.server.url === undefined)(`${postgres.name} Views`, () => {
-  storeContract("Store", () => createBackend(postgres));
+  storeContract("Store", (run) => Effect.flatMap(createBackend(postgres), run));
   registerApi(postgres);
   registerLifecycle(postgres);
   registerViewConformance(postgres);
