@@ -7,7 +7,7 @@ import { backendFor } from "../../src/sql/backend.ts";
 
 it.live("rejects unsupported SQL dialects in backend selection and the public migration", () =>
   Effect.gen(function* () {
-    for (const dialect of ["mysql", "mssql", "clickhouse"] as const) {
+    for (const dialect of ["mssql", "clickhouse"] as const) {
       const sql = yield* SqlClient.make({
         acquirer: Effect.die(new Error("Unsupported dialect acquired a connection")),
         compiler: { ...Statement.makeCompilerSqlite(), dialect },
@@ -25,7 +25,7 @@ it.live("rejects unsupported SQL dialects in backend selection and the public mi
       ]) {
         expect(fault).toBeInstanceOf(ViewFault);
         expect(fault.message).toContain(dialect);
-        expect(fault.message).toContain("sqlite and pg");
+        expect(fault.message).toContain("sqlite, pg and mysql");
       }
     }
   }).pipe(Effect.provide(Reactivity.layer)),

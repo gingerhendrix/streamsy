@@ -7,7 +7,6 @@ import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
 import {
   STORAGE_MIGRATIONS,
-  STORAGE_SCHEMA_VERSION,
   STORAGE_VERSION_TABLE,
   STORAGE_VERSION_TABLE_DDL,
 } from "../../src/schema.ts";
@@ -30,7 +29,7 @@ const bytes = (text: string) => new TextEncoder().encode(text);
 for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`${dialect.name} storage schema`, () => {
-    test("migrates a fresh database twice to one version row and the storage tables", async () => {
+    test("migrates a fresh database twice to one row per version and the storage tables", async () => {
       if (url === undefined) return;
 
       const result = await Effect.runPromise(
@@ -59,7 +58,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
       );
 
       expect(result).toEqual({
-        versions: Array.range(1, STORAGE_SCHEMA_VERSION),
+        versions: dialect.name === "mysql" ? [1, 2, 3, 4] : [1, 2, 3],
         tables: [
           "streamsy_messages",
           "streamsy_owner_records",
@@ -121,7 +120,7 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
             stopped: false,
             failure: Option.none(),
           },
-          versions: [1, 2, 3],
+          versions: dialect.name === "mysql" ? [1, 2, 3, 4] : [1, 2, 3],
         });
       }
       // MySQL builds six fresh databases here. On a CI runner that takes about 5 s.
@@ -193,3 +192,54 @@ for (const dialect of [sqlDialects.pg, sqlDialects.mysql]) {
     });
   });
 }
+
+const mysql = sqlDialects.mysql;
+
+const mysqlUrl = mysql.url;
+
+describe.skipIf(mysqlUrl === undefined)("mysql storage schema version 4", () => {
+  test("recovers after either ALTER committed without the version row", async () => {
+    if (mysqlUrl === undefined) return;
+
+    for (const applied of [1, 2]) {
+      await Effect.runPromise(
+        withFreshDatabase(mysql, mysqlUrl, (fresh) =>
+          Effect.gen(function* () {
+            const sql = Context.get(
+              yield* Layer.build(dialectClient(mysql, fresh)),
+              SqlClient.SqlClient,
+            );
+
+            yield* sql.unsafe(STORAGE_VERSION_TABLE_DDL.mysql);
+
+            for (const migration of STORAGE_MIGRATIONS.slice(0, 3))
+              for (const ddl of migration.mysql) yield* sql.unsafe(ddl);
+            yield* sql`INSERT INTO streamsy_schema VALUES (1, 1), (2, 2), (3, 3)`;
+
+            for (const ddl of STORAGE_MIGRATIONS[3]!.mysql.slice(0, applied))
+              yield* sql.unsafe(ddl);
+
+            yield* migrate(sql);
+            yield* migrate(sql);
+
+            const versions = yield* sql<{
+              readonly version: unknown;
+            }>`SELECT version FROM streamsy_schema ORDER BY version`;
+
+            expect(Array.map(versions, ({ version }) => Number(version))).toEqual([1, 2, 3, 4]);
+
+            const columns =
+              yield* sql`SELECT table_name AS table_name, column_name AS column_name FROM information_schema.columns
+ WHERE table_schema = DATABASE() AND column_name IN ('full_key', 'full_params')
+ ORDER BY table_name`;
+
+            expect(columns).toEqual([
+              { table_name: "streamsy_owner_records", column_name: "full_key" },
+              { table_name: "streamsy_projection_pending", column_name: "full_params" },
+            ]);
+          }),
+        ),
+      );
+    }
+  });
+});

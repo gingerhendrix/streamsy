@@ -90,10 +90,9 @@ shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation
 inside the transaction, not when the transaction starts. Your SQL before that
-mutation runs before the lock. Storage's reads inside a mutation are safe on
-every dialect: on MySQL they are locking reads (`FOR UPDATE` or `FOR SHARE`),
-so they see the latest committed rows even when your SQL fixed the
-transaction's snapshot first. A stale plan is rejected, never written.
+mutation runs before the lock. On MySQL, storage uses locking reads
+(`FOR UPDATE` or `FOR SHARE`) inside a mutation to see the latest committed
+rows even under a caller-selected isolation level. Storage rejects a stale plan.
 
 The protocol plans an append from `storage.record` and `storage.producer`.
 Inside a transaction on MySQL, these reads are `FOR UPDATE` too, so each replan
@@ -101,11 +100,32 @@ sees the latest tail and the stream row stays locked until your transaction
 ends. Other writers to that stream wait for your commit. Outside a transaction
 they are plain reads and take no lock.
 
-Your reads of your own tables are your job. On Postgres each statement reads
-the latest committed rows. On MySQL at the default REPEATABLE READ, a plain
-read uses the snapshot of the transaction's first plain read, which can be
-older than the stream lock. If a decision depends on a row another writer can
-change, read it with `FOR UPDATE` or `FOR SHARE` on MySQL.
+On MySQL the boundary selects `READ COMMITTED` for each transaction it opens,
+overriding the session default, including `SERIALIZABLE`. This applies even
+when the session inherits its default from the server or its pool sets one.
+Other transactions still use the session default. Keep the session in
+autocommit so the boundary can set the isolation before beginning.
+
+At `READ COMMITTED`, also the Postgres default, each plain read takes a fresh
+snapshot of committed rows. `FOR UPDATE` and `FOR SHARE` can hold existing
+rows stable until commit. On MySQL at this level, a locking read cannot lock an
+absent row or guard a range against inserts. Enforce uniqueness with a unique
+key or have writers lock an existing parent row.
+
+At this level, `Projection.bindings` inside a MySQL transaction takes shared
+locks on existing owner records it reads. Another host can commit a new
+binding of the same projection before the listing transaction finishes.
+
+To use the MySQL session's default, provide Effect's
+`SqlClient.BeginTransaction` with the value `"START TRANSACTION"`. Opting out
+to `REPEATABLE READ` can produce stale Views results when another host advances
+the binding inside your transaction's snapshot. It can also cause
+`Projection.forget` to miss a routed binding's first checkpoint when another
+host commits it after the forgetting transaction's first read.
+
+The default begin requires multi-statement support. A custom client with that
+capability disabled fails at its first storage transaction. Effect's mysql2
+client enables it by default. The mysql2 `-MULTI_STATEMENTS` flag disables it.
 
 For a projection on that same connection:
 

@@ -11,6 +11,7 @@ import {
   readSql,
   type Fixture,
 } from "../support/memory.ts";
+import { withTestReader } from "../support/backends.ts";
 import { DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { NonRetryable, Projection, StateTable } from "@streamsy/projection";
 import { PlanChanged, View, ViewBackend } from "../../src/index.ts";
@@ -76,6 +77,13 @@ const failCleanup = (sql: SqlClient.SqlClient, name: string) =>
         yield* sql`CREATE TRIGGER ${sql(name)} BEFORE DELETE ON streamsy_view_circuits
         FOR EACH ROW EXECUTE FUNCTION fail_views_cleanup()`;
       }),
+    mysql: () =>
+      Effect.gen(function* () {
+        yield* sql`CREATE TABLE ${sql(name)} (
+          ns BINARY(32) PRIMARY KEY, FOREIGN KEY (ns) REFERENCES streamsy_view_circuits (ns)
+        ) ENGINE=InnoDB`;
+        yield* sql`INSERT INTO ${sql(name)} (ns) SELECT ns FROM streamsy_view_circuits`;
+      }),
     orElse: () =>
       Effect.asVoid(sql`CREATE TRIGGER ${sql(name)} BEFORE DELETE ON streamsy_view_circuits
       BEGIN SELECT RAISE(ABORT, 'cleanup failed'); END`),
@@ -84,6 +92,7 @@ const failCleanup = (sql: SqlClient.SqlClient, name: string) =>
 const restoreCleanup = (sql: SqlClient.SqlClient, name: string) =>
   sql.onDialectOrElse({
     pg: () => sql`DROP TRIGGER ${sql(name)} ON streamsy_view_circuits`,
+    mysql: () => sql`DROP TABLE ${sql(name)}`,
     orElse: () => sql`DROP TRIGGER ${sql(name)}`,
   });
 
@@ -126,25 +135,33 @@ const state = Effect.gen(function* () {
 
   const sql = client.value;
 
+  const server = () =>
+    Effect.gen(function* () {
+      const hash = sql.onDialectOrElse({
+        mysql: () => sql`LOWER(HEX(ns))`,
+        orElse: () => sql`encode(ns, 'hex')`,
+      });
+
+      return {
+        integrals:
+          yield* sql`SELECT *, ${hash} AS namespace_id FROM streamsy_view_integrals ORDER BY ns, relation, row_hash`,
+        arrangements:
+          yield* sql`SELECT *, ${hash} AS namespace_id FROM streamsy_view_arrangements ORDER BY ns, arrangement, index_hash, ord_prefix, row_hash`,
+        accumulators:
+          yield* sql`SELECT *, ${hash} AS namespace_id FROM streamsy_view_accumulators ORDER BY ns, node, group_hash`,
+        owners:
+          yield* sql`SELECT *, ${hash} AS namespace_id FROM streamsy_view_key_owners ORDER BY ns, relation, output_hash`,
+        circuits: yield* sql<{
+          namespace: string;
+          namespace_id: string;
+          plan_hash: string;
+        }>`SELECT *, ${hash} AS namespace_id FROM streamsy_view_circuits ORDER BY namespace`,
+      };
+    });
+
   return yield* sql.onDialectOrElse({
-    pg: () =>
-      Effect.gen(function* () {
-        return {
-          integrals:
-            yield* sql`SELECT *, encode(ns, 'hex') AS namespace_id FROM streamsy_view_integrals ORDER BY ns, relation, row_hash`,
-          arrangements:
-            yield* sql`SELECT *, encode(ns, 'hex') AS namespace_id FROM streamsy_view_arrangements ORDER BY ns, arrangement, index_hash, ord_prefix, row_hash`,
-          accumulators:
-            yield* sql`SELECT *, encode(ns, 'hex') AS namespace_id FROM streamsy_view_accumulators ORDER BY ns, node, group_hash`,
-          owners:
-            yield* sql`SELECT *, encode(ns, 'hex') AS namespace_id FROM streamsy_view_key_owners ORDER BY ns, relation, output_hash`,
-          circuits: yield* sql<{
-            namespace: string;
-            namespace_id: string;
-            plan_hash: string;
-          }>`SELECT *, encode(ns, 'hex') AS namespace_id FROM streamsy_view_circuits ORDER BY namespace`,
-        };
-      }),
+    pg: server,
+    mysql: server,
     orElse: () =>
       Effect.gen(function* () {
         return {
@@ -307,7 +324,7 @@ export function registerLifecycle(fixture: Fixture) {
       expect((yield* (yield* Results).head(first)).nextOffset).toBe(head.nextOffset);
       yield* Projection.run(circuit().at(params));
       expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(20);
-    }).pipe(Effect.provide(host));
+    }).pipe(Effect.provide(host), withTestReader(fixture));
   });
 
   it.live(
@@ -350,7 +367,7 @@ export function registerLifecycle(fixture: Fixture) {
 
         expect((yield* Projection.run(circuit(1, false, 100).at(params))).units).toBe(1);
         expect((yield* resultRows(first, "goldOrder")).get("o1")?.customerName).toBe("Renamed");
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live("rebuild drops filtered keys while generation-pinned readers keep their rows", () =>
@@ -383,7 +400,7 @@ export function registerLifecycle(fixture: Fixture) {
 
       for (const name of Record.keys(Results.collections))
         expect(yield* resultRows(second, name)).toEqual(recomputed[name]);
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live("rollback resumes the older checkpoint and updates its own stream", () =>
@@ -406,7 +423,7 @@ export function registerLifecycle(fixture: Fixture) {
       );
       yield* checkRecompute(first, [{ ...order, total: 20 }], views);
       expect(yield* output.collect(second)).toEqual(current);
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live("a downstream circuit needs a raised generation to repin its input", () =>
@@ -437,7 +454,7 @@ export function registerLifecycle(fixture: Fixture) {
       expect(result.rows.goldOrder).toEqual(
         (yield* checkRecompute(second, [order], changedViews)).goldOrder,
       );
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live("retirement atomically clears one generation and fences its checkpoint", () =>
@@ -492,7 +509,7 @@ export function registerLifecycle(fixture: Fixture) {
       expect(yield* state).toEqual(after);
       expect(yield* output.collect(second)).toEqual(currentStream);
       expect(yield* Projection.read(serving)).toEqual(currentCheckpoint);
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live(
@@ -538,7 +555,7 @@ export function registerLifecycle(fixture: Fixture) {
         expect((yield* Projection.read(binding)).offsets).toEqual({ [Shop.key]: ZERO_OFFSET });
         yield* Projection.run(circuit(3).at(params));
         yield* checkRecompute({ ...params, generation: 3 }, [order], views);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live("forget rolls back its checkpoint deletion when state cleanup fails", () => {
@@ -553,7 +570,7 @@ export function registerLifecycle(fixture: Fixture) {
       });
       expect(yield* state).toEqual(before);
       expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
-    }).pipe(Effect.provide(host));
+    }).pipe(Effect.provide(host), withTestReader(fixture));
   });
 
   it.live("failed output appends roll back operators and input checkpoints", () => {
@@ -566,7 +583,7 @@ export function registerLifecycle(fixture: Fixture) {
       yield* Projection.run(circuit().at(params)).pipe(Effect.flip);
       expect(yield* state).toEqual(before);
       expect(yield* Projection.read(circuit().at(params))).toEqual(checkpoint);
-    }).pipe(Effect.provide(host));
+    }).pipe(Effect.provide(host), withTestReader(fixture));
   });
 
   it.live("bindings with identical row keys remain independent", () => {
@@ -587,7 +604,7 @@ export function registerLifecycle(fixture: Fixture) {
         (yield* resultRows({ ...other, generation: 1 }, "customerTotals")).get("c1")?.revenue,
       ).toBe(99);
       expect((yield* state).circuits).toHaveLength(2);
-    }).pipe(Effect.provide(host));
+    }).pipe(Effect.provide(host), withTestReader(fixture));
   });
 
   it.live("reordering view declarations preserves the plan and operator identities", () => {
@@ -609,7 +626,7 @@ export function registerLifecycle(fixture: Fixture) {
 
       yield* Projection.run(reordered.at(params));
       expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(20);
-    }).pipe(Effect.provide(host));
+    }).pipe(Effect.provide(host), withTestReader(fixture));
   });
 
   it.live("numeric wire keys, reset and snapshots across units follow State semantics", () => {
@@ -658,7 +675,7 @@ export function registerLifecycle(fixture: Fixture) {
         yield* append([StreamAddress.reset(), DurableState.upsert("row", { id: 5, n: 50 })]),
       ).toEqual([5]);
       expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
-    }).pipe(Effect.provide(numericHost));
+    }).pipe(Effect.provide(numericHost), withTestReader(fixture));
   });
 
   it.live("filters a source integral across snapshots", () =>
@@ -715,7 +732,7 @@ export function registerLifecycle(fixture: Fixture) {
       ).toEqual([5]);
       expect(yield* append([DurableState.remove("row", 5)])).toEqual([]);
       expect(yield* integralKeys).toEqual([]);
-    }).pipe(Effect.provide(numericHost)),
+    }).pipe(Effect.provide(numericHost), withTestReader(fixture)),
   );
 
   it.live("an attached circuit advances through the normal Projection registry", () => {
@@ -740,7 +757,7 @@ export function registerLifecycle(fixture: Fixture) {
         .awaitOffset(circuit().at(params), Shop.key, receipt.offset)
         .pipe(Effect.timeout("5 seconds"));
       expect((yield* resultRows(first, "customerTotals")).get("c1")?.revenue).toBe(10);
-    }).pipe(Effect.provide(attached));
+    }).pipe(Effect.provide(attached), withTestReader(fixture));
   });
 
   it.live(

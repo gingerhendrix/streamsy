@@ -30,6 +30,7 @@ export interface ServerDialect {
   readonly ddl: readonly string[];
   readonly upsert: (keys: readonly string[], updates: readonly string[]) => string;
   readonly doNothing: string;
+  readonly layoutExists?: (sql: SqlClient.SqlClient) => Effect.Effect<boolean, SqlError.SqlError>;
   readonly withMigrationLock: (sql: SqlClient.SqlClient, migrate: Migration) => Migration;
 }
 
@@ -97,23 +98,36 @@ interface ArrangementRow {
 const sameBytes = (a: Bytes, b: Bytes) =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
 
+const readLayoutVersion = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const [stored] = yield* sql<{
+      version: number;
+    }>`SELECT version FROM streamsy_view_layout WHERE id = 1`;
+
+    if (stored !== undefined && stored.version > layoutVersion)
+      return yield* Object.assign(
+        new ViewFault({
+          message: `Unsupported Views layout version ${stored.version}. Supported version is ${layoutVersion}`,
+        }),
+        { [NonRetryable]: true },
+      );
+
+    return stored?.version;
+  });
+
 export const migrateServer = (sql: SqlClient.SqlClient, dialect: ServerDialect): Migration =>
   dialect.withMigrationLock(
     sql,
     Effect.gen(function* () {
+      // With autocommitting DDL, reject newer layouts before any write.
+      let stored: number | undefined;
+
+      if (dialect.layoutExists !== undefined && (yield* dialect.layoutExists(sql)))
+        stored = yield* readLayoutVersion(sql);
+
       for (const statement of dialect.ddl) yield* sql.unsafe(statement);
 
-      const [stored] = yield* sql<{
-        version: number;
-      }>`SELECT version FROM streamsy_view_layout WHERE id = 1`;
-
-      if (stored !== undefined && stored.version > layoutVersion)
-        return yield* Object.assign(
-          new ViewFault({
-            message: `Unsupported Views layout version ${stored.version}. Supported version is ${layoutVersion}`,
-          }),
-          { [NonRetryable]: true },
-        );
+      if (dialect.layoutExists === undefined) stored = yield* readLayoutVersion(sql);
 
       if (stored === undefined)
         yield* sql`INSERT INTO streamsy_view_layout (id, version) VALUES (1, ${layoutVersion})`;

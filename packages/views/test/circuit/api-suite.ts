@@ -12,6 +12,7 @@ import {
   readSql,
   type Fixture,
 } from "../support/memory.ts";
+import { withTestReader } from "../support/backends.ts";
 import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Projection, ProjectionWakeup, StateTable } from "@streamsy/projection";
 import { AlarmSlot } from "../../../serve/src/cloudflare/alarm.ts";
@@ -228,7 +229,7 @@ export function registerApi(fixture: Fixture) {
 
         if (Schema.is(PlanChanged)(fault)) expect(fault.stored).not.toBe(fault.requested);
       }
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.effect("stores the same plan hash for equivalent output and outputs declarations", () =>
@@ -250,7 +251,7 @@ export function registerApi(fixture: Fixture) {
       expect(stored).toHaveLength(2);
       expect(stored[0]).toMatch(/^[0-9a-f]{8}$/);
       expect(stored[0]).toBe(stored[1]);
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.effect("projects a row from a whole left-joined alias and a binding parameter", () =>
@@ -285,7 +286,7 @@ export function registerApi(fixture: Fixture) {
         id: "present",
         label: "3: original",
       });
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.effect("parameter reference names change the plan hash", () =>
@@ -298,7 +299,7 @@ export function registerApi(fixture: Fixture) {
       expect(
         yield* Projection.run(namedParameterCircuit("other").at(params)).pipe(Effect.flip),
       ).toBeInstanceOf(PlanChanged);
-    }).pipe(Effect.provide(host)),
+    }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.effect(
@@ -350,7 +351,7 @@ export function registerApi(fixture: Fixture) {
         yield* Projection.run(declaration.at(params)).pipe(Effect.flip);
         expect((yield* mirror.head({ ...params, generation: 1 })).nextOffset).toBe(tail);
         expect(yield* Projection.read(declaration.at(params))).toEqual(checkpoint);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it.live(
@@ -391,7 +392,7 @@ export function registerApi(fixture: Fixture) {
         expect(yield* original.head(outputParams).pipe(Effect.flip)).toMatchObject({
           _tag: "StreamNotFound",
         });
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(host), withTestReader(fixture)),
   );
 
   it("rejects a legacy circuit version at declaration", () => {
@@ -629,7 +630,7 @@ export function registerApi(fixture: Fixture) {
               _tag: "StreamNotFound",
             });
           }
-        }).pipe(Effect.provide(host)),
+        }).pipe(Effect.provide(host), withTestReader(fixture)),
       );
     }
   }

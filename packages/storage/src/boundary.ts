@@ -222,12 +222,32 @@ const makeBoundary = (
         // a failed COMMIT as uncertain and never replays it. Effect 4.0.5 returns
         // it on the error channel, where a retry policy would replay it, so turn
         // it back into a defect, as Effect 4.0.1 did.
-        const transaction = sql.withTransaction(transactionBody).pipe(
-          Effect.catchIf(
-            (error) => bodyCompleted && SqlError.isSqlError(error),
-            (error) => Effect.die(error),
-          ),
-        );
+        const transaction = sql
+          .onDialectOrElse({
+            mysql: () =>
+              Effect.flatMap(SqlClient.BeginTransaction, (begin) => {
+                if (begin !== undefined) return sql.withTransaction(transactionBody);
+
+                // Limit the override to BEGIN. The body may open a transaction on another client.
+                return sql
+                  .withTransaction(
+                    transactionBody.pipe(Effect.provideService(SqlClient.BeginTransaction, begin)),
+                  )
+                  .pipe(
+                    Effect.provideService(
+                      SqlClient.BeginTransaction,
+                      "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; START TRANSACTION",
+                    ),
+                  );
+              }),
+            orElse: () => sql.withTransaction(transactionBody),
+          })
+          .pipe(
+            Effect.catchIf(
+              (error) => bodyCompleted && SqlError.isSqlError(error),
+              (error) => Effect.die(error),
+            ),
+          );
 
         const guardedTransaction =
           transactionMaxOpsBeforeYield === undefined

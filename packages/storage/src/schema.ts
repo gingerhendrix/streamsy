@@ -1,6 +1,6 @@
 import type { DialectSql } from "./dialect.ts";
 
-export const STORAGE_SCHEMA_VERSION = 3;
+export const STORAGE_SCHEMA_VERSION: DialectSql<number> = { sqlite: 3, pg: 3, mysql: 4 };
 
 export const STORAGE_VERSION_TABLE = "streamsy_schema";
 
@@ -42,9 +42,13 @@ const MYSQL_OWNER_KEY = `VARCHAR(${MYSQL_OWNER_KEY_LENGTH}) CHARACTER SET utf8mb
 
 // A pending mark key holds a projection id and canonical params. InnoDB limits a
 // key to 3072 bytes, so the projection id gets 255 characters and the params 512.
-const MYSQL_PROJECTION_ID = "VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+export const MYSQL_PROJECTION_ID_LENGTH = 255;
 
-const MYSQL_PROJECTION_PARAMS = "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin";
+const MYSQL_PROJECTION_ID = `VARCHAR(${MYSQL_PROJECTION_ID_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin`;
+
+export const MYSQL_PROJECTION_PARAMS_LENGTH = 512;
+
+const MYSQL_PROJECTION_PARAMS = `VARCHAR(${MYSQL_PROJECTION_PARAMS_LENGTH}) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin`;
 
 /**
  * Migration versions in order. Version `n` is entry `n - 1`. SQLite and
@@ -183,6 +187,15 @@ export const STORAGE_MIGRATIONS: ReadonlyArray<DialectSql<ReadonlyArray<string>>
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_reason TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN failure_message TEXT`,
       `ALTER TABLE streamsy_projection_pending ADD COLUMN wake_at BIGINT`,
+    ],
+  },
+  // 4: complete owner keys and pending params beside the existing bounded keys.
+  {
+    sqlite: [],
+    pg: [],
+    mysql: [
+      `ALTER TABLE streamsy_owner_records ADD COLUMN full_key LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL`,
+      `ALTER TABLE streamsy_projection_pending ADD COLUMN full_params LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL`,
     ],
   },
 ];

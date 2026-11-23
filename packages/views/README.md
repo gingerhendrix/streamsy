@@ -1,12 +1,12 @@
 # @streamsy/views
 
-Incrementally maintain Streamsy State collections on SQLite, Postgres, or memory. A circuit consumes input pages, updates indexed operator state, appends changed output rows, and saves its checkpoint in one owner transaction.
+Incrementally maintain Streamsy State collections on memory, Bun SQLite, Durable Object SQLite, Postgres, or MySQL. A circuit consumes input pages, updates indexed operator state, appends changed output rows, and saves its checkpoint in one owner transaction.
 
 ```sh
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Requires Effect 4. The package is pre-1.0. Raise a circuit's `generation` when a release note calls for rebuilding after an operator-state layout change. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+Requires Effect 4. On MySQL, install `@streamsy/storage` at the same version as `@streamsy/views`. The package is pre-1.0. Raise a circuit's `generation` when a release note calls for rebuilding after an operator-state layout change. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";
