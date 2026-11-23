@@ -27,12 +27,17 @@ const supportedDialect = <A, E>(
     orElse: () => unsupportedDialect(sql.driver),
   });
 
-export const backendFor = (sql: SqlClient.SqlClient): Effect.Effect<Backend, ViewFault> =>
+export const backendFactoryFor = (
+  sql: SqlClient.SqlClient,
+): Effect.Effect<() => Backend, ViewFault> =>
   supportedDialect(
     sql,
-    () => Effect.succeed(sqliteBackend(sql)),
-    () => Effect.succeed(serverBackend(sql, postgres)),
+    () => Effect.succeed(() => sqliteBackend(sql)),
+    () => Effect.succeed(() => serverBackend(sql, postgres)),
   );
+
+export const backendFor = (sql: SqlClient.SqlClient): Effect.Effect<Backend, ViewFault> =>
+  Effect.map(backendFactoryFor(sql), (create) => create());
 
 export const migrateBackend = (
   sql: SqlClient.SqlClient,
