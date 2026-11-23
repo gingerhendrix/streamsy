@@ -84,7 +84,8 @@ outside the transaction. It runs at least once and passes its result to
 
 `Commit.transactionWithCleanup((key, sql) => cleanup)` passes the binding's
 checkpoint key and transaction SQL client to the cleanup Effect.
-`Projection.forget` runs cleanup after deleting any live checkpoint.
+`Projection.forget` runs cleanup after removing the checkpoint and marking any
+route records forgotten. Pass the bound declaration for a routed binding.
 `Projection.retire` runs it after the tombstone write and owned output cleanup.
 The callback also runs on a repeated retirement. A cleanup failure rolls back
 changes in the same transaction, including SQL run with the supplied client.
@@ -206,8 +207,8 @@ available to the normal retry policy.
 A pending unit replays its pinned input ranges. If the input is removed
 between the pin and the settle, the replay fails with `range-unreproducible`
 and the pin stays. The final gone unit does not run for that binding. Keep
-source history until pending units settle, or call `Projection.forget` on the
-binding after you clean up its outputs.
+source history until pending units settle, or call `Projection.forget(bound)`
+to discard its progress.
 
 ## Hosts
 
@@ -442,17 +443,22 @@ backoff from 200 ms, capped at 30 s. `run` does not retry. Handler errors retain
 their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.
 
 Records are keyed by `id`, `generation` and canonical parameters.
-Raise `generation` for changed input identity or state schema. When migrating a
-declaration that set `version`, remove that option and set `generation` above
-every generation the projection id has used, including under older versions.
-Deleting `version` alone can resume a previous version 1 checkpoint.
+Raise `generation` to start over, including after a change to input identity or
+state schema. A new generation replays into fresh `perGeneration` streams. An
+unwrapped `Commit.producer` output receives the replay after its existing items.
+Move its address or remove that stream before replay to start with an empty
+output. [Checkpoints and generations](https://streamsy.dev/docs/projections/checkpoints#generations)
 
-Retain input history after the checkpoint, including pinned ranges. Stop the
-follower before calling `Projection.forget(bound)`, which calls the Commit's
-`remove` and leaves output streams in place. A raised generation replays into
-fresh `perGeneration` streams. An unwrapped `Commit.producer` output receives the
-replay after its existing items. Move its address or remove that output stream
-before replay if it should contain only the rebuilt items.
+[Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
+
+Stop and drain the binding's runners before calling `Projection.forget(bound)`
+to discard progress. Forget keeps the streams. For a routed binding, pass the
+value returned by `declaration.at(params)` so `forget` marks its route records.
+Passing a bare key leaves them live and allows a replay to append to old data.
+
+`Projection.retire` writes a tombstone even if the checkpoint cannot be decoded.
+It can remove or close owned streams after a forget. The result has `record` and
+a flat `streams` array. [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation)
 
 Without a follower, each `current` replays from the last checkpoint or from
 the start. A continuously growing input can delay it. Fold handlers must be

@@ -72,7 +72,9 @@ Supported operators: `where`, `select`, equality `join`, `leftJoin`, `groupBy` w
 
 String comparisons use **lexicographic UTF-16 code-unit ordering**, without locale comparison, case folding or Unicode normalization. This applies to comparisons, extrema and top ordering. Include the unique row key as the last top sort term. State rows have no result-list order; `StateTable.list` orders by its wire keys.
 
-Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`. `Projection.forget(bound)` clears the checkpoint and operator state and keeps the output streams.
+Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`.
+
+To discard progress, pass the binding from `circuit.at(params)` to `Projection.forget`. Forget clears the checkpoint and operator state, keeps the streams, and marks any route records forgotten so retirement can still find them. [Lifecycle and rebuilds](https://streamsy.dev/docs/views/lifecycle)
 
 Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
 
