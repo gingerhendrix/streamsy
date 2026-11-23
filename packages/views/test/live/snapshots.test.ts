@@ -231,3 +231,53 @@ it.live("retries settlement and leaves an unchanged view's snapshot cached", () 
     expect(yield* live.rows("filtered")).toBe(before);
   }).pipe(Effect.provide(liveHost)),
 );
+
+it.live("a follower fault takes precedence over a slow subscriber's buffered signal", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(1);
+    const store = yield* CheckpointStore;
+    const first = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const delivered: number[] = [];
+    let reject = false;
+
+    const fault = new ProjectionFault({
+      phase: "checkpoint",
+      reason: "invalid-record",
+      message: "fail after the last successful snapshot",
+    });
+
+    const live = yield* liveOrders.at(params).pipe(
+      Effect.provideService(CheckpointStore, {
+        ...store,
+        compareAndSet: (...args) => (reject ? Effect.fail(fault) : store.compareAndSet(...args)),
+      }),
+    );
+
+    yield* live.caughtUp;
+
+    const slow = yield* live.changes("orders").pipe(
+      Stream.runForEach(({ rows }) =>
+        Effect.sync(() => delivered.push(rows[0]!.total)).pipe(
+          Effect.andThen(Deferred.succeed(first, undefined)),
+          Effect.andThen(Deferred.await(resume)),
+        ),
+      ),
+      Effect.flip,
+      Effect.forkScoped,
+    );
+
+    yield* Deferred.await(first);
+    yield* putOrder(2);
+    const last = yield* awaitMatch(live.rows("orders"), ({ rows }) => rows[0]?.total === 2);
+    reject = true;
+    yield* putOrder(3);
+    expect(yield* live.changes("orders").pipe(Stream.runDrain, Effect.flip)).toBe(fault);
+
+    yield* Deferred.succeed(resume, undefined);
+    expect(yield* Fiber.join(slow)).toBe(fault);
+    expect(delivered).toEqual([1]);
+    expect(yield* live.rows("orders")).toBe(last);
+  }).pipe(Effect.provide(liveHost)),
+);
