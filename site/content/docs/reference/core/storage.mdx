@@ -180,7 +180,7 @@ same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
 
 `CommitBoundaryApi` is the service of `CommitBoundary`. Its only member, `withTransaction`, runs `body` in the transaction of the storage owner. The stream writes in `body` commit together, and on a SQL host the application SQL in `body` commits with them. When `body` fails, nothing in it commits.
 
-- A nested `withTransaction` joins the outer transaction and has no savepoint. To roll back, a failure must escape the outer `body`.
+- A nested `withTransaction` on the same owner joins the outer transaction without a savepoint. To roll back, a failure must escape the outer `body`. On SQL hosts, boundaries over a shared `SqlClient` can join. A nested boundary or storage mutation on a different `SqlClient` dies before the inner work runs.
 - Keep `body` on the calling fiber. The memory host dies when another fiber writes in the transaction.
 - Do not wait in `body` for a wake that only its own commit publishes. The wake comes after the commit, so the wait never ends.
 

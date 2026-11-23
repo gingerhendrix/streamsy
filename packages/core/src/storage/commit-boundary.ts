@@ -3,8 +3,10 @@ import { Context, type Effect } from "effect";
 
 export interface CommitBoundaryApi {
   /**
-   * Run `body` in the storage owner's transaction. A nested call joins the outer
-   * transaction (no savepoints), so a failure must escape the outer body to roll back.
+   * Run `body` in the storage owner's transaction. Nested calls on the same owner
+   * join without savepoints, so a failure must escape the outer body to roll back.
+   * On SQL hosts, nesting across different SQL clients dies before the inner
+   * body runs. Boundaries built over one shared `SqlClient` can join.
    * Stream writes, owner records and, on SQL hosts, application SQL in `body` commit
    * together. Keep the body on the calling fiber, and do not wait in it for wakes that
    * only its own commit publishes. Only SQL hosts fail with `SqlError`.

@@ -19,9 +19,11 @@ import { commitHookRegistry, type CommitHooksApi } from "@streamsy/core/internal
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 interface Pending {
+  readonly owner: SqlClient.SqlClient;
   readonly keys: Set<string>;
   /** Stream ids that the transaction's mutations wrote, for `Storage.committed`. */
   readonly ids: Set<StreamId>;
+  active: boolean;
 }
 
 class PendingInvalidations extends Context.Service<PendingInvalidations, Pending>()(
@@ -160,10 +162,30 @@ const makeBoundary = (
       }),
     );
 
+    const currentPending = Effect.gen(function* () {
+      const pending = yield* Effect.serviceOption(PendingInvalidations);
+
+      if (Option.isNone(pending) || !pending.value.active) return Option.none();
+
+      // withoutTransforms() keeps the transaction function and service. The DO driver
+      // reuses its service across clients, so also check the per-client function.
+      const owner = pending.value.owner;
+
+      if (
+        owner.withTransaction !== sql.withTransaction ||
+        owner.transactionService !== sql.transactionService
+      )
+        return yield* Effect.die(
+          new Error("Commit boundary cannot join a transaction owned by a different SQL client"),
+        );
+
+      return pending;
+    });
+
     const ownedTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => {
         if (probe !== undefined) probe.transactionAttempts += 1;
-        const pending: Pending = { keys: new Set(), ids: new Set() };
+        const pending: Pending = { owner: sql, keys: new Set(), ids: new Set(), active: true };
         let bodyCompleted = false;
 
         // Hooks run last in the body, so a hook's SqlError is retryable like a body error.
@@ -173,6 +195,12 @@ const makeBoundary = (
           Effect.tap(() =>
             Effect.sync(() => {
               bodyCompleted = true;
+            }),
+          ),
+          // SqlClient.afterCommit callbacks can capture this context and run after COMMIT.
+          Effect.ensuring(
+            Effect.sync(() => {
+              pending.active = false;
             }),
           ),
         );
@@ -210,7 +238,7 @@ const makeBoundary = (
       });
 
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
-      Effect.flatMap(Effect.serviceOption(PendingInvalidations), (owned) => {
+      Effect.flatMap(currentPending, (owned) => {
         if (Option.isSome(owned)) return body;
 
         return Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) => {
@@ -225,14 +253,14 @@ const makeBoundary = (
 
     const mutation: BoundaryRuntime["mutation"] = ({ keys, ids, effect, retryable }) =>
       Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
-        Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pendingBefore) => {
+        Effect.flatMap(currentPending, (pendingBefore) => {
           // This check is deliberately before `effect`: a foreign raw ambient
           // transaction cannot execute an unnotified storage statement.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
 
           const run = Effect.tap(effect, () =>
-            Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pending) => {
+            Effect.flatMap(currentPending, (pending) => {
               if (Option.isNone(pending))
                 return Effect.die(new Error("CommitBoundary owner context disappeared"));
 

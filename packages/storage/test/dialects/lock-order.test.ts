@@ -7,7 +7,7 @@
  * server dialect. Add a dialect to `dialects` to run it there.
  */
 import { describe, expect, test } from "vitest";
-import { Array, Context, Effect, Layer, Option, Tracer } from "effect";
+import { Array, Context, Deferred, Effect, Fiber, Layer, Option, Tracer } from "effect";
 import {
   CommitBoundary,
   Offset,
@@ -310,17 +310,28 @@ for (const dialect of dialects) {
                   ),
                 );
 
+              const readDone = yield* Deferred.make<void>();
+
+              // Start the second writer before the transaction so it has the context of another process.
+              const otherWriter = yield* Deferred.await(readDone).pipe(
+                Effect.andThen(other.mutate(append(ZERO_OFFSET, 1))),
+                Effect.andThen(
+                  other.mutate({
+                    operations: [
+                      { _tag: "Delete", streamId: StreamId.make("child"), reason: "delete" },
+                    ],
+                  }),
+                ),
+                Effect.forkScoped,
+              );
+
               const outcomes = yield* boundary.withTransaction(
                 Effect.gen(function* () {
                   // On MySQL this plain read fixes the transaction's snapshot.
                   yield* sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                   // Another process appends and removes the only child after that read.
-                  yield* other.mutate(append(ZERO_OFFSET, 1));
-                  yield* other.mutate({
-                    operations: [
-                      { _tag: "Delete", streamId: StreamId.make("child"), reason: "delete" },
-                    ],
-                  });
+                  yield* Deferred.succeed(readDone, undefined);
+                  yield* Fiber.join(otherWriter);
 
                   return [
                     // Planned from the old tail, so storage must reject it.
