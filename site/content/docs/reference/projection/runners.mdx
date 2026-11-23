@@ -1032,19 +1032,23 @@ declare function forget<R>(
 same<typeof forget, typeof Projection.forget>(true);
 ```
 
-`forget` deletes the live checkpoint record of a bound projection through the `remove` of its Commit. It preserves retirement tombstones and leaves streams in place.
+`forget` deletes checkpoint progress through the `remove` of the binding's Commit. It preserves retirement tombstones and leaves streams in place.
 
 - When the Commit has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`. Every built-in Commit has `remove`.
-- Stop the follower of the key first, or use a new generation.
-- For a projection with outputs, delete the output streams first. The producer sequences of the outputs start again after `forget`.
+- Stop and drain the binding's runners before calling `forget`. To rebuild, raise `generation`.
+- For a routed binding, pass the bound declaration from `declaration.at(params)`. This marks route records forgotten so the next open checks that the stream is empty and open. A bare key leaves route records live. [Forget](/docs/projections/checkpoints#forget)
 
 ### `Projection.retire`
 
 `retire(declaration, params, { generation, streams })` takes a declaration and its decoded binding params. `generation` is required. `streams` defaults to `"remove"` and also accepts `"close"`. The effect uses the Commit's services and the output stream services.
 
-`Projection.Retired` reports the checkpoint status in `record` and the stream id and cleanup result for each wrapped output in `outputs`. A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
+`Projection.Retired` contains `record` and `streams`. `record` is `"retired"` or `"already-retired"`. The built-in store can write a tombstone over an undecodable checkpoint.
 
-For routed declarations, `routed` reports the streams cleaned for each routed output. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
+Each `Projection.RetiredStream` in `streams` has `output`, `id`, and `result`. The array includes fixed, routed, and shared wrapped outputs, with `"@streamsy/accepted"` as the name of a wrapped accepted stream. Entries sort by output name and then stream id in code-unit order. `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`.
+
+A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
+
+Retirement uses live and forgotten route records to find routed streams. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
 
 ## Helpers
 
@@ -1293,7 +1297,7 @@ declare function key(projection: Identity): ProjectionKey;
 same<typeof key, typeof Projection.key>(true);
 ```
 
-`key` returns the [`ProjectionKey`](/docs/reference/projection/checkpoint-store#projectionkey) of a bound projection: its `id`, `version`, `generation`, and encoded `params`. It drops `inputs`.
+`key` returns the [`ProjectionKey`](/docs/reference/projection/checkpoint-store#projectionkey) of a bound projection: its `id`, `generation`, and encoded `params`. It drops `inputs`.
 
 ## Types with no exported name
 
@@ -1419,7 +1423,7 @@ declare function schedule(
 same<typeof schedule, RegistryApi["schedule"]>(true);
 ```
 
-The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` or `registry.schedule(bindings)` resolves by projection id and decodes every binding's encoded params with the attached declaration before writing any marks. Arrays must name one projection; mixed ids die with `RangeError` before writing. Empty arrays do nothing and duplicates coalesce. Marks are written in chunks of 100, followed by one runner wake. A later storage fault may leave earlier chunks marked; repeating the request is safe. The call returns before processing finishes. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. `schedule` fails with the exported `InvalidBinding { projection, params }` tagged error when encoded params do not round-trip through the attached declaration, including missing or extra keys. `retry` with those params returns zero. Schedule and retry resolve the attached identity without checking version or generation. Schedule, retry and rescan end the current wait and start one pass. A projection-level retry also resumes stopped trigger streams. The return count includes only changed binding marks. Requests retain the pass schedule; after exhaustion another failed requested pass returns to `failed` with no automatic delay. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
+The registry keys runners by projection id. Attaching an id already registered on the same registry dies at layer build with an error naming the id. `registry.schedule(binding)` or `registry.schedule(bindings)` resolves by projection id and decodes every binding's encoded params with the attached declaration before writing any marks. Arrays must name one projection; mixed ids die with `RangeError` before writing. Empty arrays do nothing and duplicates coalesce. Marks are written in chunks of 100, followed by one runner wake. A later storage fault may leave earlier chunks marked; repeating the request is safe. The call returns before processing finishes. `registry.retry(target)` takes an id string, declaration, or binding; a binding selects only its params. An unregistered id fails with `NotAttached`. `schedule` fails with the exported `InvalidBinding { projection, params }` tagged error when encoded params do not round-trip through the attached declaration, including missing or extra keys. `retry` with those params returns zero. Schedule and retry use the attached generation. Schedule, retry and rescan end the current wait and start one pass. A projection-level retry also resumes stopped trigger streams. The return count includes only changed binding marks. Requests retain the pass schedule; after exhaustion another failed requested pass returns to `failed` with no automatic delay. See [requests and retry counts](/docs/projections/run#observe-attached-runners).
 
 For an attached family, schedule several members in one call:
 
@@ -1470,7 +1474,7 @@ declare function rescan(
 same<typeof rescan, RegistryApi["rescan"]>(true);
 ```
 
-`registry.rescan(target, trigger)` takes a projection id or declaration and a wake class from its `triggers` option or the stream id shown in `RunnerStatus.triggers`. It resets that stream's owner-record cursor to `ZERO_OFFSET` in a transaction, clears only that stream's stop, and wakes the runner. An unattached projection fails with `NotAttached`; a trigger not attached to that projection dies with `RangeError` naming both ids. A concurrent trigger read finishes before the reset, so the next pass rereads from zero. The cursor lives in storage and the reset survives restart in both durability modes; ingested binding marks survive restart only with `durable: true`. Use rescan after a fold fix with the appropriate version or generation: it does not reset binding checkpoints or override binding backoff or stops. A first attach with no saved cursor already reads from the start, so a new family needs no rescan. A still-invalid trigger row stops the stream again. See [Trigger streams](/docs/projections/run#trigger-streams).
+`registry.rescan(target, trigger)` takes a projection id or declaration and a wake class from its `triggers` option or the stream id shown in `RunnerStatus.triggers`. It resets that stream's owner-record cursor to `ZERO_OFFSET` in a transaction, clears only that stream's stop, and wakes the runner. An unattached projection fails with `NotAttached`; a trigger not attached to that projection dies with `RangeError` naming both ids. A concurrent trigger read finishes before the reset, so the next pass rereads from zero. The cursor lives in storage and the reset survives restart in both durability modes; ingested binding marks survive restart only with `durable: true`. Use rescan after a fold fix with a fresh generation. Rescan leaves binding checkpoints, backoff, and stops in place. A first attach with no saved cursor already reads from the start, so a new family needs no rescan. A still-invalid trigger row stops the stream again. See [Trigger streams](/docs/projections/run#trigger-streams).
 
 For example, reset a trigger by the stream id reported in `RunnerStatus.triggers`:
 
@@ -1486,4 +1490,4 @@ export const rescanMembers = Effect.gen(function* () {
 
 `registry.events` streams future `RunnerEvent` observations. The exported `RunnerEvent` value provides constructors, `$is` and `$match`. `Ran`, `Failed` and `Dropped` all carry `projection: string` and `params: Readonly<Record<string, string>>`. `Projection.Registry.isFor(binding)` matches both the id and encoded params, regardless of key order. `Ran` adds status, units, offsets and `wakeAt: Option<number>` from the completed run; `Failed` adds attempts, `dueAt`, `failure` and `stopped`. A backoff has `Some(dueAt)` in both modes; a stop has `None`. Events use unbounded buffering; scope subscriptions to release them.
 
-`registry.awaitOffset(binding, input, offset)` waits until the binding's checkpoint for the named input reaches or exceeds the offset. It subscribes before calling `Projection.read`, then consumes matching `Ran` events and rereads the checkpoint on matching `Failed` events to include progress committed before a later unit failed. A binding whose version or generation differs from the attached runner fails with `ProjectionFault` (phase `load`, reason `identity-mismatch`) before the checkpoint read. It requires the checkpoint read's services and fails with `NotAttached` or `ProjectionFault`. It has no timeout: callers add `Effect.timeout`. Its subscription closes on completion or interruption. This observes one live process or object instance.
+`registry.awaitOffset(binding, input, offset)` waits until the binding's checkpoint for the named input reaches or exceeds the offset. It subscribes before calling `Projection.read`, then consumes matching `Ran` events and rereads the checkpoint on matching `Failed` events to include progress committed before a later unit failed. A binding whose generation differs from the attached runner fails with `ProjectionFault` (phase `load`, reason `identity-mismatch`) before the checkpoint read. It requires the checkpoint read's services and fails with `NotAttached` or `ProjectionFault`. It has no timeout: callers add `Effect.timeout`. Its subscription closes on completion or interruption. This observes one live process or object instance.

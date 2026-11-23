@@ -9,7 +9,7 @@ Retain your input State stream history so circuits can rebuild from the start wh
 
 ## Plan identity and namespaces
 
-Each binding's operator state lives in a namespace built from `(id, version, encoded params, generation)`. The first unit in a namespace writes the circuit's canonical plan hash to `streamsy_view_circuits`.
+The circuit id, generation, and encoded binding params identify the operator namespace. The first unit in a namespace writes the circuit's canonical plan hash to `streamsy_view_circuits`.
 
 On every subsequent unit in that namespace, the circuit compares the declared plan hash with the stored hash:
 
@@ -20,7 +20,7 @@ On every subsequent unit in that namespace, the circuit compares the declared pl
 
 ## Scenario 1: edit in place with a raised generation
 
-To replace a circuit plan in one deploy, edit the views and raise `generation` on the same declaration.
+To replace a circuit plan in one deploy, edit the views and raise `generation` on the same declaration. [Migrate a declaration that set `version`](/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
 ```ts title="examples/views-shop/src/app.ts"
 // The new plan excludes orders below 25 and replays into a fresh stream.
@@ -30,12 +30,9 @@ yield * Projection.run(rebuilt.at(params));
 
 Because the output is wrapped with `Projection.perGeneration`, generation 2 writes to a new stream address (for example `shop/main/views/g/2`) while generation 1's stream (`shop/main/views/g/1`) stays untouched. Keys dropped by the new filter simply never appear in generation 2's stream.
 
-Keep these behaviors in mind for an in-place edit:
+On startup, `Projection.attach` and `ProjectionWakeup.attach` use the checkpoint inventory for the circuit id, when available. They queue bindings with a live checkpoint at another generation and no checkpoint at the attached generation. They also consider `{}` for a circuit with no params. Pass a `bindings` Effect to supply the inventory yourself. The runner replays queued bindings in the background. [Choose the binding inventory](/docs/projections/rebuild#choose-the-binding-inventory)
 
-- **Rebuilds do not start on attach.** Raising `generation` does not automatically replay existing bindings when the process starts. An attached binding starts rebuilding only when its input receives a new write or when the host calls `registry.schedule(circuit.at(params))`.
-- **New addresses start missing.** Until generation 2 commits its first unit (or the host calls `Projection.createOutputs(bound)`), readers requesting the generation 2 stream get `StreamNotFound`.
-- **Readers see partial output while rebuilding.** If readers move to generation 2 immediately at deploy, they observe a growing stream until generation 2 catches up.
-- **Pinned readers stay consistent.** A reader or `StateTable` still pinned to generation 1 sees no changes from the rebuild. Its rows stay consistent and stale until it switches to generation 2.
+For startup replay, the runner creates fixed wrapped streams before it queues the binding. Routed streams open on demand in a unit. Readers can see `StreamNotFound` before streams are created and partial results until replay catches up. Keep readers and State tables pinned to generation 1 until generation 2 is ready. [Check replay progress](/docs/projections/rebuild#check-replay-progress)
 
 ## Scenario 2: run old and new side by side
 
@@ -122,16 +119,14 @@ Because old and new operator state and output streams coexist until retirement, 
 
 Stop and drain all runners for a binding before calling either `Projection.forget` or `Projection.retire`. A runner that was already running or pinned before retirement can still append to an open stream.
 
-| Operation                                            | Checkpoint                           | Views SQL namespace              | Output streams                              | Later run of same generation                                              |
-| ---------------------------------------------------- | ------------------------------------ | -------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
-| `Projection.forget(bound)`                           | Deleted (preserves a tombstone)      | Cleared in the owner transaction | Kept                                        | Fails with non-retryable `invalid-output` if the output stream holds data |
-| `Projection.retire(circuit, params, { generation })` | Replaced with a retirement tombstone | Cleared in the owner transaction | Removed (or closed with `streams: "close"`) | Fails at `load` with non-retryable `retired-generation`                   |
+| Operation                                            | Checkpoint                                                      | Views SQL namespace              | Owned output streams | Route records                                                         | Later run of same generation                                                    |
+| ---------------------------------------------------- | --------------------------------------------------------------- | -------------------------------- | -------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `Projection.forget(bound)`                           | Deleted. A tombstone stays.                                     | Cleared in the owner transaction | Kept                 | Marked forgotten. Tombstoned bindings keep their records as they are. | An exclusive output that fails the empty-and-open check gives `invalid-output`. |
+| `Projection.retire(circuit, params, { generation })` | Fenced by a tombstone, even if the checkpoint cannot be decoded | Cleared in the owner transaction | Removed or closed    | Cleared on removal and kept on close                                  | Fails at `load` with `retired-generation`.                                      |
 
 ### Forget
 
-`Projection.forget(bound)` deletes the binding's checkpoint and clears its SQL operator namespace in one owner transaction, while keeping the output streams. If cleanup fails, the transaction rolls back and the checkpoint stays unchanged.
-
-Because generation-addressed outputs must start empty and open on a binding's first unit, forgetting a binding and re-running the same generation against a populated output stream fails with non-retryable `invalid-output`. Raise `generation` to replay into fresh streams. See [Forget](/docs/projections/checkpoints#forget).
+Pass the bound declaration from `circuit.at(params)` so `forget` can mark its route records. Retirement can still find those streams. If cleanup fails, the owner transaction rolls back. Raise `generation` to replay into fresh streams. [Forget](/docs/projections/checkpoints#forget)
 
 ### Retire
 
@@ -150,6 +145,7 @@ const refused = yield * Projection.run(initial).pipe(Effect.flip);
 In that transaction, retirement writes the checkpoint tombstone, deletes all rows for that namespace from all five Views SQL tables, and removes (or closes, with `streams: "close"`) every exclusively owned wrapped output stream. If any step fails, the entire transaction rolls back, including the tombstone.
 
 - Repeating `Projection.retire` succeeds and reports `record: "already-retired"`.
+- `streams` reports `{ output, id, result }` for the wrapped streams, sorted by output name and then stream id in code-unit order.
 - In scenario 2, pass the old declaration (`shopViewsV1`) so retirement targets the old circuit's id and route templates.
 - Retirement operates on one binding at a time, so callers supply the binding `params`.
 - If a `StateTable` indexed the retired stream, stop its runner and clear its cached rows separately with `StateTable.clear(table)`. See [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows) and [Retire a generation](/docs/projections/checkpoints#retire-a-generation).

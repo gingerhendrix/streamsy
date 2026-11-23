@@ -51,21 +51,21 @@ same<ProjectionFault, Flat<Fields<Real.ProjectionFault>>>(true);
 | `process`    | The handler result, or a write while the handler ran           |
 | `checkpoint` | The checkpoint write after the handler. The handler has run    |
 
-| Reason                    | Meaning                                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `history-unavailable`     | An input does not have the history after its checkpoint offset                                               |
-| `identity-mismatch`       | An input differs from the stored identity, or `awaitOffset` names a different attached version or generation |
-| `invalid-record`          | The stored record or state does not decode, or a pinned unit does not fit the Commit                         |
-| `invalid-source`          | An input read is invalid, does not advance, or does not decode                                               |
-| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                                 |
-| `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append                |
-| `output-busy`             | An output stream is busy; retry later                                                                        |
-| `token-conflict`          | Another writer changed the record first                                                                      |
-| `range-unreproducible`    | A pinned range cannot be read again                                                                          |
-| `stale-epoch`             | A newer generation has written to an output                                                                  |
-| `retired-generation`      | The checkpoint is a retirement tombstone                                                                     |
-| `storage-failure`         | Storage, transport, or SQL failed                                                                            |
-| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                                 |
+| Reason                    | Meaning                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `history-unavailable`     | An input does not have the history after its checkpoint offset                                    |
+| `identity-mismatch`       | An input differs from the stored identity, or `awaitOffset` names a different attached generation |
+| `invalid-record`          | The stored record or state does not decode, or a pinned unit does not fit the Commit              |
+| `invalid-source`          | An input read is invalid, does not advance, or does not decode                                    |
+| `invalid-options`         | `limit` or `repairIntervalMs` is not a positive safe integer                                      |
+| `invalid-output`          | An output item does not encode, or an output stream is missing, closed, or refused the append     |
+| `output-busy`             | An output stream is busy; retry later                                                             |
+| `token-conflict`          | Another writer changed the record first                                                           |
+| `range-unreproducible`    | A pinned range cannot be read again                                                               |
+| `stale-epoch`             | A newer generation has written to an output                                                       |
+| `retired-generation`      | The checkpoint is a retirement tombstone                                                          |
+| `storage-failure`         | Storage, transport, or SQL failed                                                                 |
+| `unsupported-composition` | The Commit or the storage cannot do what the projection asks                                      |
 
 `retryable` is `true` for `token-conflict` and `output-busy`. It is also `true` for `storage-failure`, unless `cause` is a [`StreamsFault`](/docs/reference/core/faults#streamsfault) whose `retryable` is `false`. Every other reason is non-retryable. Attached runners stop the binding, trigger stream or runner that hit a non-retryable fault; handler errors and defects retry. `follow` fails its stream on handler errors, defects and non-retryable faults. `run` retries no fault. After `history-unavailable` or `range-unreproducible`, recover with a new generation.
 

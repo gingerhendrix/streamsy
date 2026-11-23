@@ -5,9 +5,11 @@ description: Where a projection stores its progress, which Layer stores it, how 
 
 A checkpoint is the stored progress of a projection binding. Its record holds the accepted offset of each input, the encoded state, the producer positions of the outputs, and a pinned unit while one is in progress. A `CheckpointStore` holds the records, and the [Commit](/docs/projections/commits) of the projection writes them. For the full signatures, see [`CheckpointStore`](/docs/reference/projection/checkpoint-store#checkpointstore) and [`CheckpointRecord`](/docs/reference/projection/checkpoint-store#checkpointrecord).
 
+To start over, raise `generation` in the declaration. A binding at a generation owns its checkpoint, its private state, and its exclusively owned generation-addressed streams. Only `Projection.retire` removes those owned streams. [Generations](#generations)
+
 ## Records
 
-The record key has four parts: the projection `id`, its `version`, its `generation`, and the canonical JSON of the bound `params`. `recordKey` from `@streamsy/projection/checkpoint` builds the key. A change to any part names another record, so the projection starts again from zero offsets.
+The projection `id`, `generation`, and encoded binding `params` identify the checkpoint. `recordKey` from `@streamsy/projection/checkpoint` builds the stored key. A change to the identity names another record, so the projection starts again from zero offsets.
 
 The record also stores the identity of the inputs, which is the stream id and content type of each input, by input name. Each pass compares the stored identity with the declaration. When an input was added, removed or renamed, or its stream id or content type changed, the pass fails with phase `load` and reason `identity-mismatch`. Declare a new [generation](#generations) to start again.
 
@@ -101,15 +103,19 @@ Build the host Layer once for each host lifetime. Each build of `CheckpointStore
 
 ## Generations
 
-A projection has no reset. To start again from zero offsets, raise `generation` in the declaration. The default is 1. The new generation has its own record, so it reads every input from the start.
+The default `generation` is `1`. A fresh generation has its own record, so it reads every input from the start.
 
 Use `Projection.perGeneration(route, param)` on each derived output and on `accepted` to replay into fresh stream addresses. Choose a route codec with a distinct address for each generation. To deploy a rebuild and move readers, follow [Rebuild a projection](/docs/projections/rebuild). For the wrapper's address rules, see [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
 Raise `generation` in the same deployment that adds the wrapper or otherwise changes the output addresses. A checkpoint tracks the input addresses but does not store the output addresses. A transaction with an existing checkpoint skips first-unit creation. A producer can start writing to a new address from the current checkpoint instead of replaying the input from the start.
 
-An unwrapped output keeps the same address when you raise `generation`. For `Commit.producer`, the first append of the new generation starts a higher producer epoch on that stream, after the items already there. A later append from an older epoch fails with phase `pin` and reason `stale-epoch`. To rebuild an unwrapped output from empty, delete its stream first. For unwrapped `Commit.transaction` outputs, stop the old runners before starting the new generation because transaction appends carry no producer position.
+An unwrapped output keeps the same address when you raise `generation`. For `Commit.producer`, the first append of the new generation starts a higher producer epoch on that stream, after the items already there. A later append from an older epoch fails with reason `stale-epoch`. To rebuild an unwrapped output from empty, move its address or delete its stream first. For unwrapped `Commit.transaction` outputs, stop the old runners before starting the new generation because transaction appends carry no producer position.
 
-A new `version` also names a new record and gives `Commit.producer` a new producer id. Since `version` is absent from generation-addressed paths, raising it alone reuses the same output addresses. The built-in commits reject a populated generation-bound output on the first write unless you opted into sharing.
+### Migrate a declaration that set `version`
+
+Remove `version` and set `generation` above every generation that the projection or circuit id has used under any version. If the id has used only generation `1`, a declaration with `version: 3` moves to `generation: 2`. Deleting `version` alone can select an old version 1 checkpoint. The runtime `RangeError` only catches a defined `version` option.
+
+If a binding used a version other than `1` and you need to retire its routed streams, retire it with its old declaration on 0.13.0 before upgrading. `forget` and `retire` address the version 1 slot after the upgrade. Declarations that never set `version` can keep using their existing checkpoints, output streams, and private state.
 
 ## One writer
 
@@ -119,19 +125,20 @@ Each record write is a compare-and-set on the token that the runner loaded. Run 
 
 ## Forget
 
-`Projection.forget(bound)` deletes the record of a bound projection through the `remove` of its Commit. The built-in Commits delete the whole record, with the state and the offsets, and the next pass starts again from zero offsets. `forget` does not delete streams. With a Commit that has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`.
+Use `Projection.forget(bound)` to discard a binding's progress at its current generation. Stop and drain its runners first, including direct `Projection.pass` calls. The built-in Commits delete the checkpoint, including its offsets and any state in the record. The streams and any retirement tombstone stay in place. A Commit with no `remove` fails with phase `checkpoint` and reason `unsupported-composition`.
 
-Before you call it, do these steps:
+For routed outputs, always pass the bound declaration returned by `declaration.at(params)`. A bare key with the Commit deletes the checkpoint but leaves the route records live, so replay can append to old data. Passing the bound declaration marks the records forgotten in the checkpoint transaction. `retire` can still find those streams. The runner uses the same forget path after the final unit for a gone input commits. [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)
 
-1. Stop the follower for that key.
-2. Wait for other runs, including direct `Projection.pass` calls.
-3. For an output projection, delete the output streams first, or use a new generation. The producer sequences start again at 0 after `forget`. An output that keeps its producer state answers `Duplicate` to those appends and drops their items.
+After forgetting a live checkpoint, the next run starts at zero offsets. The result depends on what the binding writes.
 
-With generation-addressed outputs, prefer raising `generation` to rebuild. Forgetting and rerunning the same generation can hit the first-write check with `invalid-output` because the old stream still contains data. An empty or removed stream can pass first-write checks. To stop a generation from running again, use [`Projection.retire`](#retire-a-generation). `forget` preserves a checkpoint tombstone.
-
-For a live binding with routed outputs, `forget` also clears its route records in the checkpoint transaction. Replay checks each touched stream again on first open. A tombstoned binding keeps any route records from an earlier close so that retirement can remove those streams later.
-
-The runner also forgets the checkpoint after the final unit for a gone input commits. If you recreate that input at the same address, a populated wrapped output or accepted stream can cause non-retryable `invalid-output` on replay. Raise `generation` to replay the recreated input into fresh streams. See [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs) and [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
+| Projection kind                           | Next run at the same generation                                                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fold with no outputs                      | Rebuilds from its initial state.                                                                                                                                                |
+| `FoldByKey` into an existing State stream | Folds the input history over the existing rows. A counter that adds each input again doubles.                                                                                   |
+| Unwrapped output with `Commit.producer`   | Restarts at producer sequence `0` in the same epoch. A stream that retains the producer position answers `Duplicate` for sequences it already accepted and drops those appends. |
+| Exclusive fixed `perGeneration` output    | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
+| Routed output                             | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
+| Views circuit                             | Starts with an empty SQL operator namespace. An output fault rolls back the unit.                                                                                               |
 
 ## Retire a generation
 
@@ -167,17 +174,19 @@ const totals = Projection.mapAccum({
 const retireOldTotals = Projection.retire(totals, { user: "u1" }, { generation: 1 });
 ```
 
-Retirement replaces the checkpoint with a tombstone, even if the binding never ran. A later run fails at `load` with non-retryable `retired-generation`. The call removes every exclusively owned `Projection.perGeneration` output, including a wrapped accepted stream. Use `streams: "close"` to keep the data and let readers reach the end of the stream. Call again with `streams: "remove"` to remove closed streams.
+Retirement writes a tombstone even if the checkpoint is absent or cannot be decoded. A later run fails at `load` with non-retryable `retired-generation`. The call removes every exclusively owned `Projection.perGeneration` output, including a wrapped accepted stream. Use `streams: "close"` to keep the data and let readers reach the end of the stream. Call again with `streams: "remove"` to remove closed streams.
 
-The result reports `record` as `"retired"` or `"already-retired"`. Each wrapped output appears in `outputs`, keyed by name or by `"@streamsy/accepted"`. Each entry has an `id` and a `result` of `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared outputs and unwrapped outputs stay in place. A removed stream with a dependent fork stays reserved by stream storage.
+The result is `{ record, streams }`. `record` is `"retired"` or `"already-retired"`. `streams` is a flat array of `RetiredStream` entries with `{ output, id, result }`, sorted by output name and then stream id in code-unit order. It includes fixed and routed outputs, shared wrapped outputs, and the wrapped accepted stream under `"@streamsy/accepted"`. A `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared and unwrapped streams stay in place. A removed stream with a dependent fork stays reserved by stream storage.
 
-Routed outputs appear in `routed` with an array of stream results per output name. Retirement finds them through generation-owned records for this binding. It keeps those records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
+Retirement finds routed streams through the binding's live and forgotten route records. It keeps the records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
+
+For a binding forgotten under 0.13.0, the old `forget` deleted its route records. To locate those streams, use the storage owner's stream inventory and match ids with the output route's `parse` and the binding's params and generation.
 
 With `Commit.transaction`, the tombstone and cleanup commit together on the checkpoint owner. With `Commit.producer`, the tombstone commits first, and a cleanup failure can leave some streams in place. Retry the same call to finish cleanup, including after a retryable `output-busy` fault. A Commit or checkpoint store without a retirement hook fails with `unsupported-composition`.
 
 An unpinned producer unit can finish its handler, but its pin cannot commit after the tombstone. If retirement lands between the checkpoint recheck and creation of a missing wrapped stream, the unit can leave an empty stream. Run retirement again to remove it. A unit pinned before retirement can append to a stream that is still open, including a shared or unwrapped stream. The tombstone rejects its final checkpoint write.
 
-The tombstone covers the exact projection id, version, generation, and binding params. Retirement resolves old stream ids from the declaration you pass, so use the route templates and codecs that wrote those streams. Raise `generation` to rebuild. A version change alone can reuse the same stream addresses. `Projection.createOutputs` and direct stream calls can still recreate a purged stream id.
+The tombstone covers the exact projection id, generation, and binding params. Use the route templates and codecs that wrote the old streams. `Projection.createOutputs` and direct stream calls can still recreate a purged fixed stream id.
 
 Registry marks are keyed by projection id and params. A stale runner can stop the mark that the serving generation uses. After stopping the stale runner, use `Registry.retry` on the serving binding to clear the stop. If the retired stream had a State table, clear its cached rows separately. See [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows).
 

@@ -49,7 +49,6 @@ interface Declaration<Codecs extends StreamRoute.ParamCodecs, Bound, HE = never,
       }
     | undefined;
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Codecs;
   readonly inputs: Inputs;
@@ -71,7 +70,6 @@ A `Declaration` is the inert value that a constructor returns. It reads no strea
 | Field        | Meaning                                                                                                      |
 | ------------ | ------------------------------------------------------------------------------------------------------------ |
 | `id`         | The projection name                                                                                          |
-| `version`    | The declared version, `1` when the definition leaves it out                                                  |
 | `generation` | The declared generation, `1` when the definition leaves it out                                               |
 | `params`     | The param codecs, by name                                                                                    |
 | `retry`      | Optional [binding retry policy](/docs/reference/projection/runners#binding-retry), used by both attach hosts |

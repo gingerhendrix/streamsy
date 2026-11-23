@@ -160,7 +160,6 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 interface Unit<P = Record<string, string>> {
   readonly projectionId: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: P;
   readonly ranges: Record<string, Range>;
@@ -177,7 +176,6 @@ A `Unit` identifies the unit that a handler runs. A handler gets the decoded par
 | Field          | Meaning                                                                                                |
 | -------------- | ------------------------------------------------------------------------------------------------------ |
 | `projectionId` | The `id` of the projection                                                                             |
-| `version`      | The declared version                                                                                   |
 | `generation`   | The declared generation                                                                                |
 | `params`       | The params that the declaration was bound with                                                         |
 | `ranges`       | The range of each input that gave items, a close, or a removal. Other inputs have no entry             |
@@ -418,7 +416,6 @@ interface Attachable<B, HE = never, HR = never> {
       }
     | undefined;
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;

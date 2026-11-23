@@ -141,7 +141,7 @@ Include a final ascending stable key term in `top` (such as `row.orderId.asc()`)
 - With `outputs`, group `views` under the same route names as `outputs`.
 - Input route parameters and output route parameters supplied by the binding must match circuit `params` with identical decoded types. Projection supplies the wrapped generation parameter from the circuit's `generation`.
 - Pass `views: (params) => ({ ... })` to reference decoded JSON-valued binding parameters in expressions, such as `row.workspace.eq(params.workspace)`. Parameter names are part of the plan hash, and each binding evaluates with its own values and SQL namespace.
-- `version` and `generation` both default to `1`.
+- `generation` defaults to `1`.
 - Optional `retry` accepts the standard projection [binding retry policy](/docs/reference/projection/runners#binding-retry).
 - Optional `maxAffectedKeys` caps distinct changed relation keys per unit. See [Bounding fan-out with maxAffectedKeys](/docs/views/ordering-and-limits#bounding-fan-out-with-maxaffectedkeys).
 - Optional `wakeAt: (unit) => Projection.wakeAt(deadline)` records a wake deadline with the unit; returning `void` clears it.

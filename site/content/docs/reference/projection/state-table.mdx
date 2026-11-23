@@ -56,6 +56,8 @@ type C0 = typeof Workspace.collections;
 same<typeof define<Codecs0, C0, Workspace>, typeof StateTable.define<Codecs0, C0, Workspace>>(true);
 ```
 
+A defined `version` in the options throws `RangeError`.
+
 `define` takes a `Streamsy.state` class and returns the [declaration](#statetabledeclaration) of its table. It reads the param codecs from the `paramCodecs` of the class. The optional second argument is `{ accepted: WakeOutput }`, with wake parameters drawn from the State class parameters. It adds the wake service requirement to the table declaration. See [Accepted stream](/docs/projections/accepted). The signature above shows the default without an accepted class.
 
 ### `StateTable.Declaration`
@@ -75,7 +77,6 @@ interface Declaration<
   R,
 > {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Codecs;
   readonly parse: (id: string) => Option.Option<StreamRoute.Params<Codecs>>;
@@ -101,7 +102,6 @@ A runner, `Projection.attach` and `ProjectionWakeup.attach` take the declaration
 | Field        | Value                                                              |
 | ------------ | ------------------------------------------------------------------ |
 | `id`         | `state-table/` followed by the service name of the class           |
-| `version`    | `1`                                                                |
 | `generation` | `1`                                                                |
 | `params`     | The param codecs of the State stream, by name                      |
 | `parse`      | The `parse` of the State class. It gives the params of a stream id |
@@ -128,7 +128,6 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 interface Bound<C extends StreamAddress.Collections, R> {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly get: <K extends keyof C & string>(
