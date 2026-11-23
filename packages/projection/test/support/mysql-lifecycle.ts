@@ -27,6 +27,7 @@ import {
 } from "@streamsy/projection";
 import {
   dialectClient,
+  forkWaiting,
   freshDatabase,
   sqlDialects,
 } from "../../../storage/test/dialects/support.ts";
@@ -133,17 +134,22 @@ export const registerMysqlLifecycle = () => {
           yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`;
           yield* source.create({});
           yield* source.append({}, [1]);
-          yield* boundary.withTransaction(
+
+          const runWriter = yield* forkWaiting(
             Effect.gen(function* () {
-              expect(yield* readOwnerKeys(sql)).toEqual([]);
-              expect(
-                (yield* Projection.run(binding).pipe(Effect.provideContext(writer))).units,
-              ).toBe(1);
+              expect((yield* Projection.run(binding)).units).toBe(1);
               const written = yield* readOwnerKeys(writerSql);
               expect(Array.map(written, ({ owner_key }) => owner_key)).toEqual(
                 expect.arrayContaining([expect.stringContaining("streamsy.projection.routed.v1")]),
               );
               expect((yield* store.load(binding)).record._tag).toBe("Some");
+            }).pipe(Effect.provideContext(writer)),
+          );
+
+          yield* boundary.withTransaction(
+            Effect.gen(function* () {
+              expect(yield* readOwnerKeys(sql)).toEqual([]);
+              yield* runWriter;
               yield* Projection.forget(binding).pipe(Effect.provideContext(reader));
             }),
           );
@@ -155,6 +161,43 @@ export const registerMysqlLifecycle = () => {
           expect(
             (yield* Context.get(writer, Output).collect({ route: "one", generation: 1 })).items,
           ).toEqual([1]);
+        }).pipe(Effect.scoped),
+      );
+    }, 15_000);
+
+    test("lists bindings without blocking a new binding at READ COMMITTED", async () => {
+      if (url === undefined) return;
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fresh = yield* freshDatabase(dialect, url);
+          const writer = yield* Layer.build(projectionHost(fresh));
+          const reader = yield* Layer.build(projectionHost(fresh));
+          const source = Context.get(writer, Source);
+          const boundary = Context.get(reader, CommitBoundary);
+          const sql = Context.get(reader, SqlClient.SqlClient);
+          const projection = routed(1);
+          const first = { tenant: "one" };
+          const second = { tenant: "two" };
+
+          yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`;
+          yield* source.create({});
+          yield* source.append({}, [1]);
+          yield* Projection.run(projection.at(first)).pipe(Effect.provideContext(writer));
+
+          const runWriter = yield* forkWaiting(
+            Projection.run(projection.at(second)).pipe(Effect.provideContext(writer)),
+          );
+
+          const list = Projection.bindings(projection).pipe(Effect.provideContext(reader));
+
+          yield* boundary.withTransaction(
+            Effect.gen(function* () {
+              expect(yield* list).toEqual([first]);
+              expect((yield* runWriter).units).toBe(1);
+              expect(yield* list).toEqual(expect.arrayContaining([first, second]));
+            }),
+          );
         }).pipe(Effect.scoped),
       );
     }, 15_000);

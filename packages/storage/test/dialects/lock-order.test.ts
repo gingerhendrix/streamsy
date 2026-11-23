@@ -18,7 +18,14 @@ import {
 } from "@streamsy/core";
 import { SqlClient } from "effect/sql";
 import { storageLayer } from "../../src/storage.ts";
-import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
+import {
+  dialectClient,
+  forkWaiting,
+  freshDatabase,
+  sqlDialects,
+  withRepeatableRead,
+  type SqlDialect,
+} from "./support.ts";
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
@@ -250,106 +257,122 @@ for (const dialect of dialects) {
       expect(LOCK.test(recorded[0]?.[1] ?? "")).toBe(true);
     });
 
-    test("a fused commit that reads first still sees commits made after its read", async () => {
-      if (url === undefined) return;
-      const stream = StreamId.make("stream");
+    test.each(dialect.name === "mysql" ? ["default", "REPEATABLE READ"] : ["default"])(
+      "a fused commit that reads first still sees commits made after its read (%s)",
+      async (isolation) => {
+        if (url === undefined) return;
+        const stream = StreamId.make("stream");
 
-      const append = (expectedOffset: Offset, n: number): Mutation => ({
-        operations: [
-          {
-            _tag: "Append",
-            streamId: stream,
-            expectedOffset,
-            messages: [message(n)],
-            patch: { currentOffset: offset(n) },
-          },
-        ],
-      });
+        const append = (expectedOffset: Offset, n: number): Mutation => ({
+          operations: [
+            {
+              _tag: "Append",
+              streamId: stream,
+              expectedOffset,
+              messages: [message(n)],
+              patch: { currentOffset: offset(n) },
+            },
+          ],
+        });
 
-      const result = await Effect.runPromise(
-        freshDatabase(dialect, url).pipe(
-          Effect.flatMap((fresh) =>
-            Effect.gen(function* () {
-              const open = Layer.build(
-                storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))),
-              );
-
-              const context = yield* open;
-              const storage = Context.get(context, Storage);
-              const boundary = Context.get(context, CommitBoundary);
-              const sql = Context.get(context, SqlClient.SqlClient);
-              // A second pool stands in for another process.
-              const other = Context.get(yield* open, Storage);
-              yield* other.mutate({
-                operations: [{ _tag: "Create", record: record("stream"), initialMessages: [] }],
-              });
-              yield* other.mutate(createParent);
-              yield* other.mutate({
-                operations: [
-                  {
-                    _tag: "Create",
-                    record: record("child", { forkedFrom: StreamId.make("parent") }),
-                    initialMessages: [],
-                    forkSource: { id: StreamId.make("parent"), liveAtOffset: ZERO_OFFSET },
-                  },
-                ],
-              });
-
-              const outcome = (mutation: Mutation) =>
-                storage.mutate(mutation).pipe(
-                  Effect.map(({ results }) =>
-                    Array.join(
-                      Array.map(results, ({ _tag }) => _tag),
-                      "+",
-                    ),
-                  ),
-                  Effect.catchTag("MutationRejected", ({ reason }) =>
-                    Effect.succeed(`rejected:${reason}`),
+        const result = await Effect.runPromise(
+          freshDatabase(dialect, url).pipe(
+            Effect.flatMap((fresh) =>
+              Effect.gen(function* () {
+                const open = Layer.build(
+                  storageLayer().pipe(
+                    Layer.provideMerge(dialectClient(dialect, fresh, { maxConnections: 1 })),
                   ),
                 );
 
-              const outcomes = yield* boundary.withTransaction(
-                Effect.gen(function* () {
-                  // Read before the other process changes the stream and its dependents.
-                  yield* sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
-                  // Another process appends and removes the only child after that read.
-                  yield* other.mutate(append(ZERO_OFFSET, 1));
-                  yield* other.mutate({
-                    operations: [
-                      { _tag: "Delete", streamId: StreamId.make("child"), reason: "delete" },
-                    ],
-                  });
+                const context = yield* open;
+                const storage = Context.get(context, Storage);
+                const boundary = Context.get(context, CommitBoundary);
+                const sql = Context.get(context, SqlClient.SqlClient);
+                // A second pool stands in for another process.
+                const other = Context.get(yield* open, Storage);
+                yield* other.mutate({
+                  operations: [{ _tag: "Create", record: record("stream"), initialMessages: [] }],
+                });
+                yield* other.mutate(createParent);
+                yield* other.mutate({
+                  operations: [
+                    {
+                      _tag: "Create",
+                      record: record("child", { forkedFrom: StreamId.make("parent") }),
+                      initialMessages: [],
+                      forkSource: { id: StreamId.make("parent"), liveAtOffset: ZERO_OFFSET },
+                    },
+                  ],
+                });
 
-                  return [
-                    // Planned from the old tail, so storage must reject it.
-                    yield* outcome(append(ZERO_OFFSET, 1)),
-                    yield* outcome(append(offset(1), 2)),
-                    // The child is gone, so the parent has no dependents left.
-                    yield* outcome({
-                      operations: [
-                        { _tag: "Delete", streamId: StreamId.make("parent"), reason: "delete" },
-                      ],
-                    }),
-                  ];
-                }),
-              );
+                const outcome = (mutation: Mutation) =>
+                  storage.mutate(mutation).pipe(
+                    Effect.map(({ results }) =>
+                      Array.join(
+                        Array.map(results, ({ _tag }) => _tag),
+                        "+",
+                      ),
+                    ),
+                    Effect.catchTag("MutationRejected", ({ reason }) =>
+                      Effect.succeed(`rejected:${reason}`),
+                    ),
+                  );
 
-              return {
-                outcomes,
-                messages: Array.map(yield* other.messages(stream, {}), (stored) => stored.offset),
-                parent: Option.isSome(yield* other.record(StreamId.make("parent"))),
-              };
-            }).pipe(Effect.scoped),
+                const writeFromOtherHost = yield* forkWaiting(
+                  other.mutate(append(ZERO_OFFSET, 1)).pipe(
+                    Effect.andThen(
+                      other.mutate({
+                        operations: [
+                          { _tag: "Delete", streamId: StreamId.make("child"), reason: "delete" },
+                        ],
+                      }),
+                    ),
+                  ),
+                );
+
+                const fused = boundary.withTransaction(
+                  Effect.gen(function* () {
+                    // Read before the other process changes the stream and its dependents.
+                    yield* sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
+                    // Another process appends and removes the only child after that read.
+                    yield* writeFromOtherHost;
+
+                    return [
+                      // Planned from the old tail, so storage must reject it.
+                      yield* outcome(append(ZERO_OFFSET, 1)),
+                      yield* outcome(append(offset(1), 2)),
+                      // The child is gone, so the parent has no dependents left.
+                      yield* outcome({
+                        operations: [
+                          { _tag: "Delete", streamId: StreamId.make("parent"), reason: "delete" },
+                        ],
+                      }),
+                    ];
+                  }),
+                );
+
+                const outcomes = yield* isolation === "REPEATABLE READ"
+                  ? withRepeatableRead(sql, fused)
+                  : fused;
+
+                return {
+                  outcomes,
+                  messages: Array.map(yield* other.messages(stream, {}), (stored) => stored.offset),
+                  parent: Option.isSome(yield* other.record(StreamId.make("parent"))),
+                };
+              }).pipe(Effect.scoped),
+            ),
+            Effect.scoped,
           ),
-          Effect.scoped,
-        ),
-      );
+        );
 
-      expect(result).toEqual({
-        outcomes: ["rejected:offset", "Appended", "Purged"],
-        messages: [offset(1), offset(2)],
-        parent: false,
-      });
-    });
+        expect(result).toEqual({
+          outcomes: ["rejected:offset", "Appended", "Purged"],
+          messages: [offset(1), offset(2)],
+          parent: false,
+        });
+      },
+    );
   });
 }

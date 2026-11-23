@@ -6,7 +6,7 @@ Incrementally maintain Streamsy State collections. A circuit is an ordinary proj
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Runs on SQLite, Postgres and MySQL. Requires Effect 4. The package is pre-1.0, so raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+Runs on Bun SQLite, Durable Object SQLite, Postgres and MySQL. Requires Effect 4. On MySQL, install `@streamsy/storage` at the same version as `@streamsy/views`. The package is pre-1.0, so raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";

@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { describe, expect } from "vitest";
 import { storageLayer } from "../../src/storage.ts";
-import { dialectClient, freshDatabase, sqlDialects } from "./support.ts";
+import { dialectClient, forkWaiting, freshDatabase, sqlDialects } from "./support.ts";
 
 const mysql = sqlDialects.mysql;
 
@@ -32,10 +32,16 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
       const { sql, boundary, client } = yield* fixture;
       const writer = Context.get(yield* Layer.build(client), SqlClient.SqlClient);
 
+      yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE`;
+
+      const write = yield* forkWaiting(
+        writer.withTransaction(writer`INSERT INTO boundary_probe VALUES (1)`),
+      );
+
       yield* boundary.withTransaction(
         Effect.gen(function* () {
           expect(yield* readRows(sql)).toEqual([]);
-          yield* writer.withTransaction(writer`INSERT INTO boundary_probe VALUES (1)`);
+          yield* write;
           expect(yield* readRows(sql)).toEqual([{ id: 1 }]);
         }),
       );
@@ -44,7 +50,8 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
 
   it.live("preserves the same session default after commit, rollback and a body defect", () =>
     Effect.gen(function* () {
-      const { sql, boundary } = yield* fixture;
+      const { sql, boundary, client } = yield* fixture;
+      const writer = Context.get(yield* Layer.build(client), SqlClient.SqlClient);
 
       const session = sql<{ readonly id: number; readonly isolation: string }>`SELECT
         CONNECTION_ID() AS id, @@SESSION.transaction_isolation AS isolation`;
@@ -52,7 +59,27 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
       const before = yield* session;
       expect(before[0]?.isolation).toBe("REPEATABLE-READ");
 
+      const checkRawSnapshot = (id: number) =>
+        Effect.gen(function* () {
+          const write = yield* forkWaiting(
+            writer.withTransaction(writer`INSERT INTO boundary_probe VALUES (${id})`),
+          );
+
+          // Open the next transaction on this session before any other SQL can use
+          // a pending one-shot isolation setting.
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const initial = yield* readRows(sql);
+              yield* write;
+              expect(yield* readRows(sql)).toEqual(initial);
+            }),
+          );
+          expect(yield* readRows(sql)).toContainEqual({ id });
+          yield* writer`DELETE FROM boundary_probe WHERE id = ${id}`;
+        });
+
       yield* boundary.withTransaction(sql`INSERT INTO boundary_probe VALUES (1)`);
+      yield* checkRawSnapshot(10);
       expect(yield* session).toEqual(before);
 
       const rollback = boundary.withTransaction(
@@ -60,6 +87,7 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
       );
 
       expect(yield* Effect.flip(rollback)).toBe("rollback");
+      yield* checkRawSnapshot(11);
       expect(yield* session).toEqual(before);
       expect(yield* readRows(sql)).toEqual([{ id: 1 }]);
 
@@ -68,6 +96,7 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
       );
 
       expect(yield* Effect.exit(defect)).toMatchObject({ _tag: "Failure" });
+      yield* checkRawSnapshot(12);
       expect(yield* session).toEqual(before);
       expect(yield* readRows(sql)).toEqual([{ id: 1 }]);
     }),
@@ -112,6 +141,33 @@ describe.skipIf(mysql.url === undefined)("MySQL commit boundary", () => {
       );
 
       expect(rows).toEqual([{ value: 1 }]);
+    }),
+  );
+
+  it.live("opens a SQLite transaction from a MySQL afterCommit callback", () =>
+    Effect.gen(function* () {
+      const { sql, boundary } = yield* fixture;
+
+      const sqlite = Context.get(
+        yield* Layer.build(SqliteClient.layer({ filename: ":memory:" })),
+        SqlClient.SqlClient,
+      );
+
+      yield* sqlite`CREATE TABLE callback_probe (id INT PRIMARY KEY)`;
+
+      const write = Effect.asVoid(
+        Effect.orDie(sqlite.withTransaction(sqlite`INSERT INTO callback_probe VALUES (1)`)),
+      );
+
+      yield* boundary.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO boundary_probe VALUES (1)`;
+          yield* sql.afterCommit(write);
+          expect(yield* sqlite`SELECT id FROM callback_probe`).toEqual([]);
+        }),
+      );
+
+      expect(yield* sqlite`SELECT id FROM callback_probe`).toEqual([{ id: 1 }]);
     }),
   );
 

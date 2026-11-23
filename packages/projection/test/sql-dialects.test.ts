@@ -26,8 +26,11 @@ import { registerMysqlLifecycle } from "./support/mysql-lifecycle.ts";
 import { initialize, input, output, readAll } from "./support/scenarios.ts";
 import {
   dialectClient,
+  forkWaiting,
   freshDatabase,
   sqlDialects,
+  withRepeatableRead,
+  type ClientOptions,
   type SqlDialect,
 } from "../../storage/test/dialects/support.ts";
 
@@ -83,12 +86,12 @@ class RoutedResult extends Streamsy.json<RoutedResult>()(
 ) {}
 
 /** Projection checkpoints and transactions joined to storage, as one host process over its own pool. */
-const host = (dialect: SqlDialect, url: string) =>
+const host = (dialect: SqlDialect, url: string, options?: ClientOptions) =>
   Layer.build(
     FamilyFixture.withFamilies(
       Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
         Layer.provideMerge(SqlStorage.layerProtocol()),
-        Layer.provideMerge(dialectClient(dialect, url)),
+        Layer.provideMerge(dialectClient(dialect, url, options)),
       ),
       RoutedResult,
     ),
@@ -469,22 +472,27 @@ for (const dialect of dialects) {
       TIMEOUT_MS,
     );
 
-    test(
-      "a fused commit appends to its output after another pool appended to it",
-      async () => {
+    test.each(dialect.name === "mysql" ? ["default", "REPEATABLE READ"] : ["default"])(
+      "a fused commit appends to its output after another pool appended to it (%s)",
+      async (isolation) => {
         if (url === undefined) return;
 
         const result = await onFreshDatabase(dialect, url, (fresh) =>
           Effect.gen(function* () {
             // Build one host first, so the second finds the schema migrated.
-            const context = yield* host(dialect, fresh);
-            const other = yield* host(dialect, fresh);
+            const context = yield* host(dialect, fresh, { maxConnections: 1 });
+            const other = yield* host(dialect, fresh, { maxConnections: 1 });
             const otherWriter = Context.get(other, StreamsWriter);
 
             return yield* Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
               yield* sql`CREATE TABLE seen (item INTEGER NOT NULL)`;
               yield* initialize;
+
+              const appendFromOtherHost = yield* forkWaiting(
+                FamilyFixture.provideWriter(otherWriter)(Streams.append(output, [100])),
+              );
+
               let interleaved = false;
 
               const projection = Projection.process({
@@ -500,9 +508,7 @@ for (const dialect of dialects) {
                     if (!interleaved) {
                       interleaved = true;
                       // Another process appends to the output after that read.
-                      yield* FamilyFixture.provideWriter(otherWriter)(
-                        Streams.append(output, [100]),
-                      );
+                      yield* appendFromOtherHost;
                     }
 
                     for (const item of batch.input.items)
@@ -513,7 +519,13 @@ for (const dialect of dialects) {
                   }),
               }).at({});
 
-              const run = Result.match(yield* Projection.run(projection).pipe(Effect.result), {
+              const fused = Projection.run(projection);
+
+              const outcome = yield* (
+                isolation === "REPEATABLE READ" ? withRepeatableRead(sql, fused) : fused
+              ).pipe(Effect.result);
+
+              const run = Result.match(outcome, {
                 onSuccess: ({ status }) => status,
                 onFailure: (error) => `failed:${String(error)}`,
               });

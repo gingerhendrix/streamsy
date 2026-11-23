@@ -832,10 +832,10 @@ interface MysqlOwnerRecordRow extends OwnerRecordRow {
  * The checkpoint store reads a record, compares its token and writes it back in one
  * transaction. Inside a transaction, a found record is read again with
  * `FOR UPDATE` on Postgres and MySQL, so a concurrent save waits and then sees the
- * new token. An absent key has no row to lock, and on MySQL a locking read of it
- * takes a gap lock that turns two first saves into a deadlock. So the first read
- * stays plain, the transaction remembers the absent key, and its write is a plain
- * insert: a concurrent first save then fails on the primary key and is not lost.
+ * new token. An absent key has no row to lock. At REPEATABLE READ a locking read
+ * of that key on MySQL can take a gap lock and deadlock concurrent first saves.
+ * The first read stays plain at every level. The transaction remembers the absent
+ * key and uses a plain insert, so the primary key detects a concurrent first save.
  */
 const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
   // Each transaction or savepoint has its own connection tuple in Effect SQL.

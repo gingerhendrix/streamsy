@@ -22,7 +22,14 @@ import { Protocol, StreamsWriter } from "@streamsy/core/protocol";
 import { SqlClient } from "effect/sql";
 import { makeBoundaryTestProbe } from "../../src/boundary.ts";
 import { layerWithTestProbe } from "../../src/storage.ts";
-import { dialectClient, freshDatabase, sqlDialects, type SqlDialect } from "./support.ts";
+import {
+  dialectClient,
+  forkWaiting,
+  freshDatabase,
+  sqlDialects,
+  withRepeatableRead,
+  type SqlDialect,
+} from "./support.ts";
 
 const dialects: ReadonlyArray<SqlDialect> = [sqlDialects.pg, sqlDialects.mysql];
 
@@ -37,13 +44,13 @@ const TIMEOUT_MS = 120_000;
 const contentType = "application/octet-stream";
 
 /** One host: protocol and storage over its own pool. The probe counts transactions. */
-const host = (dialect: SqlDialect, url: string) => {
+const host = (dialect: SqlDialect, url: string, maxConnections: number) => {
   const probe = makeBoundaryTestProbe();
 
   return Layer.build(
     Protocol.layer().pipe(
       Layer.provideMerge(layerWithTestProbe({}, probe)),
-      Layer.provideMerge(dialectClient(dialect, url, { maxConnections: POOL_SIZE })),
+      Layer.provideMerge(dialectClient(dialect, url, { maxConnections })),
     ),
   ).pipe(
     Effect.map((context) => ({
@@ -63,13 +70,14 @@ const withHosts = <A, E>(
   dialect: SqlDialect,
   baseUrl: string,
   use: (left: Host, right: Host) => Effect.Effect<A, E, Scope.Scope>,
+  maxConnections = POOL_SIZE,
 ) =>
   freshDatabase(dialect, baseUrl).pipe(
     Effect.flatMap((url) =>
       Effect.gen(function* () {
         // Build one host first, so the second finds the schema migrated.
-        const left = yield* host(dialect, url);
-        const right = yield* host(dialect, url);
+        const left = yield* host(dialect, url, maxConnections);
+        const right = yield* host(dialect, url, maxConnections);
 
         return yield* use(left, right);
       }).pipe(Effect.scoped),
@@ -197,41 +205,51 @@ for (const dialect of dialects) {
       TIMEOUT_MS,
     );
 
-    test(
-      "a fused append after a plain read wins over an append from another pool",
-      async () => {
+    test.each(dialect.name === "mysql" ? ["default", "REPEATABLE READ"] : ["default"])(
+      "a fused append after a plain read wins over an append from another pool (%s)",
+      async (isolation) => {
         if (url === undefined) return;
         const id = StreamId.make("race/fused");
 
         const result = await Effect.runPromise(
-          withHosts(dialect, url, (left, right) =>
-            Effect.gen(function* () {
-              yield* right.writer.create(id, { contentType });
+          withHosts(
+            dialect,
+            url,
+            (left, right) =>
+              Effect.gen(function* () {
+                yield* right.writer.create(id, { contentType });
 
-              const outcome = yield* left.boundary
-                .withTransaction(
+                const appendFromOtherHost = yield* forkWaiting(
+                  right.writer.append(id, { data: text("other"), contentType }),
+                );
+
+                const fused = left.boundary.withTransaction(
                   Effect.gen(function* () {
                     // Read before the other pool advances the stream tail.
                     yield* left.sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                     // Another process appends after that read.
-                    yield* right.writer.append(id, { data: text("other"), contentType });
+                    yield* appendFromOtherHost;
 
                     return yield* left.writer.append(id, { data: text("fused"), contentType });
                   }),
-                )
-                .pipe(Effect.result);
+                );
 
-              const messages = yield* right.storage.messages(id, {});
-              const record = Option.getOrThrow(yield* right.storage.record(id));
-              const decoder = new TextDecoder();
+                const outcome = yield* (
+                  isolation === "REPEATABLE READ" ? withRepeatableRead(left.sql, fused) : fused
+                ).pipe(Effect.result);
 
-              return {
-                outcome: tagOf(outcome),
-                offsets: Array.map(messages, ({ offset }) => String(offset)),
-                payloads: Array.map(messages, ({ data }) => decoder.decode(data)),
-                tail: String(record.currentOffset),
-              };
-            }),
+                const messages = yield* right.storage.messages(id, {});
+                const record = Option.getOrThrow(yield* right.storage.record(id));
+                const decoder = new TextDecoder();
+
+                return {
+                  outcome: tagOf(outcome),
+                  offsets: Array.map(messages, ({ offset }) => String(offset)),
+                  payloads: Array.map(messages, ({ data }) => decoder.decode(data)),
+                  tail: String(record.currentOffset),
+                };
+              }),
+            1,
           ),
         );
 

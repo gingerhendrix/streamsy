@@ -1,23 +1,26 @@
 import { describe, expect, it } from "@effect/vitest";
 import { CommitBoundary, DurableState, StreamAddress, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Projection, ProjectionFault } from "@streamsy/projection";
-import { Array, Context, Deferred, Effect, Fiber, Layer, Result, Schedule, Schema } from "effect";
+import {
+  Array,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Order as EffectOrder,
+  Record,
+  Result,
+  Schedule,
+  Schema,
+} from "effect";
 import { SqlClient, Statement } from "effect/sql";
-import { sqlDialects } from "../../../storage/test/dialects/support.ts";
+import { forkWaiting, sqlDialects } from "../../../storage/test/dialects/support.ts";
 import { View } from "../../src/index.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { canonicalJson } from "../../src/runtime/key.ts";
-import {
-  circuit,
-  customerTotals,
-  group,
-  Order,
-  orders,
-  Results,
-  Shop,
-  views,
-} from "../circuit/support/shop.ts";
+import { circuit, group, Order, orders, Results, Shop, views } from "../circuit/support/shop.ts";
 import { fixtureDatabase, hostAt } from "../support/backends.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
 
@@ -63,42 +66,56 @@ const sideCircuit = View.circuit({
 
 const order = (orderId: string, total: number) => ({ orderId, customerId: "c", total });
 
-const totalsPlan = compilePlan("customerTotals", {
-  kind: "key",
-  input: customerTotals.expression,
-  key: keyExpression(Results.collections.customerTotals.key),
-});
+const firstCustomer = { customerId: "c", name: "First Customer", tier: "gold" };
 
-const checkTotals = (params: typeof raceParams, rows: ReadonlyArray<ReturnType<typeof order>>) =>
+const secondCustomer = { customerId: "d", name: "Second Customer", tier: "gold" };
+
+const plans = Array.map(
+  Record.toEntries(views),
+  ([name, relation]) =>
+    [
+      name,
+      compilePlan(name, {
+        kind: "key",
+        input: relation.expression,
+        key: keyExpression(Results.collections[name].key),
+      }),
+    ] as const,
+);
+
+const checkCircuit = (params: typeof raceParams, rows: ReadonlyArray<typeof Order.Type>) =>
   Results.use((output) =>
     Effect.gen(function* () {
       const { items } = yield* output.collect({ ...params, generation: 1 });
       const actual = DurableState.materialize(DurableState.materialized(Results), items);
 
-      const expected = fullRecompute(
-        {
-          plan: totalsPlan,
-          sources: {
-            [canonicalJson([Shop.key, "order"])]: Array.map(rows, (row) => ({
-              key: row.orderId,
-              row,
-            })),
-          },
-        },
-        true,
-      );
+      const sources = {
+        [canonicalJson([Shop.key, "order"])]: Array.map(rows, (row) => ({
+          key: row.orderId,
+          row,
+        })),
+        [canonicalJson([Shop.key, "customer"])]: [
+          { key: firstCustomer.customerId, row: firstCustomer },
+          { key: secondCustomer.customerId, row: secondCustomer },
+        ],
+      };
 
-      expect([...actual.rows.customerTotals.values()]).toEqual(
-        Array.map(expected.rows, ({ row }) => row),
-      );
+      for (const [name, plan] of plans) {
+        const expected = fullRecompute({ plan, sources }, true);
+        const actualRows = Array.map([...actual.rows[name].values()], canonicalJson);
+        const expectedRows = Array.map(expected.rows, ({ row }) => canonicalJson(row));
+        expect(Array.sort(actualRows, EffectOrder.String), name).toEqual(
+          Array.sort(expectedRows, EffectOrder.String),
+        );
+      }
     }),
   );
 
-const append = (row: ReturnType<typeof order>, params = raceParams) =>
+const append = (row: typeof Order.Type) =>
   Shop.use((input) =>
     input.append(
-      params,
-      DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", row)]),
+      raceParams,
+      DurableState.changes(Shop.at(raceParams), {}, [DurableState.upsert("order", row)]),
     ),
   );
 
@@ -256,23 +273,39 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
           const binding = circuit().at(raceParams);
           const run = Projection.run(binding, { limit: 1 });
           const first = order("first", 1);
-          const second = order("second", 2);
-          const third = order("third", 3);
+          const other = { orderId: "other", customerId: "d", total: 10 };
+          const second = { ...order("second", 2), parentOrderId: "first" };
+          const third = { ...order("third", 3), parentOrderId: "second" };
 
           yield* sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`;
-          yield* input.create(raceParams);
-          yield* append(first).pipe(Effect.provide(writer));
-          yield* run.pipe(Effect.provide(writer));
+
+          const seed = (params: typeof raceParams) =>
+            input
+              .create(params)
+              .pipe(
+                Effect.andThen(
+                  input.append(
+                    params,
+                    DurableState.changes(Shop.at(params), {}, [
+                      DurableState.upsert("order", first),
+                      DurableState.upsert("order", other),
+                      DurableState.upsert("customer", firstCustomer),
+                      DurableState.upsert("customer", secondCustomer),
+                    ]),
+                  ),
+                ),
+              );
+
+          yield* seed(raceParams);
+          yield* Projection.run(binding).pipe(Effect.provide(writer));
           yield* append(second).pipe(Effect.provide(writer));
           yield* append(third).pipe(Effect.provide(writer));
 
-          if (prior === "another circuit") {
-            yield* input.create(sideParams);
-            yield* append(first, sideParams).pipe(Effect.provide(writer));
-          }
+          if (prior === "another circuit") yield* seed(sideParams);
 
           const aboutToReadCheckpoint = yield* Deferred.make<void>();
           const writerCommitted = yield* Deferred.make<void>();
+          const runWriter = yield* forkWaiting(run.pipe(Effect.provide(writer)));
 
           const pending = yield* boundary
             .withTransaction(
@@ -281,7 +314,7 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
                   yield* sql`SELECT value FROM streamsy_view_accumulators`;
 
                 if (prior === "another circuit")
-                  expect((yield* Projection.run(sideCircuit, { limit: 1 })).units).toBe(1);
+                  expect((yield* Projection.run(sideCircuit)).units).toBeGreaterThan(0);
 
                 let paused = false;
 
@@ -312,15 +345,17 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
             .pipe(Effect.forkScoped);
 
           yield* Deferred.await(aboutToReadCheckpoint);
-          expect((yield* run.pipe(Effect.provide(writer))).units).toBe(1);
+          expect((yield* runWriter).units).toBe(1);
           yield* Deferred.succeed(writerCommitted, undefined);
           expect((yield* Fiber.join(pending)).units).toBe(1);
           expect((yield* run.pipe(Effect.provide(writer))).units).toBe(0);
 
-          yield* checkTotals(raceParams, [first, second, third]).pipe(Effect.provide(writer));
+          yield* checkCircuit(raceParams, [first, second, third, other]).pipe(
+            Effect.provide(writer),
+          );
 
           if (prior === "another circuit")
-            yield* checkTotals(sideParams, [first]).pipe(Effect.provide(writer));
+            yield* checkCircuit(sideParams, [first, other]).pipe(Effect.provide(writer));
         }),
       15_000,
     );

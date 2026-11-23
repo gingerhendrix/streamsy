@@ -100,12 +100,32 @@ sees the latest tail and the stream row stays locked until your transaction
 ends. Other writers to that stream wait for your commit. Outside a transaction
 they are plain reads and take no lock.
 
-On MySQL the boundary defaults to `READ COMMITTED` for the transaction it
-opens, leaving the pooled session's isolation setting as it is. At
-`READ COMMITTED`, also the Postgres default, each plain read takes a fresh
-snapshot of committed rows. If a decision depends on keeping a row stable
-until commit, lock it with `FOR UPDATE` or `FOR SHARE`. A begin statement
-supplied through Effect's `SqlClient.BeginTransaction` takes precedence.
+On MySQL the boundary selects `READ COMMITTED` for each transaction it opens,
+overriding the session default, including `SERIALIZABLE`. This applies even
+when the session inherits its default from the server or its pool sets one.
+Other transactions still use the session default. Keep the session in
+autocommit so the boundary can set the isolation before beginning.
+
+At `READ COMMITTED`, also the Postgres default, each plain read takes a fresh
+snapshot of committed rows. `FOR UPDATE` and `FOR SHARE` can hold existing
+rows stable until commit. On MySQL at this level, a locking read cannot lock an
+absent row or guard a range against inserts. Enforce uniqueness with a unique
+key or have writers lock an existing parent row.
+
+At this level, `Projection.bindings` inside a MySQL transaction takes shared
+locks on existing owner records it reads. Another host can commit a new
+binding of the same projection before the listing transaction finishes.
+
+To use the MySQL session's default, provide Effect's
+`SqlClient.BeginTransaction` with the value `"START TRANSACTION"`. Opting out
+to `REPEATABLE READ` can produce stale Views results when another host advances
+the binding inside your transaction's snapshot. It can also cause
+`Projection.forget` to miss a routed binding's first checkpoint when another
+host commits it after the forgetting transaction's first read.
+
+The default begin requires multi-statement support. A custom client with that
+capability disabled fails at its first storage transaction. Effect's mysql2
+client enables it by default. The mysql2 `-MULTI_STATEMENTS` flag disables it.
 
 For a projection on that same connection:
 

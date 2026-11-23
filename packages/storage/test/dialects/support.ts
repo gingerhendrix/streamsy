@@ -1,7 +1,17 @@
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Bun owns the database fixture names. */
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
-import { Config, Context, Effect, Layer, Option, Redacted, type Scope } from "effect";
+import {
+  Config,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Redacted,
+  type Scope,
+} from "effect";
 import type { Reactivity } from "effect/reactivity";
 import { SqlClient, type SqlError } from "effect/sql";
 import { clientLayer } from "../../src/boundary.ts";
@@ -49,6 +59,31 @@ export const sqlDialects = {
 /** A client layer through the public `clientLayer`, so client and storage share Reactivity. */
 export const dialectClient = (dialect: SqlDialect, url: string, options?: ClientOptions) =>
   clientLayer(dialect.client(url, options));
+
+/** Fork before entering a transaction so the other host has its own transaction context. */
+export const forkWaiting = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Deferred.make<void>().pipe(
+    Effect.flatMap((ready) =>
+      Deferred.await(ready).pipe(
+        Effect.andThen(effect),
+        Effect.forkScoped,
+        Effect.map((worker) =>
+          Deferred.succeed(ready, undefined).pipe(Effect.andThen(Fiber.join(worker))),
+        ),
+      ),
+    ),
+  );
+
+/** Use with a single-connection MySQL fixture so the transaction reuses this session. */
+export const withRepeatableRead = <A, E, R>(
+  sql: SqlClient.SqlClient,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  sql`SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ`.pipe(
+    Effect.andThen(
+      effect.pipe(Effect.provideService(SqlClient.BeginTransaction, "START TRANSACTION")),
+    ),
+  );
 
 const databaseName = () => `streamsy_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
 
