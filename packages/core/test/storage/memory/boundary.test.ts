@@ -284,6 +284,35 @@ for (const outcome of ["commit", "rollback"]) {
     ));
 }
 
+test("typed recovery cannot recover a throwing rollback participant", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const boundary = yield* CommitBoundary;
+      const defect = new Error("participant threw");
+      const participant = {
+        onCommit: () => {},
+        onRollback: () => {
+          throw defect;
+        },
+      };
+
+      const exit = yield* boundary
+        .withTransaction(
+          enlist(ownerOf(boundary), participant).pipe(Effect.andThen(Effect.fail("body failed"))),
+        )
+        .pipe(
+          Effect.catch(() => Effect.succeed("recovered")),
+          Effect.exit,
+        );
+
+      expect(
+        Exit.isFailure(exit) && Array.filter(exit.cause.reasons, Cause.isDieReason),
+      ).toContainEqual(
+        expect.objectContaining({ defect: expect.objectContaining({ errors: [defect] }) }),
+      );
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
+  ));
+
 test("enlist rejects a captured draft after the transaction ends", () =>
   Effect.runPromise(
     Effect.gen(function* () {

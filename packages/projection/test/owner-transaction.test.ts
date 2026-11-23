@@ -412,13 +412,14 @@ layer(sqlite, { buildPerTest: true })((it) => {
       yield* seed;
       const tx = yield* OwnerTransaction;
       const ambient = {};
+      let cleanupOwner: object | undefined;
 
       const declaration = Projection.process({
         ...common,
         id: "retire-current-owner",
         commit: Commit.ownerTransactionWithCleanup(() =>
           Effect.map(CurrentOwner, (owner) => {
-            expect(owner).toBe(tx.owner);
+            cleanupOwner = owner;
           }),
         ),
         process: () => Effect.void,
@@ -429,6 +430,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
           Effect.provideService(CurrentOwner, ambient),
         ),
       ).toMatchObject({ record: "retired" });
+      expect(cleanupOwner).toBe(tx.owner);
     }),
   );
 
@@ -581,7 +583,11 @@ layer(sqlite, { buildPerTest: true })((it) => {
 
         expect(
           yield* cleanup.pipe(Effect.provideService(CheckpointStore, foreign), Effect.flip),
-        ).toMatchObject({ phase: "checkpoint", reason: "unsupported-composition" });
+        ).toMatchObject({
+          phase: "checkpoint",
+          reason: "unsupported-composition",
+          message: `The checkpoint store for ${projection.id} does not share the transaction owner`,
+        });
         expect(called).toBe(false);
         expect(yield* foreign.load(projection)).toEqual(foreignBefore);
         expect(yield* store.load(projection)).toEqual(before);
