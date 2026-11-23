@@ -7,7 +7,11 @@ import { compare, StreamAddress, type Streamsy, ZERO_OFFSET } from "@streamsy/co
 import { Streams, StreamsWriter, type StreamRoute } from "@streamsy/core/protocol";
 import type { Slice, Slices } from "./batch.ts";
 import * as Commit from "./commit.ts";
-import { declare, type Declaration as ProjectionDeclaration } from "./declaration.ts";
+import {
+  declare,
+  rejectProjectionVersion,
+  type Declaration as ProjectionDeclaration,
+} from "./declaration.ts";
 import { ProjectionFault } from "./fault.ts";
 import { Transaction } from "./transaction.ts";
 import { Change, message } from "./state-table-message.ts";
@@ -252,7 +256,6 @@ export interface ListOptions {
 /** A State stream bound to its params: a bound projection, plus the row reads and `sync`. */
 export interface Bound<C extends StreamAddress.Collections, R> {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   /** The State stream, read as stored JSON text. */
@@ -444,12 +447,14 @@ export function define<
   state: State<Codecs, C, R>,
   options: { readonly accepted?: W & OneWithin<Codecs, W> } = {},
 ): Declaration<Codecs, C, R | AcceptedServices<W>> {
+  const id = `state-table/${state.key}`;
+  rejectProjectionVersion(id, options);
   validateAccepted(options.accepted, state.paramCodecs, [state.template], Commit.transaction);
 
   // `declare` gives the identity and the param encoding. The input and `parse` are set
   // below, because `declare` types its inputs without their schema services.
   const declaration = declare(
-    { id: `state-table/${state.key}`, params: state.paramCodecs, inputs: {} },
+    { id, params: state.paramCodecs, inputs: {} },
     ({ decoded, ...key }): Bound<C, R | AcceptedServices<W>> => {
       const address = state.at(decoded);
 

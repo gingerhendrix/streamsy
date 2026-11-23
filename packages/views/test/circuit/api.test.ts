@@ -154,6 +154,30 @@ const circuit = (name = "label", version = 1) =>
     views: ({ minimum }) => ({ row: buildResult(name, version)(minimum) }),
   });
 
+it("rejects a legacy circuit version before evaluating the views", () => {
+  const legacy = { ...definition, version: 3 };
+
+  expect(() =>
+    View.circuit({
+      ...legacy,
+      views: () => {
+        throw new Error("The views should not run");
+      },
+    }),
+  ).toThrow(
+    new RangeError(
+      "Projection api-circuit: version was removed. Raise generation above every generation the projection has used.",
+    ),
+  );
+  const allowed = { ...definition, version: undefined };
+  expect(
+    View.circuit({
+      ...allowed,
+      views: ({ minimum }) => ({ row: buildResult("label", 1)(minimum) }),
+    }).generation,
+  ).toBe(1);
+});
+
 it("rejects invalid joins, aggregates, top bounds and parameter references from View.from", () => {
   const invalid = items
     .join(details, { as: "", on: (item, right) => item.id.ne(right.id) })

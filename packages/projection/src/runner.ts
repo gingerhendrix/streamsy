@@ -88,7 +88,6 @@ export interface Attachable<B, HE = never, HR = never, Params = DecodedParams> {
       }
     | undefined;
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: StreamRoute.ParamCodecs;
   readonly inputs: Inputs;
@@ -198,7 +197,7 @@ const startupInventory = Effect.fn("Projection.startupInventory")(function* <
     const keys = new Set<string>();
     const current = new Set<string>();
 
-    // The generation also names the output address, regardless of checkpoint version.
+    // Include older generations discovered in every stored version slot.
     for (const { generation, params } of yield* list(id))
       (generation === declaration.generation ? current : keys).add(canonicalParams(params));
 

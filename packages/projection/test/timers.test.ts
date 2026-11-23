@@ -361,8 +361,8 @@ test("wakeAt validates epoch milliseconds and converts DateTime", () => {
 });
 
 test("non-timer unit keys retain their stored encoding", () => {
-  const unit = unitOf("timer", 1, 0, {}, {});
+  const unit = unitOf("timer", 0, {}, {});
   expect(unit.key).toBe(JSON.stringify(["timer", "0", "{}", "{}"]));
   expect(unit.due).toEqual(Option.none());
-  expect(unitOf("timer", 1, 0, {}, {}, 100).key).not.toBe(unit.key);
+  expect(unitOf("timer", 0, {}, {}, 100).key).not.toBe(unit.key);
 });

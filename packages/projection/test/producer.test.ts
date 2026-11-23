@@ -155,7 +155,7 @@ const failingAppends = (count: number) => {
 };
 
 /** An outputs projection that doubles numbers into strings; both refs are unique per scenario. */
-const scenario = (name: string, version = 1) => {
+const scenario = (name: string, generation = 1) => {
   const input = In.at({ name });
   const output = Out.at({ name });
   const seen: globalThis.Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
@@ -163,7 +163,7 @@ const scenario = (name: string, version = 1) => {
   const definition = {
     id: `doubled-${name}`,
     params: {},
-    version,
+    generation,
     inputs: { input },
     outputs: { output: output },
   };
@@ -233,7 +233,7 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
         expect(pinned.inputs.input).toBe(ZERO_OFFSET);
         expect(pinned.pending.seqs?.output).toBe(0);
         expect(pinned.pending.ranges.input?.count).toBe(3);
-        expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
+        expect(pinned.output).toEqual({ epoch: 7, nextSeq: 0 });
 
         const appends = failingAppends(0);
         const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
@@ -245,15 +245,15 @@ layer(FamilyFixture.withFamilies(host, In, Out))((it) => {
         const after = yield* stored(s.doubled);
         expect(after.record?.pending).toBeUndefined();
         expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
-        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
+        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 7, nextSeq: 1 });
         expect(after.token).toBe("2");
-        // The retry processed exactly the pinned range under the same unit key and version.
+        // The retry processed exactly the pinned range under the same unit key and generation.
         expect(Array.map(s.seen, (entry) => entry.items)).toEqual([
           [1, 2, 3],
           [1, 2, 3],
         ]);
         expect(s.seen[1]?.unit.key).toBe(s.seen[0]?.unit.key ?? "");
-        expect(Array.map(s.seen, (entry) => entry.unit.version)).toEqual([7, 7]);
+        expect(Array.map(s.seen, (entry) => entry.unit.generation)).toEqual([7, 7]);
       }),
   );
 });

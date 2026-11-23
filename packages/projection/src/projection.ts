@@ -22,7 +22,6 @@ export { items };
 
 export const key = (projection: Identity): ProjectionKey => ({
   id: projection.id,
-  version: projection.version,
   generation: projection.generation,
   params: projection.params,
 });

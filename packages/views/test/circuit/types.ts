@@ -26,6 +26,20 @@ const config = {
   output: Projection.perGeneration(Results, "generation"),
 };
 
+View.circuit({ ...config, views });
+
+// @ts-expect-error version is no longer a circuit option
+View.circuit({ ...config, views, version: 3 });
+
+View.circuit({
+  id: config.id,
+  params: config.params,
+  outputs: { result: config.output },
+  views: { result: views },
+  // @ts-expect-error version is no longer a circuit option
+  version: 3,
+});
+
 const wrongRow = { ...config, views: { goldOrder: orders } };
 
 // @ts-expect-error the output row lacks the customerName field

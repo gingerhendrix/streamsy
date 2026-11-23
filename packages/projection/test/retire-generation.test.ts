@@ -547,21 +547,6 @@ layer(host)((it) => {
         yield* Projection.createOutputs(bound);
         expect((yield* target.head(rev)).nextOffset).toBe(ZERO_OFFSET);
         expect(yield* Projection.run(bound).pipe(Effect.flip)).toMatchObject(retired);
-
-        yield* seed(params);
-
-        const newerVersion = Projection.emit({
-          ...declaration,
-          id: spec.id,
-          version: 2,
-          outputs: { numbers: output },
-          commit: Commit.producer,
-          emit: ({ item }) => ({ numbers: [item.n] }),
-        });
-
-        yield* Projection.run(newerVersion.at(params));
-        expect((yield* target.collect(rev)).items).toEqual([2]);
-        expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject(retired);
       }),
   );
 

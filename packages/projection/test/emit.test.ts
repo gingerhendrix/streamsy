@@ -155,7 +155,7 @@ for (const [name, host] of hosts) {
         ]);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
-  test(`${name}: independent sequences skip empty outputs and versions own their producer ids`, () =>
+  test(`${name}: independent sequences skip empty outputs`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
@@ -195,31 +195,6 @@ for (const [name, host] of hosts) {
         yield* Projection.run(projection);
         expect(yield* readAll(a)).toEqual([10, 20]);
         expect(yield* readAll(b)).toEqual([2]);
-        const ids: string[] = [];
-        const writer = yield* StreamsWriter;
-
-        const v2 = Projection.emit({
-          commit: Commit.producer,
-          id: "named",
-          params: {},
-          version: 2,
-          inputs: { input },
-          outputs: declarations,
-          emit: (entry) => Effect.succeed({ a: [entry.item * 100], b: [] }),
-        }).at({});
-
-        yield* Projection.run(v2).pipe(
-          FamilyFixture.provideWriter({
-            ...writer,
-            append: (id, options) => {
-              ids.push(options.producer?.producerId ?? "");
-
-              return writer.append(id, options);
-            },
-          }),
-        );
-        expect(ids).toEqual(["named/v2"]);
-        expect(yield* readAll(a)).toEqual([10, 20, 100, 200]);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 

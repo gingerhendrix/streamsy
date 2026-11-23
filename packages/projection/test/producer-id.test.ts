@@ -11,7 +11,7 @@ const length = (value: string) => [...value].length;
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** `files-wake/v1/{"folderId":"` and `"}` take 29 code points around the folder id. */
-const wakeId = (folderId: string) => producerId("files-wake", 1, { folderId });
+const wakeId = (folderId: string) => producerId("files-wake", { folderId });
 
 const unhashed = (folderId: string) => `files-wake/v1/{"folderId":"${folderId}"}`;
 
@@ -27,18 +27,16 @@ it.effect("an id of exactly 255 code points is unchanged", () =>
   }),
 );
 
-it.effect(
-  "an id of 256 code points becomes the id, the version and the SHA-256 of the full id",
-  () =>
-    Effect.gen(function* () {
-      const folderId = "a".repeat(256 - 29);
-      const full = unhashed(folderId);
-      expect(length(full)).toBe(256);
+it.effect("an id of 256 code points becomes the id, /v1 and the SHA-256 of the full id", () =>
+  Effect.gen(function* () {
+    const folderId = "a".repeat(256 - 29);
+    const full = unhashed(folderId);
+    expect(length(full)).toBe(256);
 
-      const hashed = yield* wakeId(folderId);
-      expect(hashed).toBe(`files-wake/v1/#${sha256(full)}`);
-      expect(length(hashed)).toBeLessThanOrEqual(255);
-    }),
+    const hashed = yield* wakeId(folderId);
+    expect(hashed).toBe(`files-wake/v1/#${sha256(full)}`);
+    expect(length(hashed)).toBeLessThanOrEqual(255);
+  }),
 );
 
 it.effect("non-ASCII params and ids are counted and cut by code point", () =>
@@ -51,7 +49,7 @@ it.effect("non-ASCII params and ids are counted and cut by code point", () =>
     expect(yield* wakeId(over)).toBe(`files-wake/v1/#${sha256(unhashed(over))}`);
 
     const id = "é😀".repeat(150);
-    const hashed = yield* producerId(id, 1, {});
+    const hashed = yield* producerId(id, {});
     expect(length(hashed)).toBe(255);
     expect(hashed).toBe(`${"é😀".repeat(95)}#${sha256(`${id}/v1`)}`);
   }),
@@ -60,9 +58,9 @@ it.effect("non-ASCII params and ids are counted and cut by code point", () =>
 it.effect("a long projection id without params still fits", () =>
   Effect.gen(function* () {
     const id = "p".repeat(400);
-    const hashed = yield* producerId(id, 3, {});
+    const hashed = yield* producerId(id, {});
     expect(length(hashed)).toBe(255);
-    expect(hashed).toBe(`${"p".repeat(190)}#${sha256(`${id}/v3`)}`);
+    expect(hashed).toBe(`${"p".repeat(190)}#${sha256(`${id}/v1`)}`);
   }),
 );
 
@@ -76,16 +74,5 @@ it.effect("hashing is deterministic, and two long ids that share a prefix differ
     expect(first.startsWith("files-wake/v1/#")).toBe(true);
     expect(second.startsWith("files-wake/v1/#")).toBe(true);
     expect(first).not.toBe(second);
-  }),
-);
-
-it.effect("the version and the params are part of the digest", () =>
-  Effect.gen(function* () {
-    const folderId = "c".repeat(300);
-    const v1 = yield* producerId("files-wake", 1, { folderId });
-    const v2 = yield* producerId("files-wake", 2, { folderId });
-    const other = yield* producerId("files-wake", 1, { folderId, user: "ann" });
-
-    expect(new Set([v1, v2, other]).size).toBe(3);
   }),
 );

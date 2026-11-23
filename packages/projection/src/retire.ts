@@ -116,7 +116,6 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
     const record = yield* bound.commit.retire({
       key: {
         id: bound.id,
-        version: bound.version,
         generation: bound.generation,
         params: bound.params,
       },

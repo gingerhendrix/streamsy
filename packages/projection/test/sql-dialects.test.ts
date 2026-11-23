@@ -36,7 +36,7 @@ const TIMEOUT_MS = 60_000;
 
 const SAVES = 8;
 
-const key = (id: string) => ({ id, version: 1, generation: 1, params: { tenant: "ä/1" } });
+const key = (id: string) => ({ id, generation: 1, params: { tenant: "ä/1" } });
 
 /**
  * A wake key with a 482-digit hex folder id, like the longest artifacts-fs ids. Its
@@ -44,7 +44,6 @@ const key = (id: string) => ({ id, version: 1, generation: 1, params: { tenant: 
  */
 const folder = (suffix: string) => ({
   id: "files-wake",
-  version: 1,
   generation: 1,
   params: { folderId: `${"6461696c792f".repeat(40)}${suffix}` },
 });

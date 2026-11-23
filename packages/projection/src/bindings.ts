@@ -7,8 +7,8 @@ import { canonicalParams } from "./unit.ts";
 
 /**
  * Lists the decoded params of bindings with live checkpoints in the selected store.
- * By default it includes every generation of the declaration's id, across checkpoint
- * versions. A generation filter still includes every version at that generation.
+ * By default it includes every generation of the declaration's id. The inventory
+ * reads every stored version slot, even with a generation filter.
  * Each binding appears once, in unspecified order.
  *
  * Fails with `InvalidBinding` if live params cannot round-trip through the current

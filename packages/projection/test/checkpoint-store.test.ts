@@ -7,7 +7,7 @@ import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
 
-const key = { id: "storage", version: 1, generation: 1, params: {} };
+const key = { id: "storage", generation: 1, params: {} };
 
 const record: CheckpointRecord = {
   identity: { inputs: {} },

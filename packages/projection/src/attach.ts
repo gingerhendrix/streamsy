@@ -15,7 +15,7 @@ export interface AttachOptions<Params = DecodedParams, E = never, R = never> {
   /**
    * Decoded params to consider for startup replay. Defaults to the checkpoint
    * inventory when it is available. An explicit list uses this declaration's
-   * id, version and generation to check for existing checkpoints.
+   * id and generation to check for existing checkpoints.
    */
   readonly bindings?: Effect.Effect<ReadonlyArray<Params>, E, R>;
   /**
@@ -151,7 +151,6 @@ export const attach = <
         ? Effect.void
         : yield* registerRunner(registry.value, {
             id: projection.id,
-            version: projection.version,
             generation: projection.generation,
             schedule,
             rescan,

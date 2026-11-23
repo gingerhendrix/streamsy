@@ -7,6 +7,7 @@ import {
   NonRetryable,
   Projection,
   ProjectionFault,
+  rejectProjectionVersion,
   Transaction,
   type ProjectionKey,
   type Declaration,
@@ -150,7 +151,6 @@ type WithParameters<C extends StreamRoute.ParamCodecs, V> =
 
 type Common<C extends StreamRoute.ParamCodecs, V extends ViewMap, O extends OutputMap, HE, HR> = {
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
@@ -268,7 +268,8 @@ function namespaceOf(key: ProjectionKey) {
     ]),
   );
 
-  const projectionKey = JSON.stringify([key.id, key.version, params]);
+  // Keep the numeric 1 so existing operator namespaces still resolve.
+  const projectionKey = JSON.stringify([key.id, 1, params]);
 
   return JSON.stringify([projectionKey, key.generation]);
 }
@@ -373,6 +374,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
     ),
 ): CircuitDeclaration<C, ViewMap, OutputMap, HE, HR> {
+  rejectProjectionVersion(definition.id, definition);
   const parameterized = Predicate.isFunction(definition.views);
 
   const refs = Record.map(definition.params, (_codec, name) => parameterReference(name));
@@ -498,7 +500,10 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     HR,
     void | WakeAt
   >({
-    ...definition,
+    id: definition.id,
+    generation: definition.generation,
+    params: definition.params,
+    retry: definition.retry,
     inputs: checkedInputs,
     outputs: checkedOutputs,
     commit,
@@ -516,7 +521,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           sql,
           {
             id: unit.projectionId,
-            version: unit.version,
             generation: unit.generation,
             params: boundParams,
           },

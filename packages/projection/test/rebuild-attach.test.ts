@@ -10,7 +10,8 @@ import {
   ProjectionFault,
   ProjectionWakeup,
 } from "@streamsy/projection";
-import { recordKey, type Loaded } from "@streamsy/projection/checkpoint";
+import { CheckpointRecord, recordKey, type Loaded } from "@streamsy/projection/checkpoint";
+import { canonicalParams, encodeKey } from "../src/unit.ts";
 import { AlarmSlot } from "../../serve/src/cloudflare/alarm.ts";
 import { makeWakeups } from "../../serve/src/cloudflare/wakeup.ts";
 import { eventually } from "./support/eventually.ts";
@@ -31,26 +32,15 @@ const numbers = (
   id: string,
   generation: number,
   commit: typeof Commit.transaction | typeof Commit.producer = Commit.transaction,
-  version = 1,
 ) =>
   Projection.emit({
     ...declaration,
     id,
-    version,
     generation,
     outputs: { numbers: output },
     accepted,
     commit,
     emit: ({ item }) => ({ numbers: [item.n] }),
-  });
-
-const versioned = (version: number) =>
-  Projection.fold({
-    ...declaration,
-    id: "versioned",
-    version,
-    state: { schema: Schema.Finite, initial: 0 },
-    fold: (sum, { item }) => sum + item.n,
   });
 
 const seed = (workspace: string) =>
@@ -238,26 +228,48 @@ layer(host)((it) => {
     }),
   );
 
-  it.effect("only an explicit list selects a new checkpoint version at the same generation", () =>
+  it.effect("attaches at a raised generation when the only checkpoint uses a legacy slot", () =>
     Effect.gen(function* () {
-      const params = { workspace: "version" };
+      const params = { workspace: "legacy-slot" };
       yield* seed(params.workspace);
+      const next = numbers("legacy-slot", 2);
+      const { params: encoded } = next.at(params);
+      const source = Facts.at(params);
+      const head = yield* (yield* Facts).head(params);
 
-      const old = versioned(1);
-      const next = versioned(2);
-      yield* Projection.run(old.at(params));
-      expect(
-        yield* ProjectionWakeup.attach(next).pipe(
-          Effect.flatMap((wakeup) => wakeup.next),
-          Effect.scoped,
-        ),
-      ).toEqual(Option.none());
-      expect((yield* next.at(params).commit.load(next.at(params))).record).toEqual(Option.none());
+      const slot = encodeKey([
+        "streamsy.projection.v1",
+        next.id,
+        "3",
+        "1",
+        canonicalParams(encoded),
+      ]);
 
-      const selected = yield* ProjectionWakeup.attach(next, { bindings: Projection.bindings(old) });
-      expect(Option.isSome(yield* selected.next)).toBe(true);
-      yield* selected.run;
-      expect((yield* Projection.read(next.at(params))).state).toBe(8);
+      const envelope = Schema.fromJsonString(
+        Schema.Struct({ version: Schema.Literal(1), record: CheckpointRecord }),
+      );
+
+      yield* (yield* OwnerRecords).write(
+        slot,
+        yield* Schema.encodeEffect(envelope)({
+          version: 1,
+          record: {
+            identity: { inputs: { facts: encodeKey([source.id, source.contentType]) } },
+            inputs: { facts: head.nextOffset },
+            adapters: {},
+          },
+        }),
+      );
+      const store = yield* CheckpointStore;
+
+      const listed = yield* store.list?.(next.id) ?? Effect.die("Expected checkpoint listing");
+      expect(listed).toEqual([{ generation: 1, params: encoded }]);
+      expect((yield* store.load(next.at(params))).record).toEqual(Option.none());
+
+      yield* Layer.build(Projection.attach(next, { durable: true }));
+      expect(yield* eventually(items(params.workspace, 2), (rows) => rows.length === 2)).toEqual([
+        3, 5,
+      ]);
     }),
   );
 
@@ -266,13 +278,14 @@ layer(host)((it) => {
     () =>
       Effect.gen(function* () {
         const params = { workspace: "occupied-at-startup" };
-        const old = numbers("occupied-at-startup", 1);
-        const next = numbers(old.id, 1, Commit.transaction, 2);
+        const next = numbers("occupied-at-startup", 1);
         yield* seed(params.workspace);
-        yield* Projection.run(old.at(params));
+        yield* Projection.run(next.at(params));
+        const bindings = yield* Projection.bindings(next);
+        yield* Projection.forget(next.at(params));
 
         const selected = yield* ProjectionWakeup.attach(next, {
-          bindings: Projection.bindings(old),
+          bindings: Effect.succeed(bindings),
         });
 
         expect(Option.isSome(yield* selected.next)).toBe(true);
@@ -368,7 +381,7 @@ layer(host)((it) => {
       yield* Projection.run(projection.at(params));
 
       yield* (yield* OwnerRecords).write(
-        recordKey({ id: projection.id, version: 1, generation: 7, params: { workspace: "bad" } }),
+        recordKey({ id: projection.id, generation: 7, params: { workspace: "bad" } }),
         "not a checkpoint",
       );
       yield* Layer.build(Projection.attach(projection, { durable: true }));

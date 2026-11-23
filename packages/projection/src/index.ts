@@ -8,6 +8,9 @@ export { FoldByKeyError } from "./fold-by-key-error.ts";
 
 export type { Declaration } from "./declaration.ts";
 
+/** @internal Shared with the Views circuit constructor. */
+export { rejectProjectionVersion } from "./declaration.ts";
+
 export type { CurrentProjection } from "./current.ts";
 
 export type { DecideSpec } from "./decide.ts";

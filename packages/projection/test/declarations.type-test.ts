@@ -6,6 +6,7 @@ import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol"
 import {
   CheckpointStore,
   Projection,
+  StateTable,
   Transaction,
   type ProjectionFault,
 } from "@streamsy/projection";
@@ -24,6 +25,73 @@ class Result extends Streamsy.json<Result>()("ProjectionTypes/Result", "types/re
   schema: Schema.Finite,
   params: { id: Schema.String },
 }) {}
+
+const legacyParams = { id: Schema.String };
+
+class Wake extends Streamsy.state<Wake>()("ProjectionTypes/Wake", "types/wake/:id", {
+  params: legacyParams,
+  collections: Streamsy.wakeCollections,
+}) {}
+
+const legacyBase = { id: "legacy", params: legacyParams, inputs: { input: Input } };
+
+const legacyState = { schema: Schema.Finite, initial: 0 };
+
+const legacyOutput = { commit: Commit.producer, outputs: { result: Result } };
+
+Projection.fold({
+  ...legacyBase,
+  state: legacyState,
+  fold: (sum) => sum,
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+Projection.process({
+  ...legacyBase,
+  commit: Commit.transaction,
+  process: () => Effect.void,
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+Projection.emit({
+  ...legacyBase,
+  ...legacyOutput,
+  emit: () => ({ result: [] }),
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+Projection.mapAccum({
+  ...legacyBase,
+  ...legacyOutput,
+  state: legacyState,
+  mapAccum: (sum) => [sum, { result: [] }],
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+Projection.mapAccumBatch({
+  ...legacyBase,
+  ...legacyOutput,
+  state: legacyState,
+  mapAccumBatch: (sum) => [sum, { result: [] }],
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+Projection.wake({
+  id: legacyBase.id,
+  params: legacyBase.params,
+  input: Input,
+  output: Wake,
+  // @ts-expect-error version is no longer a projection option
+  version: 3,
+});
+
+// @ts-expect-error version is not a StateTable option
+StateTable.define(Wake, { version: 3 });
 
 const transactional = Projection.process({
   commit: Commit.transaction,

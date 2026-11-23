@@ -111,7 +111,6 @@ export interface Declaration<
 > {
   readonly retry?: BindingRetry<StreamRoute.Params<Codecs>, HE, HR> | undefined;
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Codecs;
   /** The declared inputs, before `at` binds them. */
@@ -167,7 +166,6 @@ export interface Common<
 > {
   readonly retry?: BindingRetry<StreamRoute.Params<C>, HE, HR>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -214,7 +212,6 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
 export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR = never>(
   definition: {
     readonly id: string;
-    readonly version?: number;
     readonly generation?: number;
     readonly params: C;
     readonly inputs: Inputs;
@@ -222,19 +219,16 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR
   },
   bind: (key: {
     readonly id: string;
-    readonly version: number;
     readonly generation: number;
     readonly params: Record<string, string>;
     readonly decoded: StreamRoute.Params<C>;
   }) => Bound,
 ): Declaration<C, Bound, HE, HR> => {
-  const version = definition.version ?? 1;
   const generation = definition.generation ?? 1;
 
   const atGeneration = (params: StreamRoute.Params<C>, selected: number) =>
     bind({
       id: definition.id,
-      version,
       generation: selected,
       params: encodeParams(definition.id, definition.params, params),
       decoded: params,
@@ -243,7 +237,6 @@ export const declare = <C extends StreamRoute.ParamCodecs, Bound, HE = never, HR
   const declaration: Declaration<C, Bound, HE, HR> = {
     retry: definition.retry,
     id: definition.id,
-    version,
     generation,
     params: definition.params,
     inputs: definition.inputs,
@@ -347,6 +340,15 @@ export type AccumulatingDeclaration<
 
 type Kind = "fold" | "process" | "emit" | "mapAccum" | "mapAccumBatch";
 
+/** @internal Reject legacy definitions passed from JavaScript or unchecked TypeScript. */
+// oxlint-disable-next-line anti-slop/no-object-parameters -- The guard inspects an extra property on differently typed constructor arguments.
+export const rejectProjectionVersion = (id: string, definition: object): void => {
+  if ("version" in definition && definition.version !== undefined)
+    throw new RangeError(
+      `Projection ${id}: version was removed. Raise generation above every generation the projection has used.`,
+    );
+};
+
 /** Public constructors check all mapped types before this shared binding boundary. */
 export interface BuildDefinition extends Omit<
   Common<StreamRoute.ParamCodecs, Inputs, AcceptedOutput | undefined, any, any>,
@@ -366,7 +368,6 @@ export interface BuildDefinition extends Omit<
 
 interface Built extends GenerationOutputBindings, RoutedOutputBindings<Streamsy.Any["Identifier"]> {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Addresses<Inputs>;
@@ -390,6 +391,7 @@ export const build = (
   kind: Kind,
   definition: BuildDefinition,
 ): Declaration<StreamRoute.ParamCodecs, Built, any, any> => {
+  rejectProjectionVersion(definition.id, definition);
   const commit = definition.commit ?? Commit.checkpoint;
   const outputs = definition.outputs ?? {};
 

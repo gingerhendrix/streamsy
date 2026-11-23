@@ -53,18 +53,20 @@ export type RetirementStatus = "retired" | "already-retired";
 
 export interface ProjectionKey {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
 }
 
 const CHECKPOINT_NAMESPACE = "streamsy.projection.v1";
 
+// Keep the former slot at "1" to preserve the existing default checkpoint and routed keys.
+const STORED_VERSION_SLOT = "1";
+
 const CheckpointKeyJson = Schema.fromJsonString(
   Schema.Tuple([
     Schema.Literal(CHECKPOINT_NAMESPACE),
     Schema.String, // id
-    Schema.String, // checkpoint version
+    Schema.String, // legacy version slot, including values other than "1"
     Schema.FiniteFromString, // generation
     Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
   ]),
@@ -74,7 +76,7 @@ export const recordKey = (key: ProjectionKey): string =>
   encodeKey([
     CHECKPOINT_NAMESPACE,
     key.id,
-    String(key.version),
+    STORED_VERSION_SLOT,
     String(key.generation),
     canonicalParams(key.params),
   ]);
@@ -128,8 +130,9 @@ export interface RouteRecords {
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /**
-   * Lists each generation and encoded params with a live checkpoint for an id, across
-   * checkpoint versions. Each pair appears once, in unspecified order.
+   * Lists each generation and encoded params with a live checkpoint for an id.
+   * Reads every stored version slot, including legacy slots. Each pair appears once,
+   * in unspecified order.
    */
   readonly list?: (id: string) => Effect.Effect<ReadonlyArray<ListedBinding>, ProjectionFault>;
   /** Generation-owned streams opened lazily by routed outputs. */
@@ -289,7 +292,7 @@ const ROUTED_NAMESPACE = "streamsy.projection.routed.v1";
 const routeKeyParts = (key: ProjectionKey) => [
   ROUTED_NAMESPACE,
   key.id,
-  String(key.version),
+  STORED_VERSION_SLOT,
   String(key.generation),
   canonicalParams(key.params),
 ];
@@ -539,7 +542,6 @@ export const unsupportedBindingList = () =>
 /** What the kernel needs to locate a record; every projection value satisfies it. */
 export interface Identity {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: InputMap;

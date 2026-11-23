@@ -24,21 +24,20 @@ import {
   type ResolvedOutput,
 } from "./internal.ts";
 
+// Keep /v1 so existing output streams retain their producer identity and sequence state.
+const PRODUCER_ID_SUFFIX = "/v1";
+
 /**
  * The pinned tuple identity: the params join the id so two parameterisations never share a sequence.
  * An id within the storage limit is used as it is, because outputs already hold producer state under it.
- * A longer id becomes `<id>/v<version>/#<sha256 of the full id>`. A long projection id is cut by
+ * A longer id becomes `<id>/v1/#<sha256 of the full id>`. A long projection id is cut by
  * code point so the result is at most the limit.
  */
-export const producerId = (
-  id: string,
-  version: number,
-  params: Record<string, string>,
-): Effect.Effect<string> =>
+export const producerId = (id: string, params: Record<string, string>): Effect.Effect<string> =>
   fitKey(
-    `${id}/v${version}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`,
+    `${id}${PRODUCER_ID_SUFFIX}${Record.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`,
     MAX_PRODUCER_ID_LENGTH,
-    `${id}/v${version}/`,
+    `${id}${PRODUCER_ID_SUFFIX}/`,
   );
 
 /** The head of one output. A missing output on the checkpoint's owner is created here. */
@@ -241,7 +240,7 @@ export const producer = pin(
             .pipe(Effect.mapError(asPin));
         }
 
-        const appendAs = yield* producerId(projection.id, projection.version, projection.params);
+        const appendAs = yield* producerId(projection.id, projection.params);
 
         for (const [name, output] of Record.toEntries(streams)) {
           const seq = seqs[name];
