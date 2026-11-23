@@ -13,4 +13,4 @@ packages:
 
 Custom `RouteRecords` implementations must provide `state` and `forget`. `fromStore` from `@streamsy/projection/checkpoint` supplies both. [RouteRecords reference](https://streamsy.dev/docs/reference/projection/checkpoint-store#routerecords)
 
-Keep 0.13.0 runners stopped after upgrading. A 0.13.0 runner trusts forgotten route records and can append replayed data to old streams. [Forget](https://streamsy.dev/docs/projections/checkpoints#forget)
+Bindings forgotten under 0.13.0 have no route records left, so `retire` cannot find their routed streams. Keep 0.13.0 runners stopped after upgrading. A 0.13.0 runner trusts forgotten route records and can append replayed data to old streams. [Forget](https://streamsy.dev/docs/projections/checkpoints#forget)
