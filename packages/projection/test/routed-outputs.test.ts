@@ -2,6 +2,7 @@
 import { expect, test } from "vitest";
 import { it } from "@effect/vitest";
 import { Array, Effect, Layer, Option, Result, Schedule, Schema } from "effect";
+import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { OwnerRecords } from "@streamsy/core/internal";
@@ -443,6 +444,71 @@ it.live("a malformed route value fails open and leaves the stream discoverable f
     expect(yield* target.head(at("one")).pipe(Effect.flip)).toMatchObject({
       _tag: "StreamNotFound",
     });
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("retires an undecodable checkpoint and removes its routed streams directly", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const records = yield* OwnerRecords;
+    const target = yield* Output;
+    const store = yield* CheckpointStore;
+    const slot = recordKey(binding);
+    yield* seed([
+      { date: "one", n: 1 },
+      { date: "two", n: 2 },
+    ]);
+    yield* Projection.run(binding);
+    yield* records.write(slot, "{}");
+    expect(yield* store.load(binding).pipe(Effect.flip)).toMatchObject({
+      reason: "invalid-record",
+    });
+
+    const retire = Projection.retire(spec, params, { generation: 1 });
+    expect(yield* retire).toMatchObject({
+      record: "retired",
+      routed: retiredRoutes("removed"),
+    });
+    expect(yield* records.read(slot)).toEqual(Option.some('{"version":1,"retired":{}}'));
+    expect(yield* store.routes!.list(binding)).toEqual([]);
+
+    for (const date of ["one", "two"]) {
+      expect(yield* target.head(at(date)).pipe(Effect.flip)).toMatchObject({
+        _tag: "StreamNotFound",
+      });
+    }
+
+    expect((yield* retire).record).toBe("already-retired");
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("retire propagates a storage failure when replacing an undecodable checkpoint", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    const binding = spec.at(params);
+    const records = yield* OwnerRecords;
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* CheckpointStore;
+    const target = yield* Output;
+    const slot = recordKey(binding);
+    yield* seed([{ date: "one", n: 1 }]);
+    yield* Projection.run(binding);
+    yield* records.write(slot, "{}");
+    yield* sql`
+      CREATE TRIGGER fail_tombstone BEFORE UPDATE ON streamsy_owner_records
+      BEGIN SELECT RAISE(ABORT, 'cannot write tombstone'); END
+    `;
+
+    expect(
+      yield* Projection.retire(spec, params, { generation: 1 }).pipe(Effect.flip),
+    ).toMatchObject({
+      reason: "storage-failure",
+      message: "Cannot write a checkpoint",
+    });
+    expect(yield* records.read(slot)).toEqual(Option.some("{}"));
+    expect(yield* store.routes!.state(binding, "out", Output.at(at("one")).id)).toBe("live");
+    expect((yield* target.collect(at("one"))).items).toEqual([1]);
   }).pipe(Effect.provide(host)),
 );
 

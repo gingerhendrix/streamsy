@@ -142,7 +142,7 @@ export interface CheckpointStoreApi {
   ) => Effect.Effect<string, ProjectionFault>;
   /** Deletes a live record. Absent keys and tombstones are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
-  /** Replaces the live or absent record with a tombstone. */
+  /** Replaces a live, absent or undecodable record with a tombstone. */
   readonly retire?: (key: ProjectionKey) => Effect.Effect<RetirementStatus, ProjectionFault>;
 }
 
@@ -504,14 +504,11 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
         Effect.gen(function* (): Effect.fn.Return<RetirementStatus, ProjectionFault> {
           const slot = recordKey(key);
           const existing = yield* store.read(slot);
-          let version = 1;
+          const current = Option.flatMap(existing, Schema.decodeOption(StoredJson));
 
-          if (Option.isSome(existing)) {
-            const current = yield* decodeStored(key.id, existing.value);
+          if (Option.isSome(current) && "retired" in current.value) return "already-retired";
 
-            if ("retired" in current) return "already-retired";
-            version = current.version + 1;
-          }
+          const version = Option.isNone(current) ? 1 : current.value.version + 1;
 
           const encoded = yield* Schema.encodeEffect(TombstoneJson)({ version, retired: {} }).pipe(
             Effect.mapError(
