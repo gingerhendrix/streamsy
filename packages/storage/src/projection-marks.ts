@@ -149,10 +149,14 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       Effect.mapError(fault("summary")),
     );
 
+  // MySQL can use the due index in deadline order. Adding params to the
+  // order requires a filesort even when it refers to the underlying column.
+  const dueOrder = sql.literal(mysql ? "due_at" : "due_at, params");
+
   const due = (projection: string, now: number, limit: number) =>
     sql<MarkRow>`SELECT ${readParams}, seq, attempts, due_at, wake_at, stopped, failed_at, failure_reason, failure_message FROM ${table}
  WHERE projection = ${projection} AND stopped = 0 AND due_at <= ${now}
- ORDER BY due_at, params LIMIT ${limit}`.pipe(
+ ORDER BY ${dueOrder} LIMIT ${limit}`.pipe(
       Effect.map(Array.map(pendingMark)),
       Effect.mapError(fault("due")),
     );
