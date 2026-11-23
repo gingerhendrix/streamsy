@@ -1,6 +1,6 @@
 import { Array as Arr, Effect } from "effect";
 import { evaluateOptional, isMissing, type ExpressionScopes } from "../runtime/expression.ts";
-import { canonicalJson, encodeRowKey } from "../runtime/key.ts";
+import { canonicalJson, compareRowKeys, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
 import { checkData, dataFault, type DataFault } from "./data-fault.ts";
 import { orderKey } from "./encoding.ts";
@@ -166,7 +166,7 @@ export function runtime(
 
       const pending = before ? indexChanges.get(a.id)?.get(key) : undefined;
 
-      // Both images read the same SQL index; the before image overlays the
+      // Both images read the same persisted index. The before image overlays the
       // removed entries and may need a longer prefix.
       const prefix = limit === undefined ? undefined : limit + (pending?.size ?? 0);
       const readKey = `${a.id}:${reverse ? 1 : 0}:${key}`;
@@ -195,11 +195,7 @@ export function runtime(
             ? -1
             : a.sort_key > b.sort_key
               ? 1
-              : a.row_key < b.row_key
-                ? -1
-                : a.row_key > b.row_key
-                  ? 1
-                  : 0;
+              : compareRowKeys(a.row_key, b.row_key);
 
         return reverse ? -x : x;
       });
