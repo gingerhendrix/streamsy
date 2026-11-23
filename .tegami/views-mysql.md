@@ -5,8 +5,9 @@ packages:
 
 ## Views runs on MySQL
 
-Use a MySQL `SqlClient` with `SqlStorage`, `CheckpointStore.layer` and
-`Transaction.layer`. Install `@streamsy/storage` at the same version as
+Set up a MySQL `SqlClient` with `SqlStorage`. Provide `CheckpointStore.layer`,
+`OwnerTransaction.layer`, and `ViewBackend.layerSql` over that storage layer.
+Install `@streamsy/storage` at the same version as
 `@streamsy/views` for the MySQL transaction isolation used by Views.
 Run `View.migrate(sql)` at host startup before running Views circuits.
 Concurrent hosts can migrate the same database. Tested on MySQL 8.4.11.
