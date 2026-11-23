@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own host in a fresh database scope. */
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary } from "@streamsy/core";
 import { OWNER_RECORDS_LIST_UNSUPPORTED, OwnerRecords, fitKey } from "@streamsy/core/internal";
@@ -93,9 +93,18 @@ for (const server of [sqlDialects.pg, sqlDialects.mysql]) {
             const plan = yield* explainList('["checkpoint","a",');
 
             if (server.name === "pg") {
-              const text = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(plan);
-              expect(text).toMatch(/Index Scan using streamsy_owner_records_pkey/u);
-              expect(text).toMatch(/Index Cond: .*owner_key >=.*owner_key </u);
+              expect(plan).toEqual(
+                expect.arrayContaining([
+                  {
+                    "QUERY PLAN": expect.stringMatching(
+                      /Index Scan using streamsy_owner_records_pkey/u,
+                    ),
+                  },
+                  {
+                    "QUERY PLAN": expect.stringMatching(/Index Cond: .*owner_key >=.*owner_key </u),
+                  },
+                ]),
+              );
             } else {
               expect(plan).toEqual([expect.objectContaining({ type: "range", key: "PRIMARY" })]);
             }

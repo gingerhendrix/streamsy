@@ -130,6 +130,7 @@ export const registerMysqlLifecycle = () => {
             yield* ProjectionWakeup.attach(attachable(maximum));
 
             const oversized = attachable(maximum + "x");
+
             const wakeup = yield* ProjectionWakeup.attach(oversized).pipe(
               Effect.asVoid,
               Effect.exit,

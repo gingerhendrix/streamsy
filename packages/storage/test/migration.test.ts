@@ -40,9 +40,11 @@ test("fresh creation and repeated open retain the current version", async () => 
   const second = await Effect.runPromise(acquire(path));
   await Effect.runPromise(Scope.close(second.scope, Exit.void));
   const db = new Database(path, { readonly: true });
+
   const versions = db
     .query<{ version: number }, []>(`SELECT version FROM ${STORAGE_VERSION_TABLE} ORDER BY version`)
     .all();
+
   expect(Array.map(versions, ({ version }) => version)).toEqual([1, 2, 3]);
   db.close(false);
 });

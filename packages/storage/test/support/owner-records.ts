@@ -3,7 +3,7 @@ import { Array, Effect, Schema } from "effect";
 import { SqlClient, Statement } from "effect/sql";
 import { OwnerRecords } from "@streamsy/core/internal";
 
-const json = Schema.encodeSync(Schema.UnknownFromJsonString);
+const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const ids = ["a", "ab", "A", "a ", 'a"b', "a\\", "a%_", "é", "\uffff", "𐀀", "ends\u{10ffff}"];
 
