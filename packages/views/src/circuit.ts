@@ -5,16 +5,16 @@ import {
   CheckpointStore,
   Commit,
   NonRetryable,
+  OwnerTransaction,
   Projection,
   ProjectionFault,
-  Transaction,
   type ProjectionKey,
   type Declaration,
   type Slices,
   type Unit,
   type WakeAt,
 } from "@streamsy/projection";
-import { SqlClient } from "effect/sql";
+import type { SqlClient } from "effect/sql";
 import { compilePlan, type RelationExpression } from "./relation.ts";
 import {
   keyExpression,
@@ -26,7 +26,8 @@ import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
 import { makeEngine, type StateChange } from "./sql/engine.ts";
 import type { Backend } from "./backend.ts";
-import { backendFor, migrateBackend } from "./sql/backend.ts";
+import { migrateBackend } from "./sql/backend.ts";
+import { catchMemoryEnlist, currentBackend, type ViewBackend } from "./view-backend.ts";
 import { ViewFault } from "./view-fault.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
@@ -284,18 +285,20 @@ const guard = Effect.fn("View.guard")(function* (
   return namespace;
 });
 
-const commit = Commit.transactionWithCleanup((key, sql) =>
-  backendFor(sql).pipe(
+const commit = Commit.ownerTransactionWithCleanup((key) =>
+  currentBackend.pipe(
     Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
-    Effect.mapError(
-      (cause) =>
-        new ProjectionFault({
-          phase: "checkpoint",
-          reason: "storage-failure",
-          message: "Cannot clear circuit state",
-          cause,
-        }),
-    ),
+    catchMemoryEnlist,
+    Effect.mapError((cause) => {
+      const wrongOwner = Predicate.isTagged(cause, "ViewFault");
+
+      return new ProjectionFault({
+        phase: "checkpoint",
+        reason: wrongOwner ? "unsupported-composition" : "storage-failure",
+        message: wrongOwner ? cause.message : "Cannot clear circuit state",
+        cause,
+      });
+    }),
   ),
 );
 
@@ -305,7 +308,10 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
   readonly streams: ReturnType<
     ReturnType<typeof Projection.process<StreamRoute.ParamCodecs, InputsOf<V>, O>>["at"]
   >["streams"];
-  readonly commit: Commit.Commit<void | WakeAt, SqlClient.SqlClient, CheckpointStore | Transaction>;
+  readonly commit: Commit.OwnerCommit<
+    void | WakeAt,
+    CheckpointStore | OwnerTransaction | ViewBackend
+  >;
   readonly process: (
     batch: Slices<CircuitBinding<V, O>["inputs"]>,
     unit: Unit,
@@ -313,7 +319,7 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
   ) => Effect.Effect<
     void | WakeAt,
     CircuitError,
-    SqlClient.SqlClient | OutputState<O[keyof O]>["Identifier"]
+    ViewBackend | OutputState<O[keyof O]>["Identifier"]
   >;
 }
 
@@ -469,13 +475,15 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked output map at the Projection boundary.
   const checkedOutputs = routedOutputs as ProjectionRoutes["outputs"];
 
+  // SAFETY: Projection preserves the supplied commit, though its generic binding type erases the owner brand.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the brand of the exact commit supplied below.
   return Projection.process<
     C,
     Record<string, Input>,
     OutputMap,
     CircuitError,
-    SqlClient.SqlClient | Input["Identifier"],
-    CheckpointStore | Transaction,
+    ViewBackend | Input["Identifier"],
+    CheckpointStore | OwnerTransaction | ViewBackend,
     void,
     never,
     never,
@@ -490,7 +498,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     commit,
     process: (batch, unit, { outputs }) =>
       Effect.gen(function* () {
-        const backend = yield* backendFor(yield* SqlClient.SqlClient);
+        const backend = yield* currentBackend;
 
         if (backend.validateSource !== undefined)
           for (const source of sources.keys()) {
@@ -677,6 +685,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
 
         return definition.wakeAt?.(unit);
       }).pipe(
+        catchMemoryEnlist,
         Effect.catchTags({
           SqlError: (cause) =>
             new ProjectionFault({
@@ -689,5 +698,5 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           SqlEngineFault: (cause) => new ViewFault({ message: "Circuit operator failed", cause }),
         }),
       ),
-  });
+  }) as CircuitDeclaration<C, ViewMap, OutputMap, HE, HR>;
 }

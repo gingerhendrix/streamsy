@@ -1,12 +1,40 @@
-import { Projection } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Commit,
+  OwnerTransaction,
+  Projection,
+  type WakeAt,
+} from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { Effect, Schema } from "effect";
-import { View } from "../../src/index.ts";
+import { View, ViewBackend } from "../../src/index.ts";
 import { orders, Shop, Results, circuit, views } from "./support/shop.ts";
 
 const declaration = circuit();
 
-declaration.at({ shop: "a" });
+const binding = declaration.at({ shop: "a" });
+
+const run = Projection.run(binding);
+
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+type Assert<T extends true> = T;
+
+export type CircuitBackendChecks = [
+  Assert<
+    Same<
+      typeof binding.commit,
+      Commit.OwnerCommit<void | WakeAt, CheckpointStore | OwnerTransaction | ViewBackend>
+    >
+  >,
+  Assert<Same<Effect.Services<ReturnType<typeof binding.process>>, ViewBackend | Results>>,
+  Assert<
+    Same<
+      Effect.Services<typeof run>,
+      CheckpointStore | OwnerTransaction | ViewBackend | Shop | Results
+    >
+  >,
+];
 
 Projection.attach(declaration, { durable: true });
 
