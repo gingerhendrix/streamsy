@@ -10,7 +10,14 @@ import { OwnerTransaction } from "../owner-transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { createOutput } from "../outputs.ts";
 import { TransactionGenerationOutputs } from "../per-generation.ts";
-import { detailsOf, load, remove, retire, settle, type Result } from "./internal.ts";
+import {
+  detailsOf,
+  load,
+  remove,
+  retire,
+  settle,
+  type Result as TransactionResult,
+} from "./internal.ts";
 
 import { inherit, withPrepare, withAccepted } from "./range.ts";
 import type { ProjectionKey } from "../checkpoint-store.ts";
@@ -23,7 +30,7 @@ import {
 
 const removeWithRoutes = (
   key: ProjectionKey,
-  owner: object,
+  owner: OwnerBoundary["owner"],
 ): Effect.Effect<void, ProjectionFault, CheckpointStore> =>
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
@@ -86,13 +93,13 @@ const retireInTransaction = (tx: OwnerBoundary, request: RetireRequest) =>
   });
 
 const makeTransaction = <P, Q>(
-  name: string,
+  strategy: string,
   context: Effect.Effect<TransactionContext<P>, never, Q>,
   requireSharedOwner = false,
 ) =>
   withPrepare(
-    make<Result, P, CheckpointStore | Q>({
-      name,
+    make<TransactionResult, P, CheckpointStore | Q>({
+      name: strategy,
       guarantee: "exactly-once",
       load,
       remove: (key) =>
@@ -229,7 +236,7 @@ export const transaction = makeTransaction<SqlClient.SqlClient, Transaction>(
   Effect.map(Transaction, (tx) => ({
     owner: tx.owner,
     withTransaction: (body) => tx.withTransaction(body),
-    provide: Effect.provideService(SqlClient.SqlClient, tx.sql),
+    provide: (body) => body.pipe(Effect.provideService(SqlClient.SqlClient, tx.sql)),
   })),
 );
 
@@ -287,12 +294,12 @@ const removeInOwnerTransaction = <R>(
         yield* store.remove(key);
       }
 
-      yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
+      return yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
     }),
   );
 
 /** Commit the unit and checkpoint together on a memory or SQL storage host. */
-export const ownerTransaction: OwnerCommit<Result, CheckpointStore | OwnerTransaction> =
+export const ownerTransaction: OwnerCommit<TransactionResult, CheckpointStore | OwnerTransaction> =
   Object.assign(
     makeTransaction<never, OwnerTransaction>(
       "ownerTransaction",
@@ -313,7 +320,7 @@ export const ownerTransaction: OwnerCommit<Result, CheckpointStore | OwnerTransa
 /** Clean up binding state in the owner transaction on both forget and retire. */
 export const ownerTransactionWithCleanup = <R>(
   cleanup: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault, R>,
-): OwnerCommit<Result, CheckpointStore | OwnerTransaction | R> =>
+): OwnerCommit<TransactionResult, CheckpointStore | OwnerTransaction | R> =>
   inherit(ownerTransaction, {
     ...ownerTransaction,
     remove: (key: ProjectionKey) =>
