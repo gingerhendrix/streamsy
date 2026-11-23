@@ -251,7 +251,7 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
           [
             Projection.retire(routedView, retired, { generation: 1 }).pipe(
               Effect.provide(left),
-              retry,
+              retryProjection,
             ),
             run(neighbour!, right),
           ],
