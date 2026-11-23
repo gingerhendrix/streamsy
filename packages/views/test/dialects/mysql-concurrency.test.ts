@@ -183,6 +183,7 @@ describe.skipIf(mysql.url === undefined)("MySQL Views concurrency", () => {
           ...raceParams,
           generation: 1,
         });
+
         expect(
           DurableState.materialize(DurableState.materialized(Results), items).rows.customerTotals,
         ).toEqual(new Map([["c", { customerId: "c", orders: 3, revenue: 6, largest: 3 }]]));
