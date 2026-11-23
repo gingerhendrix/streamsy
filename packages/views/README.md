@@ -1,12 +1,12 @@
 # @streamsy/views
 
-Incrementally maintain Streamsy State collections on SQLite. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
+Incrementally maintain Streamsy State collections. A circuit is an ordinary projection: it consumes input pages, updates indexed operator state, appends changed output rows and commits its input checkpoint in one transaction.
 
 ```sh
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Runs on Bun SQLite and Durable Object SQLite only. Requires Effect 4. The package is pre-1.0: raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
+Runs on SQLite, Postgres and MySQL. Requires Effect 4. The package is pre-1.0, so raise a circuit's `generation` when a release note says the operator-state layout changed. See the [guide](docs/guide.md) for host setup, lifecycle and checks, and the [documentation](https://streamsy.dev/docs/views).
 
 ```ts
 import { Schema } from "effect";
@@ -80,7 +80,7 @@ To discard progress, pass the binding from `circuit.at(params)` to `Projection.f
 
 Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
 
-Unsupported features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Only SQLite is supported. Retain input history for rebuilding.
+Unsupported features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Retain input history for rebuilding.
 
 | Export            | Purpose                         |
 | ----------------- | ------------------------------- |
