@@ -122,10 +122,10 @@ test("generation creation and retirement roll back and the serving generation su
     expect(await (await request(mf, `${accepted}/1?offset=-1`)).text()).toBe(oldAccepted);
     expect(await (await request(mf, "/proof/retire")).json()).toMatchObject({
       record: "retired",
-      outputs: {
-        numbers: { result: "removed" },
-        "@streamsy/accepted": { result: "removed" },
-      },
+      streams: [
+        { output: "@streamsy/accepted", result: "removed" },
+        { output: "numbers", result: "removed" },
+      ],
     });
 
     await mf.dispose();

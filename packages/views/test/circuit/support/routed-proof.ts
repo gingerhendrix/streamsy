@@ -221,17 +221,16 @@ export const routedProof = Effect.fn("ViewsTest.routedProof")(function* (wakeup:
   yield* Projection.forget(binding);
   compare(yield* histories(1), updated, "Forget changed the routed streams");
   const retired = yield* Projection.retire(spec, {}, { generation: 1 });
-  const results = retired.routed?.output;
+  const results = retired.streams;
 
-  if (results?.length !== 3 || Array.some(results, ({ result }) => result !== "removed"))
+  if (
+    results.length !== 3 ||
+    Array.some(results, (stream) => stream.output !== "output" || stream.result !== "removed")
+  )
     throw new Error("Retire did not remove all three touched streams");
 
   const again = yield* Projection.retire(spec, {}, { generation: 1 });
-  compare(
-    again,
-    { record: "already-retired", outputs: {}, routed: { output: [] } },
-    "Retire is not repeatable",
-  );
+  compare(again, { record: "already-retired", streams: [] }, "Retire is not repeatable");
   compare(yield* histories(1), [[], [], []], "Retired streams still have data");
   yield* check(2);
 

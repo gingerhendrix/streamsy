@@ -1,4 +1,4 @@
-import { Context, Effect, Predicate, Record } from "effect";
+import { Array, Context, Effect, Order, Predicate, Record } from "effect";
 import {
   isStreamsFault,
   type AppendError,
@@ -19,17 +19,22 @@ import { currentRouteRecords, RoutedOutputs } from "./routed-outputs.ts";
 
 type StreamMode = "remove" | "close";
 
-export interface RetiredOutput {
+export interface RetiredStream {
+  /** The declared output name, or "@streamsy/accepted". */
+  readonly output: string;
   readonly id: string;
   readonly result: "removed" | "closed" | "absent" | "shared";
 }
 
 export interface Retired {
   readonly record: RetirementStatus;
-  readonly outputs: Readonly<Record<string, RetiredOutput>>;
-  /** Exclusively owned streams opened by each routed output. */
-  readonly routed?: Readonly<Record<string, ReadonlyArray<RetiredOutput>>>;
+  /** Every wrapped output stream, sorted by output name and then stream id. */
+  readonly streams: ReadonlyArray<RetiredStream>;
 }
+
+const streamOrder = Order.make<Pick<RetiredStream, "output" | "id">>(
+  (left, right) => Order.String(left.output, right.output) || Order.String(left.id, right.id),
+);
 
 interface Retirable<R, Q> extends ProjectionKey, BoundOutputs<R> {
   readonly commit: Pick<Commit<never, never, Q>, "retire">;
@@ -39,7 +44,7 @@ const cleanStream = (
   address: StreamAddress.StreamAddress<unknown>,
   wire: ResolvedOutput["service"]["wire"],
   mode: StreamMode,
-): Effect.Effect<RetiredOutput["result"], ProjectionFault> => {
+): Effect.Effect<RetiredStream["result"], ProjectionFault> => {
   const { id, contentType } = address;
 
   const operation: Effect.Effect<"removed" | "closed", AppendError | RemoveError | StreamsFault> =
@@ -88,26 +93,25 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
         message: "Retirement requires a projection declaration with a Commit that supports it",
       });
 
-    const outputs: [string, RetiredOutput][] = [];
-    const owned: (ResolvedOutput & { readonly name: string })[] = [];
+    const shared: RetiredStream[] = [];
+    const owned: (ResolvedOutput & { readonly output: string })[] = [];
     const bindings = bound[GenerationOutputs];
     const routes = bound[RoutedOutputs];
-    const routed = new Map<string, RetiredOutput[]>();
     const context = yield* Effect.context<R>();
 
-    if (routes !== undefined) for (const name of routes.keys()) routed.set(name, []);
-
-    for (const [name, address] of Record.toEntries(boundOutputs(bound))) {
-      const binding = bindings?.get(name);
+    for (const [output, address] of Record.toEntries(boundOutputs(bound))) {
+      const binding = bindings?.get(output);
 
       if (binding === undefined) continue;
 
       if (binding.shared) {
-        outputs.push([name, { id: address.id, result: "shared" }]);
+        shared.push({ output, id: address.id, result: "shared" });
       } else {
-        owned.push({ name, address, service: yield* address.stream });
+        owned.push({ output, address, service: yield* address.stream });
       }
     }
+
+    let streams: ReadonlyArray<RetiredStream> = shared;
 
     const record = yield* bound.commit.retire({
       key: {
@@ -118,8 +122,13 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
       },
       cleanup: Effect.gen(function* () {
         const owner = yield* CurrentOwner;
+        const results = [...shared];
 
-        const clean = (address: ResolvedOutput["address"], service: ResolvedOutput["service"]) => {
+        const clean = (
+          output: string,
+          address: ResolvedOutput["address"],
+          service: ResolvedOutput["service"],
+        ) => {
           if (owner !== undefined && service.owner !== owner)
             return Effect.fail(
               new ProjectionFault({
@@ -130,46 +139,50 @@ export const retire = <C extends StreamRoute.ParamCodecs, R, Q, HE, HR>(
             );
 
           return cleanStream(address, service.wire, mode).pipe(
-            Effect.map((result): RetiredOutput => ({ id: address.id, result })),
+            Effect.map((result): RetiredStream => ({ output, id: address.id, result })),
           );
         };
 
-        for (const { name, address, service } of owned)
-          outputs.push([name, yield* clean(address, service)]);
+        for (const { output, address, service } of owned)
+          results.push(yield* clean(output, address, service));
 
         if (routes !== undefined) {
           const records = yield* currentRouteRecords;
 
-          for (const { output, streamId } of yield* records.list(bound)) {
+          const listed = Array.map(yield* records.list(bound), ({ output, streamId }) => ({
+            output,
+            id: streamId,
+          }));
+
+          for (const { output, id } of Array.sort(listed, streamOrder)) {
             const definition = routes.get(output);
-            const results = routed.get(output);
 
             const invalid = (cause?: unknown) =>
               new ProjectionFault({
                 phase: "checkpoint",
                 reason: "invalid-record",
-                message: `Cannot restore routed output ${output} at ${streamId}`,
+                message: `Cannot restore routed output ${output} at ${id}`,
                 cause,
               });
 
             const address = yield* Effect.try({
-              try: () => definition?.restore(streamId),
+              try: () => definition?.restore(id),
               catch: invalid,
             });
 
-            if (address === undefined || results === undefined) return yield* invalid();
-            results.push(yield* clean(address, Context.get(context, address.stream)));
+            if (address === undefined) return yield* invalid();
+            results.push(yield* clean(output, address, Context.get(context, address.stream)));
           }
 
           if (mode === "remove") yield* records.clear(bound);
         }
 
+        streams = results;
+
         return yield* Effect.void;
       }),
     });
 
-    const retired = { record, outputs: Record.fromEntries(outputs) };
-
-    return routes === undefined ? retired : { ...retired, routed: Record.fromEntries(routed) };
+    return { record, streams: Array.sort(streams, streamOrder) };
   });
 };

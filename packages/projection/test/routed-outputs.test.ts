@@ -11,6 +11,7 @@ import { CheckpointStore, Commit, Projection, ProjectionFault } from "@streamsy/
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { eventually } from "./support/eventually.ts";
 import { withFamilies } from "./support/families.ts";
+import { Accepted, Numbers, Rows, accepted, output } from "./support/generation-outputs.ts";
 import { layerSqlite } from "./support/sqlite.ts";
 
 class Source extends Streamsy.json<Source>()("Routed/Source", "routed/source/:workspace", {
@@ -64,9 +65,8 @@ const seed = (items: Array.NonEmptyReadonlyArray<{ readonly date: string; readon
     yield* source.append(params, items);
   });
 
-const retiredRoutes = (result: "closed" | "removed") => ({
-  out: Array.map(["one", "two"], (date) => ({ id: Output.at(at(date)).id, result })),
-});
+const retiredRoutes = (result: "closed" | "removed") =>
+  Array.map(["one", "two"], (date) => ({ output: "out", id: Output.at(at(date)).id, result }));
 
 const host = withFamilies(layerSqlite(), Source, Output);
 
@@ -165,22 +165,19 @@ it.live("keeps closed routes for a later removal and makes retirement repeatable
 
     expect(yield* retire("close")).toEqual({
       record: "retired",
-      outputs: {},
-      routed: retiredRoutes("closed"),
+      streams: retiredRoutes("closed"),
     });
     expect(yield* store.routes!.list(binding)).toHaveLength(2);
     yield* Projection.forget(binding);
     expect(yield* store.routes!.state(binding, "out", Output.at(at("one")).id)).toBe("live");
     expect(yield* retire("remove")).toEqual({
       record: "already-retired",
-      outputs: {},
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
     expect(yield* store.routes!.list(binding)).toEqual([]);
     expect(yield* retire("remove")).toEqual({
       record: "already-retired",
-      outputs: {},
-      routed: { out: [] },
+      streams: [],
     });
     expect(yield* store.load(binding).pipe(Effect.result)).toMatchObject({
       failure: { reason: "retired-generation" },
@@ -202,8 +199,7 @@ it.live("case A: explicit forget preserves all routes for retirement", () =>
 
     expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
       record: "retired",
-      outputs: {},
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
 
     for (const date of ["one", "two"]) {
@@ -232,8 +228,7 @@ it.live("case B: a gone input preserves all routes for retirement", () =>
 
     expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
       record: "retired",
-      outputs: {},
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
 
     for (const date of ["one", "two"]) {
@@ -305,7 +300,7 @@ it.live("after forget, reopening one route leaves the other forgotten", () =>
     expect(yield* routes.state(binding, "out", two)).toBe("forgotten");
     expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
       record: "already-retired",
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
   }).pipe(Effect.provide(withFamilies(layerSqlite(1), Source, Output))),
 );
@@ -339,7 +334,7 @@ it.live("forget marks routes of an undecodable or absent checkpoint for retireme
 
     expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
       record: "retired",
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
     expect(yield* routes.state(binding, "out", one)).toBe("absent");
     expect(yield* routes.state(binding, "out", two)).toBe("absent");
@@ -439,7 +434,7 @@ it.live("a malformed route value fails open and leaves the stream discoverable f
     expect(yield* store.load(binding)).toEqual(before);
     expect((yield* target.collect(at("one"))).items).toEqual([1]);
     expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
-      routed: { out: [{ id: Output.at(at("one")).id, result: "removed" }] },
+      streams: [{ output: "out", id: Output.at(at("one")).id, result: "removed" }],
     });
     expect(yield* target.head(at("one")).pipe(Effect.flip)).toMatchObject({
       _tag: "StreamNotFound",
@@ -468,7 +463,7 @@ it.live("retires an undecodable checkpoint and removes its routed streams direct
     const retire = Projection.retire(spec, params, { generation: 1 });
     expect(yield* retire).toMatchObject({
       record: "retired",
-      routed: retiredRoutes("removed"),
+      streams: retiredRoutes("removed"),
     });
     expect(yield* records.read(slot)).toEqual(Option.some('{"version":1,"retired":{}}'));
     expect(yield* store.routes!.list(binding)).toEqual([]);
@@ -510,6 +505,104 @@ it.live("retire propagates a storage failure when replacing an undecodable check
     expect(yield* store.routes!.state(binding, "out", Output.at(at("one")).id)).toBe("live");
     expect((yield* target.collect(at("one"))).items).toEqual([1]);
   }).pipe(Effect.provide(host)),
+);
+
+it.live("retire reports streams in code-unit id order within one routed output", () =>
+  Effect.gen(function* () {
+    const spec = declaration();
+    yield* seed([
+      { date: "zeta", n: 1 },
+      { date: "alpha", n: 2 },
+      { date: "Mid", n: 3 },
+    ]);
+    yield* Projection.run(spec.at(params));
+
+    expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
+      record: "retired",
+      streams: Array.map(["Mid", "alpha", "zeta"], (date) => ({
+        output: "out",
+        id: Output.at(at(date)).id,
+        result: "removed",
+      })),
+    });
+  }).pipe(Effect.provide(host)),
+);
+
+it.live("sorts a mixed retirement by output and id and cleans routes in that order", () =>
+  Effect.gen(function* () {
+    const plainParams = { workspace: "unwrapped", rev: 1 };
+
+    const spec = Projection.process({
+      ...definition,
+      outputs: {
+        zRoute: outputs.out,
+        shared: Projection.perGeneration(Rows, "rev", { shared: true }),
+        aOwned: output,
+        ARoute: outputs.out,
+        plain: Numbers.at(plainParams),
+      },
+      accepted,
+      process: (batch, _unit, { outputs: handles }) =>
+        Effect.gen(function* () {
+          for (const { date } of batch.source.items) {
+            const handle = date === "first" ? handles.zRoute : handles.ARoute;
+            yield* handle.open({ date });
+          }
+        }),
+    });
+
+    const nums = yield* Numbers;
+    const target = yield* Output;
+    yield* nums.create(plainParams);
+    yield* seed([
+      { date: "first", n: 1 },
+      { date: "zeta", n: 2 },
+      { date: "alpha", n: 3 },
+      { date: "Mid", n: 4 },
+    ]);
+    yield* Projection.run(spec.at(params));
+
+    const removed: string[] = [];
+
+    const traced: typeof target = {
+      ...target,
+      wire: {
+        ...target.wire,
+        remove: (id) =>
+          Effect.sync(() => {
+            removed.push(id);
+          }).pipe(Effect.andThen(target.wire.remove(id))),
+      },
+    };
+
+    const mid = Output.at(at("Mid")).id;
+    const alpha = Output.at(at("alpha")).id;
+    const zeta = Output.at(at("zeta")).id;
+    const first = Output.at(at("first")).id;
+    expect(
+      yield* Projection.retire(spec, params, { generation: 1 }).pipe(
+        Effect.provideService(Output, traced),
+      ),
+    ).toEqual({
+      record: "retired",
+      streams: [
+        {
+          output: "@streamsy/accepted",
+          id: Accepted.at({ ...params, epoch: 1 }).id,
+          result: "removed",
+        },
+        { output: "ARoute", id: mid, result: "removed" },
+        { output: "ARoute", id: alpha, result: "removed" },
+        { output: "ARoute", id: zeta, result: "removed" },
+        { output: "aOwned", id: Numbers.at({ ...params, rev: 1 }).id, result: "removed" },
+        { output: "shared", id: Rows.at({ ...params, rev: 1 }).id, result: "shared" },
+        { output: "zRoute", id: first, result: "removed" },
+      ],
+    });
+    expect(removed).toEqual([mid, alpha, zeta, first]);
+    expect((yield* nums.head(plainParams)).nextOffset).toBe(ZERO_OFFSET);
+    expect((yield* (yield* Rows).head({ ...params, rev: 1 })).closed).toBe(false);
+  }).pipe(Effect.provide(withFamilies(layerSqlite(), Source, Output, Numbers, Rows, Accepted))),
 );
 
 it.live("requires a process transaction and shares the checkpoint owner", () =>
