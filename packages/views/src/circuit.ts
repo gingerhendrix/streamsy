@@ -7,7 +7,6 @@ import {
   NonRetryable,
   Projection,
   ProjectionFault,
-  rejectProjectionVersion,
   Transaction,
   type ProjectionKey,
   type Declaration,
@@ -374,7 +373,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
     ),
 ): CircuitDeclaration<C, ViewMap, OutputMap, HE, HR> {
-  rejectProjectionVersion(definition.id, definition);
   const parameterized = Predicate.isFunction(definition.views);
 
   const refs = Record.map(definition.params, (_codec, name) => parameterReference(name));
@@ -500,10 +498,7 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     HR,
     void | WakeAt
   >({
-    id: definition.id,
-    generation: definition.generation,
-    params: definition.params,
-    retry: definition.retry,
+    ...definition,
     inputs: checkedInputs,
     outputs: checkedOutputs,
     commit,
