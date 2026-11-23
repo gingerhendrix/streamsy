@@ -289,6 +289,7 @@ test("typed recovery cannot recover a throwing rollback participant", () =>
     Effect.gen(function* () {
       const boundary = yield* CommitBoundary;
       const defect = new Error("participant threw");
+
       const participant = {
         onCommit: () => {},
         onRollback: () => {
@@ -301,6 +302,7 @@ test("typed recovery cannot recover a throwing rollback participant", () =>
           enlist(ownerOf(boundary), participant).pipe(Effect.andThen(Effect.fail("body failed"))),
         )
         .pipe(
+          // oxlint-disable-next-line effecttsgo/catch-to-or-else-succeed -- Pin the recovery behavior of Effect.catch itself.
           Effect.catch(() => Effect.succeed("recovered")),
           Effect.exit,
         );
