@@ -1037,18 +1037,20 @@ same<typeof forget, typeof Projection.forget>(true);
 - When the Commit has no `remove`, `forget` fails with phase `checkpoint` and reason `unsupported-composition`. Every built-in Commit has `remove`.
 - Stop and drain the binding's runners before calling `forget`. To rebuild, raise `generation`.
 - For a routed binding, pass the bound declaration from `declaration.at(params)`. This marks route records forgotten so the next open checks that the stream is empty and open. A bare key leaves route records live. [Forget](/docs/projections/checkpoints#forget)
+- Routed forget for an existing checkpoint, including automatic forget after a gone input, requires owner-record listing. MySQL fails with `unsupported-composition`. On MySQL, forgetting an absent checkpoint leaves the route records as they are.
+- Forget can delete an undecodable tombstone and allow the generation to run again.
 
 ### `Projection.retire`
 
 `retire(declaration, params, { generation, streams })` takes a declaration and its decoded binding params. `generation` is required. `streams` defaults to `"remove"` and also accepts `"close"`. The effect uses the Commit's services and the output stream services.
 
-`Projection.Retired` contains `record` and `streams`. `record` is `"retired"` or `"already-retired"`. The built-in store can write a tombstone over an undecodable checkpoint.
+`Projection.Retired` contains `record` and `streams`. `record` is `"retired"` or `"already-retired"`. The built-in store can write a tombstone over an undecodable checkpoint, including a live checkpoint written by a newer release.
 
 Each `Projection.RetiredStream` in `streams` has `output`, `id`, and `result`. The array includes fixed, routed, and shared wrapped outputs, with `"@streamsy/accepted"` as the name of a wrapped accepted stream. Entries sort by output name and then stream id in code-unit order. `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`.
 
 A declaration, Commit, or checkpoint store without retirement support fails with phase `checkpoint` and reason `unsupported-composition`. See [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
 
-Retirement uses live and forgotten route records to find routed streams. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
+Retirement uses live and forgotten route records to find routed streams. Pass a declaration with the original routed outputs. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves those streams in place. Closing keeps the route records so a later call can remove the closed streams. Removal clears the route records along with the streams. An owner store without prefix listing fails routed retirement with `unsupported-composition`.
 
 ## Helpers
 

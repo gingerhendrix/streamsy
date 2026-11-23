@@ -444,21 +444,27 @@ their types; `ProjectionFault` carries `phase`, `reason`, and `cause`.
 
 Records are keyed by `id`, `generation` and canonical parameters.
 Raise `generation` to start over, including after a change to input identity or
-state schema. A new generation replays into fresh `perGeneration` streams. An
-unwrapped `Commit.producer` output receives the replay after its existing items.
-Move its address or remove that stream before replay to start with an empty
-output. [Checkpoints and generations](https://streamsy.dev/docs/projections/checkpoints#generations)
+state schema. A new generation replays into fresh `perGeneration` streams.
+Unwrapped outputs with `Commit.producer` or `Commit.transaction` receive the
+replay after their existing items. To start with an empty output, choose a fresh
+address or remove the stream before you start the upgraded process. Attach can
+start replay at startup. [Checkpoints and generations](https://streamsy.dev/docs/projections/checkpoints#generations)
 
-[Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
+Delete an explicit `version: 1`. If a binding used a different `version`, stop
+the old runners and keep the full input history for the new generation. The
+migration guide covers reader cutover and retirement. [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
 Stop and drain the binding's runners before calling `Projection.forget(bound)`
 to discard progress. Forget keeps the streams. For a routed binding, pass the
 value returned by `declaration.at(params)` so `forget` marks its route records.
 Passing a bare key leaves them live and allows a replay to append to old data.
+Use a store that supports owner-record listing for routed forget on an existing
+checkpoint, including automatic forget after a gone input.
 
 `Projection.retire` writes a tombstone even if the checkpoint cannot be decoded.
-It can remove or close owned streams after a forget. The result has `record` and
-a flat `streams` array. [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation)
+It can remove or close owned streams after a forget when you pass the declaration
+with the original routed outputs. The result has `record` and a flat `streams`
+array. [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation)
 
 Without a follower, each `current` replays from the last checkpoint or from
 the start. A continuously growing input can delay it. Fold handlers must be

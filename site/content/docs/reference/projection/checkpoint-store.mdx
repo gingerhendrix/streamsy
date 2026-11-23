@@ -140,14 +140,14 @@ A storage failure fails each call with reason `storage-failure`.
 
 `RouteRecords` tracks the streams opened by a routed projection. All six methods are required when a store provides `routes`.
 
-| Method                         | Behavior                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `has(key, output, streamId)`   | Checks whether the output has a live or forgotten record for the stream.                          |
-| `state(key, output, streamId)` | Returns `"absent"`, `"live"`, or `"forgotten"`. An undecodable value fails with `invalid-record`. |
-| `add(key, output, streamId)`   | Writes a live record for the stream.                                                              |
-| `list(key)`                    | Returns live and forgotten records for the binding in unspecified order.                          |
-| `forget(key)`                  | Marks every route record for the binding as forgotten.                                            |
-| `clear(key)`                   | Deletes every route record for the binding.                                                       |
+| Method                         | Behavior                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `has(key, output, streamId)`   | Checks whether the output has a live or forgotten record for the stream.                                                                                      |
+| `state(key, output, streamId)` | Returns `"absent"`, `"live"`, or `"forgotten"`. An undecodable value fails with `invalid-record`.                                                             |
+| `add(key, output, streamId)`   | Writes a live record for the stream.                                                                                                                          |
+| `list(key)`                    | Returns live and forgotten records for the binding in unspecified order.                                                                                      |
+| `forget(key, options?)`        | Marks every route record for the binding as forgotten. With `ignoreUnsupportedList: true`, it treats `unsupported-composition` from listing as an empty list. |
+| `clear(key)`                   | Deletes every route record for the binding.                                                                                                                   |
 
 Routed lifecycle operations use these methods in the checkpoint owner's transaction. `fromStore` uses a separate key prefix for route records. Its route keys keep the constant `"1"` in the former version slot. It requires `EncodedStore.list` for `list`, `forget`, and `clear`.
 

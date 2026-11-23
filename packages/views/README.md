@@ -74,6 +74,8 @@ String comparisons use **lexicographic UTF-16 code-unit ordering**, without loca
 
 Call `View.migrate(sql)` once at startup. A changed plan in the same namespace fails with `PlanChanged` before committing. Raise `generation` to replay into new output streams. Older generations remain available for readers and rollback until you stop their runners and call `Projection.retire`.
 
+Before starting an upgraded process, prepare the output addresses and retain the input history. If a circuit used a `version` other than `1`, stop its old runners and follow the reader cutover and retirement steps. [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
+
 To discard progress, pass the binding from `circuit.at(params)` to `Projection.forget`. Forget clears the checkpoint and operator state, keeps the streams, and marks any route records forgotten so retirement can still find them. [Lifecycle and rebuilds](https://streamsy.dev/docs/views/lifecycle)
 
 Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed in one unit, including intermediate keys. An over-limit unit rolls back and fails with a permanent `ViewDataFault` that identifies a key. The limit is optional.
