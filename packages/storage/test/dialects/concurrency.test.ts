@@ -9,9 +9,7 @@ import { describe, expect, test } from "vitest";
 import {
   Array,
   Context,
-  Deferred,
   Effect,
-  Fiber,
   Layer,
   Option,
   Order,
@@ -210,21 +208,13 @@ for (const dialect of dialects) {
             Effect.gen(function* () {
               yield* right.writer.create(id, { contentType });
 
-              const readDone = yield* Deferred.make<void>();
-
-              const otherWriter = yield* Deferred.await(readDone).pipe(
-                Effect.andThen(right.writer.append(id, { data: text("other"), contentType })),
-                Effect.forkScoped,
-              );
-
               const outcome = yield* left.boundary
                 .withTransaction(
                   Effect.gen(function* () {
                     // On MySQL this plain read fixes the transaction's snapshot.
                     yield* left.sql`SELECT COUNT(*) AS count FROM streamsy_streams`;
                     // Another process appends after that read.
-                    yield* Deferred.succeed(readDone, undefined);
-                    yield* Fiber.join(otherWriter);
+                    yield* right.writer.append(id, { data: text("other"), contentType });
 
                     return yield* left.writer.append(id, { data: text("fused"), contentType });
                   }),

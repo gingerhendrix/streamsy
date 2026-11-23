@@ -68,10 +68,12 @@ BunRuntime.runMain(Layer.launch(Server));
 
 `CommitBoundary.withTransaction` from `@streamsy/core` runs application SQL and Streamsy mutations
 in one transaction. Nested calls that use the same `SqlClient` join the outer transaction
-without a savepoint, including through `sql.withoutTransforms()`. Entering a boundary
-or running a storage mutation on a different `SqlClient` while the transaction is active
-dies before the inner work runs. A rejected mutation fails with `MutationRejected` and
-rolls the transaction back. Catch it outside the boundary. The [Use SQLite guide](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables)
+without a savepoint, including through `sql.withoutTransforms()`. A nested boundary on a
+different `SqlClient` dies before its body runs. A lone `Storage.mutate` on another client
+without an ambient transaction commits independently. A mutation in a raw
+`sql.withTransaction` without a matching `CommitBoundary` dies before writing.
+A rejected mutation fails with `MutationRejected` and rolls back its transaction when the
+failure escapes the boundary. The [Use SQLite guide](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables)
 shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation
@@ -110,7 +112,8 @@ const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
 record it read, and a first save is a plain insert, so two concurrent saves of
 one projection never both win. `Transaction.layer` gives the SQL-only `Transaction`
 service. `Commit.transaction` uses them to commit SQL, same-owner stream
-appends, and the checkpoint together.
+appends, and the checkpoint together. Entering a projection unit on another
+SQL client from an active boundary dies when the unit tries to open its transaction.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.

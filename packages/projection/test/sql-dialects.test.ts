@@ -6,18 +6,7 @@
  * dialects use fresh databases and skip when their URL is absent.
  */
 import { describe, expect, test } from "vitest";
-import {
-  Array,
-  Context,
-  Deferred,
-  Effect,
-  Fiber,
-  Layer,
-  Option,
-  Order,
-  Result,
-  Schema,
-} from "effect";
+import { Array, Context, Deferred, Effect, Layer, Option, Order, Result, Schema } from "effect";
 import { SqlClient, SqlError } from "effect/sql";
 import { Storage, StorageFault, StreamId, Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
@@ -414,18 +403,13 @@ for (const dialect of dialects) {
             // Build one host first, so the second finds the schema migrated.
             const context = yield* host(dialect, fresh);
             const other = yield* host(dialect, fresh);
+            const otherWriter = Context.get(other, StreamsWriter);
 
             return yield* Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
               yield* sql`CREATE TABLE seen (item INTEGER NOT NULL)`;
               yield* initialize;
-
-              const readDone = yield* Deferred.make<void>();
-
-              const otherWriter = yield* Deferred.await(readDone).pipe(
-                Effect.andThen(Streams.append(output, [100]).pipe(Effect.provideContext(other))),
-                Effect.forkScoped,
-              );
+              let interleaved = false;
 
               const projection = Projection.process({
                 commit: Commit.transaction,
@@ -437,9 +421,13 @@ for (const dialect of dialects) {
                     // On MySQL this plain read fixes the transaction's snapshot.
                     yield* count(sql);
 
-                    // Another process appends to the output after the first read.
-                    yield* Deferred.succeed(readDone, undefined);
-                    yield* Fiber.join(otherWriter);
+                    if (!interleaved) {
+                      interleaved = true;
+                      // Another process appends to the output after that read.
+                      yield* FamilyFixture.provideWriter(otherWriter)(
+                        Streams.append(output, [100]),
+                      );
+                    }
 
                     for (const item of batch.input.items)
                       yield* sql`INSERT INTO seen ${sql.insert({ item })}`;

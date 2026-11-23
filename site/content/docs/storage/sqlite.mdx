@@ -125,11 +125,11 @@ When another writer appends first, the append fails with `OffsetMismatch`. The f
 
 These rules apply to the transaction:
 
-- Readers see no change until the outer transaction commits. Wakes and attached projections start only after the commit, and a rollback publishes nothing.
-- A nested `withTransaction` on the same `SqlClient` joins the outer transaction without a savepoint. A failure in the inner body rolls back the whole transaction when it leaves the outer body. A nested boundary or storage mutation on a different `SqlClient` dies before the inner work runs.
+- Readers see the owner's changes after its transaction commits. Wakes and attached projections start after that commit. A rollback publishes nothing for that transaction.
+- A nested `withTransaction` on the same `SqlClient` joins the outer transaction without a savepoint. A failure in the inner body rolls back the whole transaction when it leaves the outer body. Entering a boundary on a different `SqlClient` dies before its body runs, including when a projection unit enters that boundary through `Commit.transaction`.
 - Open the transaction with `withTransaction`, not with `sql.withTransaction`. A stream mutation inside a transaction that `sql.withTransaction` opened dies, and so does a `withTransaction` call inside it.
 - The store retries a busy transaction that it opens for one mutation. It does not retry `withTransaction`. A busy lock fails the call with a `SqlError`, and you decide whether to retry the whole body.
-- One transaction has one owner. Keep its stream writes on the same `SqlClient` and, on Cloudflare, in the same Durable Object.
+- One transaction has one owner. A lone storage mutation on a second `SqlClient` with no ambient transaction on that client opens its own transaction. Its commit survives a rollback on the first client.
 
 `MemoryStorage` also provides `CommitBoundary`, so the same program runs in tests without the SQL statements. See [`CommitBoundary`](/docs/reference/core/storage#commitboundary).
 

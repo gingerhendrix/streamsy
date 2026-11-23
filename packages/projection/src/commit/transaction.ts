@@ -74,7 +74,7 @@ const retireInTransaction = (request: RetireRequest) =>
     );
   });
 
-/** Run and checkpoint a unit on one SQL owner. Entering from another SQL owner's transaction dies. */
+/** Run and checkpoint a unit on one SQL owner. The unit's boundary dies when called inside a different SQL client's boundary. */
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
     name: "transaction",
@@ -196,7 +196,7 @@ export const transaction = withPrepare(
   }),
 ).pipe(withAccepted);
 
-/** Clean up binding state in the owner transaction on both forget and retire, using the same nesting rules as `transaction`. */
+/** Clean up binding state in the owner's SQL transaction on forget and retire, using the same nesting rules as `transaction`. */
 export const transactionWithCleanup = (
   cleanup: (key: ProjectionKey, sql: SqlClient.SqlClient) => Effect.Effect<void, ProjectionFault>,
 ) =>
