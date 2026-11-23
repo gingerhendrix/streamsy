@@ -64,7 +64,7 @@ export const normalizeUnit = (
 
 export const circuitErrors = <A, R>(
   body: Effect.Effect<A, CircuitError | SqlError.SqlError | Schema.SchemaError | SqlEngineFault, R>,
-) =>
+): Effect.Effect<A, CircuitError, R> =>
   body.pipe(
     catchMemoryEnlist,
     Effect.catchTags({

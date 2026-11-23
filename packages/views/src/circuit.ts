@@ -57,7 +57,7 @@ type OutputMap = Readonly<Record<string, Output>>;
 
 type ViewMap = Readonly<Record<string, Views>>;
 
-type InputOf<R> = R extends {
+export type InputOf<R> = R extends {
   readonly inputs: ReadonlyMap<string, { readonly state: infer I extends Input }>;
 }
   ? I
@@ -124,7 +124,7 @@ type InvalidParams<C extends StreamRoute.ParamCodecs, I extends Input | Output> 
       ? InvalidStateParams<C, I>
       : never;
 
-type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
+export type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
   readonly [K in keyof V]: V[K]["inputs"] extends ReadonlyMap<
     string,
     { readonly state: infer I extends Input }

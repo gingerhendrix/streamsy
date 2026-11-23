@@ -23,3 +23,5 @@ export type {
   TypedAggregateExpression,
   TypedExpression,
 } from "./expression.ts";
+
+export type { LiveSnapshot } from "./live-output.ts";

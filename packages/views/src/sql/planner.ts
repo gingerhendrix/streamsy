@@ -126,7 +126,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
   if (issues.length) return yield* Effect.fail(new PlanCheckFailed({ issues }));
   const nodes: RelationNode[] = [];
   const signatures = new Map<string, string>();
-  const outputs: Record<string, string> = {};
+  const outputs = new Map<string, string>();
   const locations = new Map<string, { view: string; node: string }>();
   const stateKeys = new Map<string, number>();
 
@@ -171,7 +171,7 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
       aliases.set(node.id, id);
     }
 
-    outputs[name] = aliases.get(plan.output) ?? "";
+    outputs.set(name, aliases.get(plan.output) ?? "");
   }
 
   const arrangements = new Map<string, Arrangement>();
@@ -305,11 +305,11 @@ export const compile = Effect.fn("ViewsSql.compile")(function* (
     }
   }
 
-  for (const output of Rec.values(outputs)) pushedFilters.delete(output);
+  for (const output of outputs.values()) pushedFilters.delete(output);
 
   return {
     nodes,
-    outputs,
+    outputs: Rec.fromEntries(outputs),
     pushedFilters,
     arrangements,
     stored,

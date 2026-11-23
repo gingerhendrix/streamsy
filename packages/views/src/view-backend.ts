@@ -17,6 +17,19 @@ interface Opaque {
 
 const backends = new WeakMap<Opaque, Effect.Effect<Backend, ViewFault>>();
 
+interface MemoryBackend {
+  readonly backend: Backend;
+  readonly owner: object;
+  readonly live: Set<string>;
+}
+
+const memoryBackends = new WeakMap<Opaque, MemoryBackend>();
+
+// Different backend layers can still share the owner's checkpoint key space.
+const ownerSlots = new WeakMap<object, Set<string>>();
+
+export const memoryBackendOf = (service: Opaque) => memoryBackends.get(service);
+
 export function makeViewBackend(backend: Effect.Effect<Backend, ViewFault>): Opaque {
   const service: Opaque = { [BackendTypeId]: true };
   backends.set(service, backend);
@@ -67,9 +80,22 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
   /** Store operator state in the heap and join the memory owner's transaction. */
   static readonly layerMemory: Layer.Layer<ViewBackend, never, CommitBoundary> = Layer.effect(
     this,
-    Effect.map(CommitBoundary, (boundary) =>
-      makeViewBackend(Effect.succeed(makeMemoryBackend(ownerOf(boundary)))),
-    ),
+    Effect.map(CommitBoundary, (boundary) => {
+      const owner = ownerOf(boundary);
+      const backend = makeMemoryBackend(owner);
+      const service = makeViewBackend(Effect.succeed(backend));
+
+      let live = ownerSlots.get(owner);
+
+      if (live === undefined) {
+        live = new Set();
+        ownerSlots.set(owner, live);
+      }
+
+      memoryBackends.set(service, { backend, owner, live });
+
+      return service;
+    }),
   );
 
   /** Provide heap operator state and transactions for a host with external inputs. */
