@@ -155,12 +155,14 @@ const circuit = (name = "label", version = 1) =>
   });
 
 it("rejects a legacy circuit version at declaration", () => {
+  const result = buildResult("label", 1);
+
   const declare = (version: number | undefined) => {
     const legacy = { ...definition, version };
 
     return View.circuit({
       ...legacy,
-      views: ({ minimum }) => ({ row: buildResult("label", 1)(minimum) }),
+      views: ({ minimum }) => ({ row: result(minimum) }),
     });
   };
 
