@@ -2,7 +2,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { layoutGroup, layoutNamespace, runLayoutUnits } from "../circuit/support/layout.ts";
-import { hostFor, postgres, serverFixtures, sqlite } from "../support/backends.ts";
+import { hostFor, serverFixtures, sqlite } from "../support/backends.ts";
 import { sqlDump } from "../support/layout-dump.ts";
 import { registerRollback } from "../support/rollback.ts";
 
@@ -21,6 +21,6 @@ for (const fixture of serverFixtures) {
         }),
     );
 
-    if (fixture === postgres) registerRollback(fixture);
+    registerRollback(fixture);
   });
 }
