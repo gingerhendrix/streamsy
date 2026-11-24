@@ -7,6 +7,7 @@ import * as Commit from "./commit.ts";
 import {
   build,
   isDeclaration,
+  rejectProjectionVersion,
   type AccumulatingDeclaration,
   type AcceptedServices,
   type DecodedParams,
@@ -31,7 +32,6 @@ export interface WakeDefinition<
 > {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   /** The one source stream. Its params must be projection params. */
@@ -91,11 +91,11 @@ export function wake<
   const O extends WakeOutput,
   W extends AcceptedOutput | undefined = undefined,
 >(definition: WakeDefinition<C, I, O, W>): WakeDeclaration<C, I, O, W> {
+  rejectProjectionVersion(definition.id, definition);
   const input: Input = definition.input;
 
   return build("mapAccumBatch", {
     id: definition.id,
-    version: definition.version,
     generation: definition.generation,
     params: definition.params,
     commit: Commit.producer as Commit.Commit<any, any, any>,

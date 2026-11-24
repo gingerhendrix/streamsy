@@ -1,5 +1,5 @@
 import { layer } from "@effect/vitest";
-import { expect } from "vitest";
+import { expect, test } from "vitest";
 import { Array, Cause, Effect, Exit, Layer, Option, Schema, Schedule } from "effect";
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
@@ -34,6 +34,39 @@ const host = (readLimit = 1000) => {
 };
 
 const params = { workspace: "main", source: "events" };
+
+const keyedFoldWithVersion = (version: number | undefined) => {
+  const legacy = { version };
+
+  return Projection.process({
+    ...legacy,
+    id: "legacy-keyed-fold",
+    params: { workspace: Schema.String, source: Schema.String },
+    inputs: { facts: Facts },
+    outputs: { state: Workspace },
+    commit: Commit.transaction,
+    process: FoldByKey.process(Table, {
+      output: "state",
+      collection: "sum",
+      key: (record) => record.id,
+      fold,
+    }),
+  });
+};
+
+test("FoldByKey-based projections reject explicit legacy versions with migration advice", () => {
+  expect(() => keyedFoldWithVersion(1)).toThrow(
+    new RangeError(
+      "Projection legacy-keyed-fold: version was removed. Remove version: 1 from the declaration.",
+    ),
+  );
+  expect(() => keyedFoldWithVersion(3)).toThrow(
+    new RangeError(
+      "Projection legacy-keyed-fold: version was removed. Raise generation above every generation the projection has used.",
+    ),
+  );
+  expect(keyedFoldWithVersion(undefined).generation).toBe(1);
+});
 
 const transaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   Effect.flatMap(Transaction, (tx) => tx.withTransaction(body));

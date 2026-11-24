@@ -142,7 +142,6 @@ export interface RegistryApi {
 
 interface RegisteredRunner {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly status: Effect.Effect<RunnerStatus, StorageFault>;
   readonly schedule: (
@@ -231,11 +230,11 @@ export class Registry extends Context.Service<Registry, RegistryApi>()(
             Effect.gen(function* () {
               const runner = yield* find(binding);
 
-              if (runner.version !== binding.version || runner.generation !== binding.generation)
+              if (runner.generation !== binding.generation)
                 return yield* new ProjectionFault({
                   phase: "load",
                   reason: "identity-mismatch",
-                  message: `Attached identity of ${binding.id} is version ${runner.version}, generation ${runner.generation}; binding is version ${binding.version}, generation ${binding.generation}`,
+                  message: `Attached generation of ${binding.id} is ${runner.generation}, but the binding uses generation ${binding.generation}`,
                 });
 
               const pull = yield* Stream.toPull(observations);

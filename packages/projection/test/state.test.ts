@@ -23,7 +23,7 @@ const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
 const total = Projection.fold({
   id: "state-total",
   params: {},
-  version: 2,
+  generation: 2,
   inputs: { input },
   state: { schema: Schema.Finite, initial: 0 },
   fold: (sum, { item }) => sum + item,
@@ -57,7 +57,7 @@ const hosts: ReadonlyArray<
 for (const [name, host] of hosts) {
   layer(host)((it) => {
     it.effect(
-      `${name}: fold round trip, version key, CheckpointStore provision, and a failing step saves nothing`,
+      `${name}: fold round trip, generation key, CheckpointStore provision, and a failing step saves nothing`,
       () =>
         Effect.gen(function* () {
           yield* seed;
@@ -65,11 +65,11 @@ for (const [name, host] of hosts) {
           expect((yield* Projection.read(total)).state).toBe(5);
           expect(
             Option.flatMap(
-              (yield* (yield* CheckpointStore).load({ ...total, version: 1 })).record,
+              (yield* (yield* CheckpointStore).load({ ...total, generation: 1 })).record,
               (record) => Option.fromUndefinedOr(record.state),
             ),
           ).toEqual(Option.none());
-          expect((yield* Projection.read({ ...total, version: 1 })).state).toBe(0);
+          expect((yield* Projection.read({ ...total, generation: 1 })).state).toBe(0);
           const checkpoints = yield* CheckpointStore;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
@@ -77,7 +77,7 @@ for (const [name, host] of hosts) {
           const failing = Projection.fold({
             id: total.id,
             params: {},
-            version: total.version,
+            generation: total.generation,
             inputs: { input },
             state: { schema: Schema.Finite, initial: 0 },
             fold: (sum, { item }) =>
@@ -183,7 +183,7 @@ layer(sqlite())((it) => {
         commit: Commit.transaction,
         id: total.id,
         params: {},
-        version: total.version,
+        generation: total.generation,
         inputs: { input },
         process: () =>
           Effect.gen(function* () {
@@ -265,7 +265,7 @@ layer(FamilyFixture.withFamilies(memoryHost(), numbers))((it) => {
         const invalid = Projection.fold({
           id: total.id,
           params: {},
-          version: total.version,
+          generation: total.generation,
           inputs: { input },
           state: { schema: Schema.Finite, initial: 0 },
           fold: () => Infinity,

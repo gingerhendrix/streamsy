@@ -50,20 +50,20 @@ The order is the operator's job. A wrong order does not fail. In the Streamsy te
 
 ## Fold identity
 
-The `id`, `version` and `generation` of a fold are its identity. A fold with a new identity has no checkpoint, so it folds every source from zero over the rows that the old identity left.
+A fold's `id`, `generation`, and encoded binding params identify its checkpoint. A fold with a new identity has no checkpoint, so it folds every source from zero over the rows that the old identity left.
 
 **A rename is a fold fix.** In the Streamsy tests, a fold renamed over kept rows gave a counter of 60 in place of 30. To rename a fold, or to split one source into two, follow [Fix a fold](#fix-a-fold) with the new ids in step 3. Pin the ids of your folds in a test, so that an accidental rename fails the build.
 
 ## Rules that Streamsy does not check
 
-| Rule                                                                                     | What breaks it                                                               | Effect of the mistake                                                             |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Treat `id`, `version` and `generation` as the identity of a fold. A rename is a fold fix | A refactor renames a fold or splits a source                                 | The renamed fold folds history over its old rows. Counters double                 |
-| Do not `forget` a fold binding and keep its rows                                         | `Projection.forget` with no `reset`                                          | The same doubling. See the [`forget` steps](/docs/projections/checkpoints#forget) |
-| Append a `reset`, or a snapshot that omits a fold's rows, only as part of a fold fix     | An operator or another writer appends one                                    | The fold continues on empty rows and loses history                                |
-| Stop the old runners before a fold fix                                                   | A deploy that overlaps two processes                                         | Old fold output lands on the rows of the fix                                      |
-| One writer per collection                                                                | Two projections, or a projection and an outside writer, write one collection | Rows from the two writers interleave                                              |
-| One writer per projection key, the table binding included                                | A table under both `attach` and `follow`                                     | The slower writer fails with reason `token-conflict`                              |
+| Rule                                                                                 | What breaks it                                                               | Effect of the mistake                                                 |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Treat a change to a fold's checkpoint identity as a fold fix                         | A refactor renames a fold or splits a source                                 | The renamed fold folds history over its old rows. Counters double     |
+| Do not `forget` a fold binding and keep its rows                                     | `Projection.forget` with no `reset`                                          | The same doubling. See [Forget](/docs/projections/checkpoints#forget) |
+| Append a `reset`, or a snapshot that omits a fold's rows, only as part of a fold fix | An operator or another writer appends one                                    | The fold continues on empty rows and loses history                    |
+| Stop the old runners before a fold fix                                               | A deploy that overlaps two processes                                         | Old fold output lands on the rows of the fix                          |
+| One writer per collection                                                            | Two projections, or a projection and an outside writer, write one collection | Rows from the two writers interleave                                  |
+| One writer per projection key, the table binding included                            | A table under both `attach` and `follow`                                     | The slower writer fails with reason `token-conflict`                  |
 
 A checkpoint that an operator moves by hand, to skip a bad record, needs no step. The fold skips that record, which is the intent.
 

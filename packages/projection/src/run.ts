@@ -196,14 +196,7 @@ const step = Effect.fn("Projection.pass")(function* <
 
   const ranges = pending?.ranges ?? (dueOnly ? {} : rangesOf(batch));
 
-  const unit = unitOf(
-    projection.id,
-    projection.version,
-    projection.generation,
-    projection.params,
-    ranges,
-    due,
-  );
+  const unit = unitOf(projection.id, projection.generation, projection.params, ranges, due);
 
   context?.unit(unit);
 

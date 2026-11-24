@@ -58,6 +58,32 @@ const previousEnvelope = Schema.fromJsonString(
 );
 
 layer(host)((it) => {
+  it.effect("producer retirement overwrites an undecodable checkpoint and removes its output", () =>
+    Effect.gen(function* () {
+      const { params, rev, numberId } = binding("producer-undecodable");
+      const spec = numbers(Commit.producer, 1);
+      const bound = spec.at(params);
+      const store = yield* CheckpointStore;
+      const records = yield* OwnerRecords;
+      const slot = recordKey(bound);
+      yield* seed(params);
+      yield* Projection.run(bound);
+      yield* records.write(slot, '{"version":1,"record":{"future":true}}');
+      expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject({
+        reason: "invalid-record",
+      });
+
+      const result = yield* Projection.retire(spec, params, { generation: 1 });
+      expect(result).toMatchObject({
+        record: "retired",
+        streams: expect.arrayContaining([{ output: "numbers", id: numberId, result: "removed" }]),
+      });
+      expect(yield* records.read(slot)).toEqual(Option.some('{"version":1,"retired":{}}'));
+      const target = yield* Numbers;
+      expect(yield* target.head(rev).pipe(Effect.flip)).toMatchObject(missing);
+    }),
+  );
+
   it.effect("transactionWithCleanup rolls back forget and callback SQL on failure", () =>
     Effect.gen(function* () {
       const { params } = binding("forget-with-cleanup");
@@ -141,10 +167,10 @@ layer(host)((it) => {
       yield* Ref.set(failCleanup, false);
       expect(yield* retire).toEqual({
         record: "retired",
-        outputs: {
-          numbers: { id: numberId, result: "removed" },
-          "@streamsy/accepted": { id: acceptedId, result: "removed" },
-        },
+        streams: [
+          { output: "@streamsy/accepted", id: acceptedId, result: "removed" },
+          { output: "numbers", id: numberId, result: "removed" },
+        ],
       });
       expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject(retired);
       expect(yield* target.head(rev).pipe(Effect.flip)).toMatchObject(missing);
@@ -191,10 +217,10 @@ layer(host)((it) => {
           expect(Schema.decodeOption(previousEnvelope)(oldSlot)._tag).toBe("Some");
           expect(yield* Projection.retire(serving, params, { generation: 1 })).toEqual({
             record: "retired",
-            outputs: {
-              numbers: { id: numberId, result: "removed" },
-              "@streamsy/accepted": { id: acceptedId, result: "removed" },
-            },
+            streams: [
+              { output: "@streamsy/accepted", id: acceptedId, result: "removed" },
+              { output: "numbers", id: numberId, result: "removed" },
+            ],
           });
           expect(yield* readCurrent).toEqual(before);
           expect(yield* Projection.run(old).pipe(Effect.flip)).toMatchObject(retired);
@@ -218,10 +244,10 @@ layer(host)((it) => {
           expect(yield* records.read(recordKey(old))).toEqual(Option.some(tombstone));
           expect(yield* Projection.retire(serving, params, { generation: 1 })).toEqual({
             record: "already-retired",
-            outputs: {
-              numbers: { id: numberId, result: "absent" },
-              "@streamsy/accepted": { id: acceptedId, result: "absent" },
-            },
+            streams: [
+              { output: "@streamsy/accepted", id: acceptedId, result: "absent" },
+              { output: "numbers", id: numberId, result: "absent" },
+            ],
           });
 
           yield* Projection.forget(current);
@@ -310,10 +336,10 @@ layer(host)((it) => {
 
         const result = yield* Projection.retire(spec, params, { generation: 1 });
         expect(result.record).toBe(commit === Commit.transaction ? "retired" : "already-retired");
-        expect(result.outputs["@streamsy/accepted"]?.result).toBe("removed");
-        expect(result.outputs.numbers?.result).toBe(
-          commit === Commit.transaction ? "removed" : "absent",
-        );
+        expect(result.streams).toMatchObject([
+          { output: "@streamsy/accepted", result: "removed" },
+          { output: "numbers", result: commit === Commit.transaction ? "removed" : "absent" },
+        ]);
       }),
     );
   }
@@ -365,7 +391,7 @@ layer(host)((it) => {
     "producer: a create already past the reload can leave an empty stream for a second retire",
     () =>
       Effect.gen(function* () {
-        const { params, rev } = binding("late-create");
+        const { params, rev, numberId } = binding("late-create");
         yield* seed(params);
         const spec = numbers(Commit.producer, 1);
         const bound = spec.at(params);
@@ -389,15 +415,17 @@ layer(host)((it) => {
         );
 
         yield* Deferred.await(creating);
-        expect(
-          (yield* Projection.retire(spec, params, { generation: 1 })).outputs.numbers?.result,
-        ).toBe("absent");
+        expect((yield* Projection.retire(spec, params, { generation: 1 })).streams).toContainEqual({
+          output: "numbers",
+          id: numberId,
+          result: "absent",
+        });
         yield* Deferred.succeed(resume, undefined);
         expect(yield* Fiber.join(run).pipe(Effect.flip)).toMatchObject(retired);
         expect((yield* target.head(rev)).nextOffset).toBe(ZERO_OFFSET);
         expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
           record: "already-retired",
-          outputs: { numbers: { result: "removed" } },
+          streams: expect.arrayContaining([{ output: "numbers", id: numberId, result: "removed" }]),
         });
       }),
   );
@@ -433,10 +461,10 @@ layer(host)((it) => {
             yield* Projection.retire(spec, params, { generation: 1, streams: "close" }),
           ).toEqual({
             record,
-            outputs: {
-              numbers: { id: numberId, result: "closed" },
-              "@streamsy/accepted": { id: acceptedId, result: "shared" },
-            },
+            streams: [
+              { output: "@streamsy/accepted", id: acceptedId, result: "shared" },
+              { output: "numbers", id: numberId, result: "closed" },
+            ],
           });
         }
 
@@ -444,7 +472,9 @@ layer(host)((it) => {
         expect((yield* wrapped.head(rev)).closed).toBe(true);
         expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
           record: "already-retired",
-          outputs: { numbers: { result: "removed" } },
+          streams: expect.arrayContaining([
+            { output: "numbers", result: "removed", id: expect.any(String) },
+          ]),
         });
         expect(yield* wrapped.head(rev).pipe(Effect.flip)).toMatchObject(missing);
         expect((yield* wrapped.collect({ workspace: "plain", rev: 1 })).items).toEqual([9]);
@@ -460,16 +490,17 @@ layer(host)((it) => {
       const target = yield* Numbers;
       yield* Projection.run(spec.at(params));
       yield* target.wire.fork(Numbers.at({ ...params, rev: 3 }).id, numberId);
-      expect(
-        (yield* Projection.retire(spec, params, { generation: 1 })).outputs.numbers?.result,
-      ).toBe("removed");
+      expect((yield* Projection.retire(spec, params, { generation: 1 })).streams).toContainEqual({
+        output: "numbers",
+        id: numberId,
+        result: "removed",
+      });
       expect(yield* target.head(rev).pipe(Effect.flip)).toMatchObject({ _tag: "StreamGone" });
 
       for (const streams of ["close", "remove"] as const)
         expect(
-          (yield* Projection.retire(spec, params, { generation: 1, streams })).outputs.numbers
-            ?.result,
-        ).toBe("absent");
+          (yield* Projection.retire(spec, params, { generation: 1, streams })).streams,
+        ).toContainEqual({ output: "numbers", id: numberId, result: "absent" });
       expect((yield* target.collect({ ...params, rev: 3 })).items).toEqual([2]);
     }),
   );
@@ -511,7 +542,9 @@ layer(host)((it) => {
           ),
         ).toMatchObject({
           record: "retired",
-          outputs: { "@streamsy/accepted": { result: "removed" } },
+          streams: expect.arrayContaining([
+            { output: "@streamsy/accepted", result: "removed", id: expect.any(String) },
+          ]),
         });
         expect(yield* local.head(rev).pipe(Effect.flip)).toMatchObject(missing);
         expect(yield* foreign.head(epoch).pipe(Effect.flip)).toMatchObject(missing);
@@ -533,26 +566,13 @@ layer(host)((it) => {
 
         expect(yield* Projection.retire(spec, params, { generation: 1 })).toMatchObject({
           record: "retired",
-          outputs: { numbers: { result: "removed" } },
+          streams: expect.arrayContaining([
+            { output: "numbers", result: "removed", id: expect.any(String) },
+          ]),
         });
         yield* Projection.createOutputs(bound);
         expect((yield* target.head(rev)).nextOffset).toBe(ZERO_OFFSET);
         expect(yield* Projection.run(bound).pipe(Effect.flip)).toMatchObject(retired);
-
-        yield* seed(params);
-
-        const newerVersion = Projection.emit({
-          ...declaration,
-          id: spec.id,
-          version: 2,
-          outputs: { numbers: output },
-          commit: Commit.producer,
-          emit: ({ item }) => ({ numbers: [item.n] }),
-        });
-
-        yield* Projection.run(newerVersion.at(params));
-        expect((yield* target.collect(rev)).items).toEqual([2]);
-        expect(yield* store.load(bound).pipe(Effect.flip)).toMatchObject(retired);
       }),
   );
 
@@ -612,7 +632,7 @@ layer(host)((it) => {
         for (const spec of [fold, sideEffect]) {
           expect(yield* Projection.retire(spec, params, { generation: 1 })).toEqual({
             record: "retired",
-            outputs: {},
+            streams: [],
           });
         }
 
@@ -653,7 +673,7 @@ layer(host)((it) => {
         expect(yield* old.list("sum")).toEqual(rows);
         expect(yield* Projection.retire(table, rev, { generation: table.generation })).toEqual({
           record: "retired",
-          outputs: {},
+          streams: [],
         });
         expect((yield* (yield* Rows).collect(rev)).items).toHaveLength(1);
         yield* Projection.retire(sums(2), params, { generation: 1 });

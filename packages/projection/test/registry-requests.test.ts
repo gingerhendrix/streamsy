@@ -112,7 +112,6 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
 
       const other = Projection.process({
         id: "identity",
-        version: 99,
         generation: 99,
         params: { id: Schema.String },
         inputs: { source: Source },

@@ -224,6 +224,6 @@ Each collection must have one writer: one fold, one hand-written projection, or 
 
 ## Identity
 
-The `id`, `version` and `generation` of a fold are its identity, as for every projection. They name its checkpoint record. A fold with a new identity starts at zero offsets and folds the whole history again over the rows that the old identity wrote. Counters then double, with no error.
+A fold's `id`, `generation`, and encoded binding params identify its checkpoint. A fold with a new identity starts at zero offsets and folds the whole history again over the rows that the old identity wrote. Counters then double, with no error.
 
 So a rename of a fold is a fold fix. Follow the [fold fix](/docs/projections/state-table-operations#fix-a-fold) steps, and pin the ids of your folds in a test so that a rename fails the build.

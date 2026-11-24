@@ -53,31 +53,38 @@ export type RetirementStatus = "retired" | "already-retired";
 
 export interface ProjectionKey {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
 }
 
 const CHECKPOINT_NAMESPACE = "streamsy.projection.v1";
 
+// Keep the former slot at "1" to preserve the existing default checkpoint and routed keys.
+const STORED_VERSION_SLOT = "1";
+
 const CheckpointKeyJson = Schema.fromJsonString(
   Schema.Tuple([
     Schema.Literal(CHECKPOINT_NAMESPACE),
     Schema.String, // id
-    Schema.String, // checkpoint version
+    Schema.String, // legacy version slot, including values other than "1"
     Schema.FiniteFromString, // generation
     Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
   ]),
 );
 
+export const assertCheckpointKeyVersion = (key: ProjectionKey): void => {
+  if ("version" in key && key.version !== undefined && key.version !== 1)
+    throw new RangeError(`Projection ${key.id}: version was removed from checkpoint keys.`);
+};
+
+const keyParts = (key: ProjectionKey) => {
+  assertCheckpointKeyVersion(key);
+
+  return [key.id, STORED_VERSION_SLOT, String(key.generation), canonicalParams(key.params)];
+};
+
 export const recordKey = (key: ProjectionKey): string =>
-  encodeKey([
-    CHECKPOINT_NAMESPACE,
-    key.id,
-    String(key.version),
-    String(key.generation),
-    canonicalParams(key.params),
-  ]);
+  encodeKey([CHECKPOINT_NAMESPACE, ...keyParts(key)]);
 
 /** Token "0" means no record is stored yet. */
 const ABSENT_TOKEN = "0";
@@ -100,27 +107,40 @@ export interface RoutedStreamRecord {
 
 /** Access the route inventory in the checkpoint owner's transaction. */
 export interface RouteRecords {
+  /** Whether this output owns the stream, including after a forget. */
   readonly has: (
     key: ProjectionKey,
     output: string,
     streamId: string,
   ) => Effect.Effect<boolean, ProjectionFault>;
+  readonly state: (
+    key: ProjectionKey,
+    output: string,
+    streamId: string,
+  ) => Effect.Effect<"absent" | "live" | "forgotten", ProjectionFault>;
   readonly add: (
     key: ProjectionKey,
     output: string,
     streamId: string,
   ) => Effect.Effect<void, ProjectionFault>;
+  /** Lists every route record for the key in unspecified order. */
   readonly list: (
     key: ProjectionKey,
   ) => Effect.Effect<ReadonlyArray<RoutedStreamRecord>, ProjectionFault>;
+  /** Mark every route record for the key as forgotten. An absent checkpoint can tolerate unsupported listing. */
+  readonly forget: (
+    key: ProjectionKey,
+    options?: { readonly ignoreUnsupportedList?: boolean },
+  ) => Effect.Effect<void, ProjectionFault>;
   readonly clear: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
 }
 
 export interface CheckpointStoreApi {
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /**
-   * Lists each generation and encoded params with a live checkpoint for an id, across
-   * checkpoint versions. Each pair appears once, in unspecified order.
+   * Lists each generation and encoded params with a live checkpoint for an id.
+   * Reads every stored version slot, including legacy slots. Each pair appears once,
+   * in unspecified order.
    */
   readonly list?: (id: string) => Effect.Effect<ReadonlyArray<ListedBinding>, ProjectionFault>;
   /** Generation-owned streams opened lazily by routed outputs. */
@@ -133,7 +153,7 @@ export interface CheckpointStoreApi {
   ) => Effect.Effect<string, ProjectionFault>;
   /** Deletes a live record. Absent keys and tombstones are ignored. */
   readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
-  /** Replaces the live or absent record with a tombstone. */
+  /** Replaces a live, absent or undecodable record with a tombstone. */
   readonly retire?: (key: ProjectionKey) => Effect.Effect<RetirementStatus, ProjectionFault>;
 }
 
@@ -277,13 +297,7 @@ const decodeStored = (id: string, encoded: string) =>
 
 const ROUTED_NAMESPACE = "streamsy.projection.routed.v1";
 
-const routeKeyParts = (key: ProjectionKey) => [
-  ROUTED_NAMESPACE,
-  key.id,
-  String(key.version),
-  String(key.generation),
-  canonicalParams(key.params),
-];
+const routeKeyParts = (key: ProjectionKey) => [ROUTED_NAMESPACE, ...keyParts(key)];
 
 const RouteKeyJson = Schema.fromJsonString(
   Schema.Tuple([
@@ -297,9 +311,18 @@ const RouteKeyJson = Schema.fromJsonString(
   ]),
 );
 
+const RouteValueJson = Schema.fromJsonString(
+  Schema.Struct({ forgotten: Schema.optionalKey(Schema.Literal(true)) }),
+);
+
+const routeSlot = (key: ProjectionKey, output: string, streamId: string) =>
+  encodeKey([...routeKeyParts(key), output, streamId]);
+
 const routeRecords = (store: EncodedStore): RouteRecords => {
-  const entries = (key: ProjectionKey) =>
-    store.list === undefined
+  const entries = (key: ProjectionKey) => {
+    const prefix = `${encodeKey(routeKeyParts(key)).slice(0, -1)},`;
+
+    return store.list === undefined
       ? Effect.fail(
           new ProjectionFault({
             phase: "checkpoint",
@@ -307,15 +330,35 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
             message: "This CheckpointStore does not support listing routed outputs",
           }),
         )
-      : store.list(`${encodeKey(routeKeyParts(key)).slice(0, -1)},`);
+      : store.list(prefix);
+  };
 
   return {
     has: (key, output, streamId) =>
-      store
-        .read(encodeKey([...routeKeyParts(key), output, streamId]))
-        .pipe(Effect.map(Option.isSome)),
-    add: (key, output, streamId) =>
-      store.write(encodeKey([...routeKeyParts(key), output, streamId]), "{}"),
+      store.read(routeSlot(key, output, streamId)).pipe(Effect.map(Option.isSome)),
+    state: (key, output, streamId) =>
+      Effect.gen(function* () {
+        const encoded = yield* store.read(routeSlot(key, output, streamId));
+
+        if (Option.isNone(encoded)) return "absent";
+
+        const value = yield* Schema.decodeEffect(RouteValueJson, {
+          onExcessProperty: "error",
+        })(encoded.value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectionFault({
+                phase: "process",
+                reason: "invalid-record",
+                message: `Invalid routed output record for ${key.id}: ${output} at ${streamId}`,
+                cause,
+              }),
+          ),
+        );
+
+        return value.forgotten === true ? "forgotten" : "live";
+      }),
+    add: (key, output, streamId) => store.write(routeSlot(key, output, streamId), "{}"),
     list: (key) =>
       Effect.flatMap(entries(key), (rows) =>
         Effect.forEach(rows, ([slot]) =>
@@ -333,6 +376,24 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
           ),
         ),
       ),
+    forget: (key, options) => {
+      const listed = entries(key);
+
+      const available = options?.ignoreUnsupportedList
+        ? listed.pipe(
+            Effect.catchIf(
+              (fault) => fault.reason === "unsupported-composition",
+              () => Effect.succeed([]),
+            ),
+          )
+        : listed;
+
+      return Effect.flatMap(available, (rows) =>
+        Effect.forEach(rows, ([slot]) => store.write(slot, '{"forgotten":true}'), {
+          discard: true,
+        }),
+      );
+    },
     clear: (key) =>
       Effect.flatMap(entries(key), (rows) =>
         Effect.forEach(rows, ([slot]) => store.remove(slot), { discard: true }),
@@ -463,14 +524,11 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
         Effect.gen(function* (): Effect.fn.Return<RetirementStatus, ProjectionFault> {
           const slot = recordKey(key);
           const existing = yield* store.read(slot);
-          let version = 1;
+          const current = Option.flatMap(existing, Schema.decodeOption(StoredJson));
 
-          if (Option.isSome(existing)) {
-            const current = yield* decodeStored(key.id, existing.value);
+          if (Option.isSome(current) && "retired" in current.value) return "already-retired";
 
-            if ("retired" in current) return "already-retired";
-            version = current.version + 1;
-          }
+          const version = Option.isNone(current) ? 1 : current.value.version + 1;
 
           const encoded = yield* Schema.encodeEffect(TombstoneJson)({ version, retired: {} }).pipe(
             Effect.mapError(
@@ -501,7 +559,6 @@ export const unsupportedBindingList = () =>
 /** What the kernel needs to locate a record; every projection value satisfies it. */
 export interface Identity {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: InputMap;

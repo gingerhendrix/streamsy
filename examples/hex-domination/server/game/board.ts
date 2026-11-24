@@ -52,7 +52,10 @@ export function boardChanges(previous: ProjectionState, next: ProjectionState): 
 
 export const boardProjection = Projection.mapAccum({
   id: "hex-domination-board",
-  version: 4,
+  // The server materializes only the active board on demand. Run scripts/rebuild.ts
+  // before starting the upgraded server to switch existing games to a fresh board.
+  // Materializing an active legacy board1 would append the replay to its existing rows.
+  generation: 2,
   commit: Commit.producer,
   // Keep the archived text generation ids (including explicit rebuild names).
   // The output route and checkpoint key both bind the generation parameter.

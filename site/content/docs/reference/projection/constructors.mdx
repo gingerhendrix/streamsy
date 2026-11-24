@@ -32,11 +32,12 @@ Every constructor takes the fields of `Common`:
 | Field        | Meaning                                                                                                                                                                                            |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`         | The projection name. It is part of the checkpoint key                                                                                                                                              |
-| `version`    | The declared version. The default is `1`                                                                                                                                                           |
 | `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                                                                           |
 | `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                                                                |
 | `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                                                                          |
 | `accepted`   | Optional wake class, with or without `Projection.perGeneration`, for accepted input offsets. Requires `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
+
+A defined `version` option throws `RangeError` at declaration time. [Migrate a declaration that set `version`](/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
 Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a subset of `params` with the same types. `Projection.perGeneration` supplies one output route parameter from the projection's `generation`. Omit that parameter from `params`. The compiler rejects a field with incompatible params. A fixed address takes no params from the projection. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
@@ -45,6 +46,10 @@ Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a sub
 Use `Projection.perGeneration(route, generationParam, { routeBy: ["workspace", "date"] })` when a single binding writes to several routes. Each name in `routeBy` must be a distinct route parameter supplied by the handler. The generation parameter comes from the declaration and the remaining route parameters come from the binding with matching decoded types.
 
 Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction` or `Commit.transactionWithCleanup`. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
+
+A live route record is the ownership proof. On later opens, Projection trusts the record and returns the address without checking the stream again. Removing or recreating a routed stream outside Projection is unsupported. To recover, raise `generation`, rebuild, and retire the old generation.
+
+A hand-written handler gets the stream error from its own append, such as `StreamNotFound`. Attached runners retry that error. Map a missing owned stream to a non-retryable fault such as `ProjectionFault` with reason `invalid-output`. [Projection faults](/docs/reference/projection/faults)
 
 Routed outputs appear in the handler's `outputs`. A bound projection's `streams` and `Projection.createOutputs` handle the outputs with a single fixed address.
 
@@ -128,7 +133,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -274,7 +278,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -428,7 +431,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -574,7 +576,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -833,7 +834,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -979,7 +979,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -1131,7 +1130,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -1277,7 +1275,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -1450,7 +1447,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -1596,7 +1592,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -1769,7 +1764,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -1915,7 +1909,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;
@@ -2074,7 +2067,6 @@ interface Common<
     ) => Effect.Effect<void, HE, HR>;
   };
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly inputs: I & Within<C, I>;
@@ -2220,7 +2212,6 @@ type WakeOutput<P = any> = StreamDeclaration &
 interface WakeDefinition<C extends StreamRoute.ParamCodecs, I extends Input, O, W = undefined> {
   readonly accepted?: W & OneOutputWithin<C, W>;
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly input: I & OneWithin<C, I>;

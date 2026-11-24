@@ -38,8 +38,6 @@ export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}
 /** `params` holds the decoded values the declaration was bound with. Keys use the encoded strings. */
 export interface Unit<P = Record<string, string>> {
   readonly projectionId: string;
-  /** The declared version; defaults to 1. */
-  readonly version: number;
   readonly generation: number;
   readonly params: P;
   /** The inputs that contributed items or a terminal outcome; retries reproduce these. */
@@ -93,14 +91,12 @@ export const canonicalRanges = (ranges: Record<string, Range>): string =>
 /** The key is stable across producer retries; transaction retries may read a longer tail. */
 export const unitOf = (
   projectionId: string,
-  version: number,
   generation: number,
   params: Record<string, string>,
   ranges: Record<string, Range>,
   due?: number,
 ): Unit => ({
   projectionId,
-  version,
   generation,
   params,
   ranges,

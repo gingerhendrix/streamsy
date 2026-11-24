@@ -1,4 +1,4 @@
-import { Commit } from "@streamsy/projection";
+import { Commit, StateTable } from "@streamsy/projection";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "vitest";
 import { it as baseIt } from "@effect/vitest";
@@ -24,6 +24,110 @@ class output extends Streamsy.json<output>()("declaration.test/output", "boards/
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
 }) {}
+
+class Wake extends Streamsy.state<Wake>()("declaration.test/wake", "wake", {
+  params: {},
+  collections: Streamsy.wakeCollections,
+}) {}
+
+const common = (name: string, version: number | null | undefined) => ({
+  id: `legacy-${name}`,
+  params: {},
+  version,
+  inputs: { config },
+});
+
+const constructors = [
+  [
+    "fold",
+    (version: number | null | undefined) =>
+      Projection.fold({
+        ...common("fold", version),
+        state: { schema: Schema.Finite, initial: 0 },
+        fold: (sum) => sum,
+      }),
+  ],
+  [
+    "process",
+    (version: number | null | undefined) =>
+      Projection.process({
+        ...common("process", version),
+        commit: Commit.transaction,
+        process: () => Effect.void,
+      }),
+  ],
+  [
+    "emit",
+    (version: number | null | undefined) =>
+      Projection.emit({
+        ...common("emit", version),
+        commit: Commit.producer,
+        outputs: {},
+        emit: () => ({}),
+      }),
+  ],
+  [
+    "mapAccum",
+    (version: number | null | undefined) =>
+      Projection.mapAccum({
+        ...common("mapAccum", version),
+        commit: Commit.producer,
+        outputs: {},
+        state: { schema: Schema.Finite, initial: 0 },
+        mapAccum: (sum) => [sum, {}],
+      }),
+  ],
+  [
+    "mapAccumBatch",
+    (version: number | null | undefined) =>
+      Projection.mapAccumBatch({
+        ...common("mapAccumBatch", version),
+        commit: Commit.producer,
+        outputs: {},
+        state: { schema: Schema.Finite, initial: 0 },
+        mapAccumBatch: (sum) => [sum, {}],
+      }),
+  ],
+  [
+    "wake",
+    (version: number | null | undefined) => {
+      const legacy = {
+        id: "legacy-wake",
+        params: {},
+        version,
+        input: config,
+        output: Wake,
+      };
+
+      return Projection.wake(legacy);
+    },
+  ],
+] as const;
+
+for (const [name, construct] of constructors) {
+  test(`${name} rejects a legacy version at declaration`, () => {
+    for (const version of [3, null])
+      expect(() => construct(version)).toThrow(
+        new RangeError(
+          `Projection legacy-${name}: version was removed. Raise generation above every generation the projection has used.`,
+        ),
+      );
+    expect(construct(undefined).generation).toBe(1);
+  });
+}
+
+test("StateTable.define rejects a legacy version in its options", () => {
+  const options = { accepted: undefined, version: 3 };
+  const allowed = { ...options, version: undefined };
+  const table = StateTable.define(Wake, allowed);
+
+  expect(() => StateTable.define(Wake, options)).toThrow(
+    new RangeError(
+      `Projection ${table.id}: version was removed. Raise generation above every generation the projection has used.`,
+    ),
+  );
+  expect(table.generation).toBe(1);
+});
 
 test("a declaration binds declared inputs and keeps fixed addresses", () => {
   const board = Projection.emit({
@@ -70,32 +174,14 @@ test("record keys and producer ids match the values before declarations", () => 
     process: () => Effect.void,
   }).at({ gameId: "game" });
 
-  const versioned = Projection.process({
-    commit: Commit.transaction,
-    id: "issue-tracker",
-    version: 2,
-    generation: 3,
-    params: { workspaceId: Schema.String, b: Schema.String },
-    inputs: { config },
-    process: () => Effect.void,
-  }).at({ workspaceId: "ws-42", b: "x" });
-
   expect(recordKey(Projection.key(fixed))).toBe(
     '["streamsy.projection.v1","hex-board","1","1","{}"]',
   );
-  expect(Effect.runSync(producerId(fixed.id, fixed.version, fixed.params))).toBe("hex-board/v1");
+  expect(Effect.runSync(producerId(fixed.id, fixed.params))).toBe("hex-board/v1");
   expect(recordKey(Projection.key(coded))).toBe(
     '["streamsy.projection.v1","hex-board","1","1","{\\"gameId\\":\\"game\\"}"]',
   );
-  expect(Effect.runSync(producerId(coded.id, coded.version, coded.params))).toBe(
-    'hex-board/v1/{"gameId":"game"}',
-  );
-  expect(recordKey(Projection.key(versioned))).toBe(
-    '["streamsy.projection.v1","issue-tracker","2","3","{\\"b\\":\\"x\\",\\"workspaceId\\":\\"ws-42\\"}"]',
-  );
-  expect(Effect.runSync(producerId(versioned.id, versioned.version, versioned.params))).toBe(
-    'issue-tracker/v2/{"b":"x","workspaceId":"ws-42"}',
-  );
+  expect(Effect.runSync(producerId(coded.id, coded.params))).toBe('hex-board/v1/{"gameId":"game"}');
 });
 
 baseIt.effect("the handler unit carries decoded params and the unit key stays encoded", () =>

@@ -65,7 +65,6 @@ const attach = <
       ? Effect.void
       : yield* registerRunner(registry.value, {
           id: projection.id,
-          version: projection.version,
           generation: projection.generation,
           status: Effect.gen(function* () {
             const state =

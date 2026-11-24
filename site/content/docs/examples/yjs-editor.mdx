@@ -110,8 +110,8 @@ const FoldState = Schema.Struct({
 // ...
 export const compaction = Projection.fold({
   id: "yjs-compaction",
-  // Version 2 keeps the snapshot offset in the state instead of an `.index` stream.
-  version: 2,
+  // Generation 2 rebuilds state with the snapshot offset that used to live in an `.index` stream.
+  generation: 2,
   params: { document: Schema.String },
   inputs: { updates: Updates },
   state: { schema: FoldState, initial: { bytes: 0, pending: 0 } },

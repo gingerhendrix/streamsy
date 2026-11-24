@@ -128,17 +128,28 @@ same<CheckpointStoreApi, Checkpoint.CheckpointStoreApi>(true);
 `CheckpointStoreApi` is the service of [`CheckpointStore`](#checkpointstore). Each record has a token, which changes with each write.
 
 - `load` returns the record of `key` and its token. When no record exists, the record is `None` and the token is `"0"`. A record that does not decode fails with phase `load` and reason `invalid-record`. A retirement tombstone fails with phase `load` and reason `retired-generation`.
-- `list`, when available, returns each generation and encoded params with a live checkpoint for the id, across checkpoint versions. Each pair appears once. A record that does not decode fails with phase `load` and reason `invalid-record`. MySQL cannot list historical keys that may have been shortened.
+- `list`, when available, returns each generation and encoded params with a live checkpoint for the id, including entries in legacy version slots. Each pair appears once. A record that does not decode fails with phase `load` and reason `invalid-record`. MySQL cannot list historical keys that may have been shortened.
 - `routes` is the optional [route inventory](#routerecords). The kernel requires it to open a routed output.
 - `compareAndSet` writes `record` when the stored token is `ifToken`, and returns the new token. When the stored token differs, it fails with phase `checkpoint` and reason `token-conflict`. The likely cause is a second writer on the same key. A retirement tombstone fails with phase `load` and reason `retired-generation`.
-- `remove` deletes the live record of `key`. It ignores absent records and retirement tombstones.
-- `retire` is optional. It replaces a live or absent record with a tombstone and returns `"retired"`. If the tombstone already exists, it returns `"already-retired"`.
+- `remove` deletes a live or undecodable record of `key`. It ignores absent records and retirement tombstones.
+- `retire` is optional. It writes a tombstone for a live, absent, or undecodable record and returns `"retired"`. If the tombstone already exists, it returns `"already-retired"`.
 
 A storage failure fails each call with reason `storage-failure`.
 
 ### `RouteRecords`
 
-`RouteRecords` tracks the streams opened by a routed projection. `has(key, output, streamId)` checks ownership by one output, and `add(key, output, streamId)` records it. `list(key)` returns the streams of a binding's generation, and `clear(key)` deletes those entries. Routed lifecycle operations use these methods in the checkpoint owner's transaction. `fromStore` uses a separate key prefix for route records and requires `EncodedStore.list` for listing and clearing them.
+`RouteRecords` tracks the streams opened by a routed projection. All six methods are required when a store provides `routes`.
+
+| Method                         | Behavior                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `has(key, output, streamId)`   | Checks whether the output has a live or forgotten record for the stream.                                                                                      |
+| `state(key, output, streamId)` | Returns `"absent"`, `"live"`, or `"forgotten"`. An undecodable value fails with `invalid-record`.                                                             |
+| `add(key, output, streamId)`   | Writes a live record for the stream.                                                                                                                          |
+| `list(key)`                    | Returns live and forgotten records for the binding in unspecified order.                                                                                      |
+| `forget(key, options?)`        | Marks every route record for the binding as forgotten. With `ignoreUnsupportedList: true`, it treats `unsupported-composition` from listing as an empty list. |
+| `clear(key)`                   | Deletes every route record for the binding.                                                                                                                   |
+
+Routed lifecycle operations use these methods in the checkpoint owner's transaction. `fromStore` uses a separate key prefix for route records. Its route keys keep the constant `"1"` in the former version slot. It requires `EncodedStore.list` for `list`, `forget`, and `clear`.
 
 ### `RoutedStreamRecord`
 
@@ -202,7 +213,6 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 interface ProjectionKey {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
 }
@@ -211,7 +221,7 @@ same<ProjectionKey, Real.ProjectionKey>(true);
 same<ProjectionKey, Checkpoint.ProjectionKey>(true);
 ```
 
-A `ProjectionKey` names a checkpoint record: the `id`, `version`, and `generation` of a declaration, and the params that it was bound with, each encoded with its codec. [`Projection.key`](/docs/reference/projection/runners#projectionkey) returns the key of a bound projection.
+A `ProjectionKey` names a binding's checkpoint by its `id`, `generation`, and encoded `params`. [`Projection.key`](/docs/reference/projection/runners#projectionkey) returns the key of a bound projection.
 
 ### `recordKey`
 
@@ -226,14 +236,13 @@ declare function recordKey(key: ProjectionKey): string;
 same<typeof recordKey, typeof real>(true);
 ```
 
-`recordKey` returns the storage key of a record: a JSON array of `"streamsy.projection.v1"`, the id, the version, the generation, and the params as JSON with sorted keys. Only `@streamsy/projection/checkpoint` exports it.
+`recordKey` returns the storage key of a record: a JSON array of `"streamsy.projection.v1"`, the id, the constant `"1"`, the generation as a string, and the params as JSON with sorted keys. The constant occupies the former version slot. Only `@streamsy/projection/checkpoint` exports it.
 
 ```ts
 import { recordKey } from "@streamsy/projection/checkpoint";
 
 const key = recordKey({
   id: "order-totals",
-  version: 1,
   generation: 2,
   params: { workspaceId: "ws-42" },
 });
@@ -252,7 +261,6 @@ import { same } from "./reference-check.ts";
 // ---cut-end---
 interface Identity {
   readonly id: string;
-  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: InputMap;

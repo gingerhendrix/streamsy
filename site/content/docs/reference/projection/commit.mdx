@@ -115,7 +115,7 @@ same<
 
 `transactionWithCleanup` returns a [`transaction`](#committransaction) Commit that also runs `cleanup` during `Projection.forget` and `Projection.retire`. The callback receives the binding's checkpoint key and the storage owner's transaction `SqlClient`. The Commit supports `prepare` and accepted streams.
 
-- `Projection.forget` deletes any live checkpoint before it runs `cleanup`. An existing retirement tombstone stays in place.
+- `Projection.forget` removes the checkpoint before it runs `cleanup`. For a routed binding, it also marks its route records forgotten when called with the bound declaration. An existing retirement tombstone stays in place.
 - `Projection.retire` writes the tombstone and removes or closes the owned generation outputs before it runs `cleanup`. If the checkpoint already has a tombstone, it skips the tombstone write and runs output cleanup and `cleanup` again.
 
 If `cleanup` fails, the lifecycle call returns that fault. The transaction rolls back the checkpoint deletion or tombstone write, any owned output changes, and any SQL run with the supplied client.
@@ -143,13 +143,13 @@ same<typeof producer, typeof Commit.producer>(true);
 3. It appends the items of each output with its own producer position. A retry sends the same positions, and the server drops the duplicates.
 4. It saves the state and the new offsets.
 
-| Producer field  | Value                                                                         |
-| --------------- | ----------------------------------------------------------------------------- |
-| `producerId`    | `id/v<version>`, then `/` and the canonical params JSON when there are params |
-| `producerEpoch` | The generation                                                                |
-| `producerSeq`   | The pinned sequence of that output                                            |
+| Producer field  | Value                                                                   |
+| --------------- | ----------------------------------------------------------------------- |
+| `producerId`    | `<id>/v1`, then `/` and the canonical params JSON when there are params |
+| `producerEpoch` | The generation                                                          |
+| `producerSeq`   | The pinned sequence of that output                                      |
 
-Storage refuses a producer id over 255 code points. When the `producerId` above is longer, `producer` appends under `id/v<version>/#` and the SHA-256 hex of the full id instead. When the projection id itself is long, `producer` cuts the part before `#` by code point, so the whole id is 255 code points. A retry computes the same id, and a `producerId` of at most 255 code points is used as it is.
+Storage refuses a producer id over 255 code points. When the `producerId` above is longer, `producer` appends under `<id>/v1/#` and the SHA-256 hex of the full id instead. When the projection id itself is long, `producer` cuts the part before `#` by code point, so the whole id is 255 code points. A retry computes the same id, and a `producerId` of at most 255 code points is used as it is.
 
 - `producer` creates a missing output on the storage owner of the checkpoint. An output on another owner must exist before the first append.
 - A closed output fails the unit with phase `pin` and reason `invalid-output`.

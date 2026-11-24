@@ -22,7 +22,6 @@ export { items };
 
 export const key = (projection: Identity): ProjectionKey => ({
   id: projection.id,
-  version: projection.version,
   generation: projection.generation,
   params: projection.params,
 });
@@ -47,7 +46,7 @@ export { decide } from "./decide.ts";
 
 export { forget } from "./forget.ts";
 
-export { retire, type Retired, type RetiredOutput } from "./retire.ts";
+export { retire, type Retired, type RetiredStream } from "./retire.ts";
 
 export type { RoutedHandle } from "./routed-outputs.ts";
 

@@ -5,6 +5,7 @@ import { Streamsy } from "@streamsy/core";
 import { OwnerRecords } from "@streamsy/core/internal";
 import { CheckpointStore, Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
+import { canonicalParams, encodeKey } from "../src/unit.ts";
 import { withFamilies } from "./support/families.ts";
 import { memoryHost } from "./support/memory-host.ts";
 import { layerSqlite } from "./support/sqlite.ts";
@@ -16,11 +17,10 @@ class Events extends Streamsy.json<Events>()("Bindings/Events", "bindings/:bucke
   schema: Schema.Finite,
 }) {}
 
-const declaration = (id: string, generation = 1, version = 1) =>
+const declaration = (id: string, generation = 1) =>
   Projection.fold({
     id,
     generation,
-    version,
     params,
     inputs: { events: Events },
     state: { schema: Schema.Finite, initial: 0 },
@@ -39,29 +39,32 @@ for (const [name, host] of [
   ["SQLite", withFamilies(layerSqlite(), Events)],
 ] as const) {
   layer(host)((it) => {
-    it.effect(`${name}: lists typed bindings across generations and checkpoint versions`, () =>
+    it.effect(`${name}: lists typed bindings across generations and legacy version slots`, () =>
       Effect.gen(function* () {
         const id = 'totals_%!"\\';
         const previous = declaration(id);
-        const current = declaration(id, 3, 2);
+        const current = declaration(id, 3);
         const shared = { label: 'é%_!"\\', bucket: 1 };
         const olderOnly = { label: "older", bucket: 2 };
         const currentOnly = { label: "current", bucket: 3 };
-        const differentVersion = { label: "earlier-version-at-generation-three", bucket: 4 };
-        const otherProjection = declaration('totalsX%!"\\', 3, 2);
+        const legacyOnly = { label: "legacy-slot-at-generation-three", bucket: 4 };
+        const otherProjection = declaration('totalsX%!"\\', 3);
 
-        for (const binding of [shared, olderOnly, currentOnly, differentVersion])
-          yield* seed(binding);
+        for (const binding of [shared, olderOnly, currentOnly]) yield* seed(binding);
         yield* Projection.run(previous.at(shared));
         yield* Projection.run(previous.at(olderOnly));
         yield* Projection.run(current.at(shared));
         yield* Projection.run(current.at(currentOnly));
-        yield* Projection.run(declaration(id, 3).at(differentVersion));
         yield* Projection.run(otherProjection.at(olderOnly));
         yield* Projection.run(declaration(`${id}-suffix`).at(olderOnly));
         yield* Projection.run(declaration(id.toUpperCase()).at(olderOnly));
 
         const records = yield* OwnerRecords;
+        const legacyParams = current.at(legacyOnly).params;
+        yield* records.write(
+          encodeKey(["streamsy.projection.v1", id, "3", "3", canonicalParams(legacyParams)]),
+          '{"version":1,"record":{"identity":{"inputs":{}},"inputs":{},"adapters":{}}}',
+        );
         const slot = recordKey(current.at(shared));
         yield* records.write(
           slot.replace("streamsy.projection.v1", "streamsy.projection.trigger.v1"),
@@ -78,12 +81,10 @@ for (const [name, host] of [
           ReadonlyArray<{ readonly label: string; readonly bucket: number }>
         >();
         expect(all).toHaveLength(4);
-        expect(all).toEqual(
-          expect.arrayContaining([shared, olderOnly, currentOnly, differentVersion]),
-        );
+        expect(all).toEqual(expect.arrayContaining([shared, olderOnly, currentOnly, legacyOnly]));
         const atThree = yield* Projection.bindings(current, { generation: 3 });
         expect(atThree).toHaveLength(3);
-        expect(atThree).toEqual(expect.arrayContaining([shared, currentOnly, differentVersion]));
+        expect(atThree).toEqual(expect.arrayContaining([shared, currentOnly, legacyOnly]));
         const atOne = yield* Projection.bindings(current, { generation: 1 });
         expect(atOne).toHaveLength(2);
         expect(atOne).toEqual(expect.arrayContaining([shared, olderOnly]));
@@ -136,18 +137,14 @@ for (const [name, host] of [
 
     it.effect(`${name}: fails explicitly when historical params do not round-trip`, () =>
       Effect.gen(function* () {
-        const spec = declaration("changed-codec", 2, 2);
+        const spec = declaration("changed-codec", 2);
         const store = yield* CheckpointStore;
         const historical = { label: "old", bucket: "01" };
-        yield* store.compareAndSet(
-          { id: spec.id, version: 1, generation: 1, params: historical },
-          "0",
-          {
-            identity: { inputs: {} },
-            inputs: {},
-            adapters: {},
-          },
-        );
+        yield* store.compareAndSet({ id: spec.id, generation: 1, params: historical }, "0", {
+          identity: { inputs: {} },
+          inputs: {},
+          adapters: {},
+        });
 
         expect(yield* Projection.bindings(spec).pipe(Effect.flip)).toMatchObject({
           _tag: "InvalidBinding",

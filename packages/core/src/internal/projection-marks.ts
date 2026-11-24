@@ -40,8 +40,8 @@ export interface ProjectionMarkSummary {
 /**
  * Pending marks for attached projections, on a storage owner or in private memory.
  *
- * A mark is keyed by projection id and canonical params. Version and generation
- * are left out, so a deploy that raises the version picks up the old marks.
+ * A mark is keyed by projection id and canonical params. A deploy that raises the
+ * generation picks up the existing marks.
  */
 export interface ProjectionMarksApi {
   /**

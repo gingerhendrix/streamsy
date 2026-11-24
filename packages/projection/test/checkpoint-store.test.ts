@@ -1,13 +1,13 @@
 import { layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Array, Effect, Layer, Option, Order, Result } from "effect";
+import { Array, Effect, Exit, Layer, Option, Order, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
-import type { CheckpointRecord } from "@streamsy/projection/checkpoint";
+import { recordKey, type CheckpointRecord } from "@streamsy/projection/checkpoint";
 
-const key = { id: "storage", version: 1, generation: 1, params: {} };
+const key = { id: "storage", generation: 1, params: {} };
 
 const record: CheckpointRecord = {
   identity: { inputs: {} },
@@ -17,6 +17,57 @@ const record: CheckpointRecord = {
 };
 
 layer(CheckpointStore.layerMemory)((it) => {
+  it.effect("legacy keys cannot access the default checkpoint or route slot", () =>
+    Effect.gen(function* () {
+      const store = yield* CheckpointStore;
+      const routes = store.routes!;
+      const explicitDefault = { ...key, version: 1 };
+      const explicitUndefined = { ...key, version: undefined };
+      expect(recordKey(explicitDefault)).toBe(recordKey(key));
+      expect(recordKey(explicitUndefined)).toBe(recordKey(key));
+      yield* store.compareAndSet(explicitDefault, "0", record);
+      yield* routes.add(explicitDefault, "out", "stream");
+
+      for (const version of [3, null, "1"]) {
+        const legacy = { ...key, version };
+
+        const error = new RangeError(
+          `Projection ${key.id}: version was removed from checkpoint keys.`,
+        );
+
+        expect(() => recordKey(legacy)).toThrow(error);
+
+        const operations = [
+          () => Projection.forget({ ...legacy, commit: Commit.checkpoint }),
+          () => Projection.forget({ ...legacy, commit: { remove: () => Effect.void } }),
+          () => store.load(legacy),
+          () => store.remove(legacy),
+          () => store.retire!(legacy),
+          () => store.compareAndSet(legacy, "1", record),
+          () => routes.has(legacy, "out", "stream"),
+          () => routes.state(legacy, "out", "stream"),
+          () => routes.add(legacy, "out", "stream"),
+          () => routes.list(legacy),
+          () => routes.forget(legacy),
+          () => routes.clear(legacy),
+        ];
+
+        for (const operation of operations) {
+          const exit = yield* Effect.suspend(() => operation().pipe(Effect.asVoid)).pipe(
+            Effect.exit,
+          );
+
+          expect(Result.getOrThrow(Exit.findDefect(exit))).toEqual(error);
+        }
+      }
+
+      expect((yield* store.load(key)).record).toEqual(Option.some(record));
+      expect(yield* routes.state(key, "out", "stream")).toBe("live");
+      yield* Projection.forget({ ...explicitDefault, commit: Commit.checkpoint });
+      expect((yield* store.load(key)).record).toEqual(Option.none());
+    }),
+  );
+
   it.effect(
     "standalone memory checkpoints compare tokens and keep state without a Transaction",
     () =>

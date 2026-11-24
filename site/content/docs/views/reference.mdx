@@ -96,7 +96,6 @@ declare function circuit<
   HR = never,
 >(definition: {
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly retry?: CircuitDeclaration<C, { output: V }, { output: O }, HE, HR>["retry"];
@@ -115,7 +114,6 @@ declare function circuit<
   HR = never,
 >(definition: {
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
@@ -131,7 +129,7 @@ Compiles the declared views and returns a [`Declaration`](/docs/reference/projec
 Declaration-time checks:
 
 - Throws `ViewFault` if any output is not wrapped in `Projection.perGeneration`.
-- Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, or an invalid `maxAffectedKeys`.
+- Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, an invalid `maxAffectedKeys`, or a defined `version` option.
 - Fails with `PlanCheckFailed` if the compiled plan fails static validation.
 
 ### `View.migrate`

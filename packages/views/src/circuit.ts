@@ -150,7 +150,6 @@ type WithParameters<C extends StreamRoute.ParamCodecs, V> =
 
 type Common<C extends StreamRoute.ParamCodecs, V extends ViewMap, O extends OutputMap, HE, HR> = {
   readonly id: string;
-  readonly version?: number;
   readonly generation?: number;
   readonly params: C;
   readonly retry?: CircuitDeclaration<C, V, O, HE, HR>["retry"];
@@ -268,7 +267,8 @@ function namespaceOf(key: ProjectionKey) {
     ]),
   );
 
-  const projectionKey = JSON.stringify([key.id, key.version, params]);
+  // Keep the numeric 1 so existing operator namespaces still resolve.
+  const projectionKey = JSON.stringify([key.id, 1, params]);
 
   return JSON.stringify([projectionKey, key.generation]);
 }
@@ -516,7 +516,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
           sql,
           {
             id: unit.projectionId,
-            version: unit.version,
             generation: unit.generation,
             params: boundParams,
           },

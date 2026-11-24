@@ -9,6 +9,8 @@ Choose an in-place rebuild if readers can use a partial stream during replay or 
 
 Keep the input history needed for a full replay. Retain the old outputs and checkpoints through your rollback window. Use `Projection.perGeneration` on every derived output, including `accepted` if you publish it. Pick a fresh generation number so the new addresses start empty and open. If you add the wrappers to an existing projection, raise `generation` in the same deployment. [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs).
 
+Prepare new output addresses before you start the upgraded process. An attachment can begin replay at startup. If the old declaration used a `version` other than `1`, follow the [version migration](/docs/projections/checkpoints#migrate-a-declaration-that-set-version) to keep the old streams serving through cutover.
+
 Use persistent storage and `durable: true` for both procedures. Durable marks let a restart resume replay after the first unit commits. With private memory marks, that first checkpoint can exclude the binding from startup discovery while the rest of the replay is still pending. The binding then needs a new request for work, such as another input write or `registry.schedule`.
 
 The totals projection uses a numeric `rev` path parameter for its generation. The revised handler treats negative events as zero.
@@ -128,9 +130,13 @@ Check that the output streams exist before opening them to readers. An empty inp
 
 ## Choose the binding inventory
 
-By default, attach uses live checkpoints for the projection id. It queues bindings that lack a live checkpoint at the declared generation across checkpoint versions. It also considers `{}` for a projection with no params. Use `Projection.bindings(declaration, { generation })` to list the live checkpoint bindings of one generation.
+By default, attach lists live checkpoints for the projection id, including entries in legacy version slots. It considers bindings from other generations that have no live entry at the declared generation. It also considers `{}` for a projection with no params when listing is available. Use `Projection.bindings(declaration, { generation })` to list the live checkpoint bindings of one generation.
 
-Checkpoint inventory omits bindings that never committed a unit and records that were forgotten, ended, or retired. Keep an application inventory when those bindings matter, including named empty inputs. Supply it as a `bindings` Effect that returns decoded params, such as `Effect.succeed([{ user: "u1" }])`. The runner resolves them with the attached declaration and checks the checkpoint through its Commit before provisioning outputs. An explicit list can select a binding at a new checkpoint version within the same generation. Use a fresh generation for output rebuilds.
+Checkpoint inventory omits bindings that never committed a unit and records that were forgotten, ended, or retired. Keep an application inventory when those bindings matter, including named empty inputs. Supply it as a `bindings` Effect that returns decoded params, such as `Effect.succeed([{ user: "u1" }])`. The runner resolves them with the attached declaration and checks the checkpoint through its Commit before provisioning outputs. Bindings with a checkpoint at the attached key are skipped, including retired bindings. Startup provisions fixed wrapped outputs for eligible bindings. Routed outputs open on demand during replay.
+
+A live checkpoint in a legacy version slot can keep a binding in the inventory after its version 1 checkpoint is forgotten, ended, or retired. After a forget, startup can queue replay again. After retirement, startup can still look up the binding and skip it when it loads the tombstone. A live entry in any slot at the declared generation excludes the binding from implicit startup replay.
+
+Startup skips a binding when the input head check for fixed wrapped outputs fails with `history-unavailable`. For example, an inventory entry can outlive a deleted input. The listing reports checkpoint bindings independently of whether replay can read their inputs.
 
 MySQL owner records can contain irreversible shortened keys, so `Projection.bindings` fails there and attach skips implicit inventory. Adapters without checkpoint listing also skip implicit inventory. Supply `bindings` from your application on those hosts. Live commits and configured triggers continue to schedule work.
 

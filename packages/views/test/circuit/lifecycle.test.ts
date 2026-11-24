@@ -309,7 +309,7 @@ it.live("retirement atomically clears one generation and fences its checkpoint",
 
     expect(yield* retire).toEqual({
       record: "retired",
-      outputs: { output: { id: Results.at(first).id, result: "removed" } },
+      streams: [{ output: "output", id: Results.at(first).id, result: "removed" }],
     });
     const after = yield* state;
 
@@ -330,7 +330,7 @@ it.live("retirement atomically clears one generation and fences its checkpoint",
     });
     expect(yield* retire).toEqual({
       record: "already-retired",
-      outputs: { output: { id: Results.at(first).id, result: "absent" } },
+      streams: [{ output: "output", id: Results.at(first).id, result: "absent" }],
     });
     expect(yield* state).toEqual(after);
     expect(yield* output.collect(second)).toEqual(currentStream);

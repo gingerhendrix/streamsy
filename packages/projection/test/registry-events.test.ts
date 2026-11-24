@@ -417,53 +417,52 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
       [1, 2],
       [2, 1],
     ] as const) {
-      for (const field of ["version", "generation"] as const) {
-        const declare = (identity: number) =>
-          Projection.process({
-            id: "wait-identity",
-            [field]: identity,
-            params: { id: Schema.String },
-            inputs: { source: Source },
-            commit: Commit.atLeastOnce,
-            process: () => Effect.void,
-          });
+      const declare = (generation: number) =>
+        Projection.process({
+          id: "wait-identity",
+          generation,
+          params: { id: Schema.String },
+          inputs: { source: Source },
+          commit: Commit.atLeastOnce,
+          process: () => Effect.void,
+        });
 
-        it.effect(
-          `awaitOffset rejects ${field} ${requested} against attached ${attached} (object host: ${objectHost})`,
-          () =>
-            Effect.gen(function* () {
-              const declaration = declare(attached);
+      it.effect(
+        `awaitOffset rejects generation ${requested} against attached ${attached} (object host: ${objectHost})`,
+        () =>
+          Effect.gen(function* () {
+            const declaration = declare(attached);
 
-              if (objectHost) yield* ProjectionWakeup.attach(declaration);
-              else yield* Layer.build(Projection.attach(declaration));
-              const binding = declare(requested).at({ id: "a" });
-              let read = false;
+            if (objectHost) yield* ProjectionWakeup.attach(declaration);
+            else yield* Layer.build(Projection.attach(declaration));
+            const binding = declare(requested).at({ id: "a" });
+            let read = false;
 
-              const readable = {
-                ...binding,
-                commit: {
-                  ...binding.commit,
-                  load: (key: Parameters<typeof binding.commit.load>[0]) =>
-                    Effect.suspend(() => {
-                      read = true;
+            const readable = {
+              ...binding,
+              commit: {
+                ...binding.commit,
+                load: (key: Parameters<typeof binding.commit.load>[0]) =>
+                  Effect.suspend(() => {
+                    read = true;
 
-                      return binding.commit.load(key);
-                    }),
-                },
-              };
+                    return binding.commit.load(key);
+                  }),
+              },
+            };
 
-              const registry = yield* Projection.Registry;
-              // Even an already-reached offset cannot hide a declaration mismatch.
-              const fault = yield* Effect.flip(registry.awaitOffset(readable, "source", "-1"));
-              expect(fault).toMatchObject({
-                _tag: "ProjectionFault",
-                phase: "load",
-                reason: "identity-mismatch",
-              });
-              expect(read).toBe(false);
-            }),
-        );
-      }
+            const registry = yield* Projection.Registry;
+            // Even an already-reached offset cannot hide a declaration mismatch.
+            const fault = yield* Effect.flip(registry.awaitOffset(readable, "source", "-1"));
+            expect(fault).toMatchObject({
+              _tag: "ProjectionFault",
+              phase: "load",
+              reason: "identity-mismatch",
+              message: `Attached generation of wait-identity is ${attached}, but the binding uses generation ${requested}`,
+            });
+            expect(read).toBe(false);
+          }),
+      );
     }
   }
 

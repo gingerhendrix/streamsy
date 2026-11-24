@@ -51,13 +51,7 @@ export const current = Effect.fn("Projection.current")(function* <
 
     const ranges = rangesOf(page.slices);
 
-    const unit = unitOf(
-      projection.id,
-      projection.version,
-      projection.generation,
-      projection.params,
-      ranges,
-    );
+    const unit = unitOf(projection.id, projection.generation, projection.params, ranges);
 
     const result = yield* projection.process(page.slices, unit, encoded);
     state = result.value;

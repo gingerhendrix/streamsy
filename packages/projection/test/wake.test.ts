@@ -477,7 +477,7 @@ layer(sqliteSameOwner())((it) => {
 
         const again = yield* Streams.append(UserWake.at({ user: "ann" }), [row], {
           producer: {
-            producerId: yield* producerId("files-wake", 1, longParams),
+            producerId: yield* producerId("files-wake", longParams),
             producerEpoch: 1,
             producerSeq: 0,
           },

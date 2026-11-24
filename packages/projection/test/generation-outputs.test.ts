@@ -148,41 +148,36 @@ for (const commit of [Commit.transaction, Commit.producer]) {
       }),
     );
 
-    it.effect(`${commit.name}: rejects an occupied output on replay or a version bump`, () =>
+    it.effect(`${commit.name}: rejects a replay into an occupied output unless shared`, () =>
       Effect.gen(function* () {
         const params = { workspace: "occupied" };
         yield* seed(params.workspace);
 
-        const build = (version: number, shared = false) =>
+        const build = (id: string, shared = false) =>
           Projection.emit({
             ...declaration,
-            id: "g1-occupied",
-            version,
+            id,
             outputs: { numbers: Projection.perGeneration(Numbers, "rev", { shared }) },
             commit,
             emit: ({ item }) => ({ numbers: [item.n] }),
           }).at(params);
 
-        const bound = build(1);
-        const next = build(2);
+        const bound = build("g1-occupied");
         const address = { ...params, rev: 1 };
         const target = yield* Numbers;
         const phase = commit === Commit.transaction ? "process" : "pin";
 
         yield* target.create(address);
         yield* Projection.run(bound);
-        const fault = yield* Projection.follow(next).pipe(Stream.runDrain, Effect.flip);
-        expect(fault).toMatchObject({ phase, reason: "invalid-output", retryable: false });
-        expect((yield* commit.load(next)).record).toEqual(Option.none());
-
         yield* Projection.forget(bound);
-        expect(yield* Projection.run(bound).pipe(Effect.flip)).toMatchObject({
+        expect(yield* Projection.follow(bound).pipe(Stream.runDrain, Effect.flip)).toMatchObject({
           phase,
           reason: "invalid-output",
           retryable: false,
         });
+        expect((yield* commit.load(bound)).record).toEqual(Option.none());
         expect((yield* target.collect(address)).items).toEqual([3, 5]);
-        yield* Projection.run(build(2, true));
+        yield* Projection.run(build("g1-shared", true));
         expect((yield* target.collect(address)).items).toEqual([3, 5, 3, 5]);
       }),
     );
