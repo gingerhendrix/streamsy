@@ -35,6 +35,7 @@ import { SqlClient } from "effect/sql";
 import { migrate } from "../../src/migrations.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "../../src/schema.ts";
 import { storageLayer } from "../../src/storage.ts";
+import { checkForeignTransaction } from "../support/foreign-sql-owner.ts";
 import { dialectClient, freshDatabase, type SqlDialect } from "./support.ts";
 
 const STORAGE_TABLES = [
@@ -83,6 +84,19 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
 
     return;
   }
+
+  test(`${dialect.name}: nested boundaries on separate databases commit independently`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const host = (url: string) =>
+          Layer.build(storageLayer({}).pipe(Layer.provideMerge(dialectClient(dialect, url))));
+
+        const leftUrl = yield* freshDatabase(dialect, baseUrl);
+        const rightUrl = yield* freshDatabase(dialect, baseUrl);
+
+        yield* checkForeignTransaction(yield* host(leftUrl), yield* host(rightUrl));
+      }).pipe(Effect.scoped),
+    ));
 
   // One database per test file. Each case starts from empty tables.
   let scope: Scope.Closeable | undefined;

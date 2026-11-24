@@ -114,6 +114,12 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
       ownerClosed: true,
     },
     repair: { parkedAfterCommit: true, repaired: true, repairPasses: 1 },
+    sharedStorage: {
+      distinctBoundaries: true,
+      visibleInside: true,
+      failedAsExpected: true,
+      rolledBack: true,
+    },
     entry: {
       outcome: "Applied",
       present: true,

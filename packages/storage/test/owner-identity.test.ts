@@ -4,7 +4,7 @@ import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@
 import { CommitHooks, OwnerRecords, ProjectionMarks } from "@streamsy/core/internal";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
-import { Cause, Context, Effect, Exit, Layer, Option, PubSub } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, PubSub } from "effect";
 import { SqlClient, SqlError } from "effect/sql";
 import { expect } from "vitest";
 import { makeBoundaryTestProbe } from "../src/boundary.ts";
@@ -19,7 +19,7 @@ const buildProbedHost = () => {
 
   return Layer.build(
     layerWithTestProbe({ transactionRetryAttempts: 2, transactionRetryDelayMs: 1 }, probe).pipe(
-      Layer.provide(client),
+      Layer.provideMerge(client),
     ),
   ).pipe(Effect.map((context) => ({ context, probe })));
 };
@@ -39,13 +39,206 @@ const create = (id: StreamId): Mutation => ({
   ],
 });
 
-it.effect("rejects a nested transaction on a separate SQLite database", () =>
+it.effect("nested boundaries on separate SQLite databases commit independently", () =>
   Effect.gen(function* () {
     const left = yield* buildHost();
     const right = yield* buildHost();
     yield* checkForeignTransaction(left, right);
   }),
 );
+
+for (const rollback of [false, true]) {
+  it.effect(
+    `A work inside B joins A, including B's hooks and callbacks (rollback: ${rollback})`,
+    () =>
+      Effect.gen(function* () {
+        const left = yield* buildProbedHost();
+        const right = yield* buildProbedHost();
+        const leftBoundary = Context.get(left.context, CommitBoundary);
+        const rightBoundary = Context.get(right.context, CommitBoundary);
+        const rightSql = Context.get(right.context, SqlClient.SqlClient);
+        const leftStorage = Context.get(left.context, Storage);
+        const rightStorage = Context.get(right.context, Storage);
+        const leftFeed = yield* leftStorage.committed;
+        const rightFeed = yield* rightStorage.committed;
+        const leftIds: StreamId[][] = [];
+        const rightIds: StreamId[][] = [];
+        const nested = StreamId.make("nested-left");
+        const lone = StreamId.make("lone-left");
+        const hook = StreamId.make("hook-left");
+        const callback = StreamId.make("callback-left");
+        const rightId = StreamId.make("nested-right");
+        const expectedLeftIds = [nested, lone, hook, callback];
+
+        yield* Context.get(left.context, CommitHooks).beforeCommit((ids) =>
+          Effect.sync(() => {
+            leftIds.push([...ids]);
+          }),
+        );
+        yield* Context.get(right.context, CommitHooks).beforeCommit((ids) =>
+          Effect.gen(function* () {
+            rightIds.push([...ids]);
+            expect(yield* PubSub.takeUpTo(rightFeed, Infinity)).toEqual([]);
+            expect(right.probe.invalidations).toBe(0);
+            yield* leftStorage.mutate(create(hook)).pipe(Effect.orDie);
+            yield* rightSql.afterCommit(
+              leftStorage.mutate(create(callback)).pipe(Effect.asVoid, Effect.orDie),
+            );
+          }),
+        );
+
+        const exit = yield* leftBoundary
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* rightBoundary.withTransaction(
+                Effect.gen(function* () {
+                  yield* leftBoundary.withTransaction(leftStorage.mutate(create(nested)));
+                  yield* leftStorage.mutate(create(lone));
+                  yield* rightStorage.mutate(create(rightId));
+                }),
+              );
+              expect(Option.isSome(yield* rightStorage.record(rightId))).toBe(true);
+              expect(yield* PubSub.takeUpTo(rightFeed, Infinity)).toEqual([[rightId]]);
+              expect(right.probe.invalidations).toBe(1);
+              expect(yield* PubSub.takeUpTo(leftFeed, Infinity)).toEqual([]);
+              expect(left.probe.invalidations).toBe(0);
+
+              for (const id of expectedLeftIds)
+                expect(Option.isSome(yield* leftStorage.record(id))).toBe(true);
+
+              return yield* rollback ? Effect.fail("rollback A") : Effect.void;
+            }),
+          )
+          .pipe(Effect.exit);
+
+        expect(exit).toEqual(rollback ? Exit.fail("rollback A") : Exit.void);
+
+        for (const id of expectedLeftIds)
+          expect(Option.isSome(yield* leftStorage.record(id))).toBe(!rollback);
+        expect(Option.isSome(yield* rightStorage.record(rightId))).toBe(true);
+        expect(leftIds).toEqual(rollback ? [] : [expectedLeftIds]);
+        expect(rightIds).toEqual([[rightId]]);
+        expect(left.probe).toMatchObject({
+          transactionAttempts: 1,
+          invalidations: rollback ? 0 : 1,
+        });
+        expect(right.probe).toMatchObject({ transactionAttempts: 1, invalidations: 1 });
+        expect(yield* PubSub.takeUpTo(leftFeed, Infinity)).toEqual(
+          rollback ? [] : [expectedLeftIds],
+        );
+        expect(yield* PubSub.takeUpTo(rightFeed, Infinity)).toEqual([]);
+      }),
+  );
+}
+
+it.effect(
+  "nested calls and mutations join a client with a freshly bound transaction function",
+  () =>
+    Effect.gen(function* () {
+      const client = yield* Layer.build(
+        SqlStorage.clientLayer(SqliteClient.make({ filename: ":memory:" })),
+      );
+
+      let serviceReads = 0;
+
+      const sql = new Proxy(Context.get(client, SqlClient.SqlClient), {
+        get(target, key, receiver) {
+          if (key === "withTransaction") return target.withTransaction.bind(target);
+
+          if (key === "transactionService") serviceReads += 1;
+
+          // oxlint-disable-next-line anti-slop/no-reflect-get -- Forward every other client property transparently.
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      expect(sql.withTransaction).not.toBe(sql.withTransaction);
+
+      const host = yield* Layer.build(
+        SqlStorage.layerProtocol().pipe(
+          Layer.provide(Layer.succeedContext(Context.add(client, SqlClient.SqlClient, sql))),
+        ),
+      );
+
+      const readsAtBuild = serviceReads;
+      const boundary = Context.get(host, CommitBoundary);
+      const storage = Context.get(host, Storage);
+      const feed = yield* storage.committed;
+      const id = StreamId.make("freshly-bound");
+
+      yield* boundary.withTransaction(boundary.withTransaction(storage.mutate(create(id))));
+
+      expect(serviceReads).toBe(readsAtBuild);
+      expect(yield* PubSub.takeUpTo(feed, Infinity)).toEqual([[id]]);
+    }),
+);
+
+for (const interrupted of [false, true]) {
+  it.effect(
+    `an inherited transaction context is inactive after ${interrupted ? "interruption" : "body failure"}`,
+    () =>
+      Effect.gen(function* () {
+        const outerScope = yield* Effect.scope;
+        const host = yield* buildHost();
+        const boundary = Context.get(host, CommitBoundary);
+        const storage = Context.get(host, Storage);
+        const written = StreamId.make("before-failure");
+        const stale = StreamId.make("after-failure");
+        const resume = yield* Deferred.make<void>();
+
+        const useOldContext = Deferred.await(resume).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const entered = yield* boundary
+                .withTransaction(Effect.succeed("entered"))
+                .pipe(Effect.exit);
+
+              const mutated = yield* storage.mutate(create(stale)).pipe(Effect.exit);
+
+              return { entered, mutated };
+            }),
+          ),
+        );
+
+        const started = yield* Deferred.make<Fiber.Fiber<Effect.Success<typeof useOldContext>>>();
+
+        const transaction = yield* boundary
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* storage.mutate(create(written));
+              const child = yield* useOldContext.pipe(Effect.forkIn(outerScope));
+              yield* Deferred.succeed(started, child);
+
+              return yield* interrupted ? Effect.never : Effect.fail("body failed");
+            }),
+          )
+          .pipe(Effect.forkScoped);
+
+        const child = yield* Deferred.await(started);
+
+        if (interrupted) yield* Fiber.interrupt(transaction);
+
+        const transactionExit = yield* Fiber.await(transaction);
+
+        if (interrupted)
+          expect(
+            Exit.isFailure(transactionExit) && Cause.hasInterruptsOnly(transactionExit.cause),
+          ).toBe(true);
+        else expect(transactionExit).toEqual(Exit.fail("body failed"));
+
+        yield* Deferred.succeed(resume, undefined);
+        const { entered, mutated } = yield* Fiber.join(child);
+        expect(
+          Exit.isFailure(entered) && Cause.hasDies(entered.cause) && Cause.squash(entered.cause),
+        ).toEqual(new Error("Commit boundary cannot enter an unowned ambient SQL transaction"));
+        expect(
+          Exit.isFailure(mutated) && Cause.hasDies(mutated.cause) && Cause.squash(mutated.cause),
+        ).toEqual(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
+        expect(yield* storage.record(written)).toEqual(Option.none());
+        expect(yield* storage.record(stale)).toEqual(Option.none());
+      }),
+  );
+}
 
 live("a lone mutation on another client owns its retry, hooks and notifications", () =>
   Effect.gen(function* () {

@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function, eslint/no-underscore-dangle -- Fetch is the real workerd edge; outcomes use public `_tag`. */
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import type { DurableObjectState } from "@cloudflare/workers-types";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
-import { CommitBoundary, Storage, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option } from "effect";
+import { CommitBoundary, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { ProjectionMarks } from "@streamsy/core/internal";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../../src/boundary.ts";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
@@ -30,6 +30,21 @@ interface Env {
     readonly get: (id: ObjectId) => { readonly fetch: (input: string) => Promise<Response> };
   };
 }
+
+const createStream = (id: StreamId): Mutation => ({
+  operations: [
+    {
+      _tag: "Create",
+      record: {
+        id,
+        config: { contentType: "text/plain", createdAt: 0 },
+        lifecycle: { closed: false, softDeleted: false },
+        currentOffset: ZERO_OFFSET,
+      },
+      initialMessages: [],
+    },
+  ],
+});
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
@@ -174,20 +189,7 @@ export class StorageObject {
         yield* projectionMarksContract(marks);
         yield* projectionMarksTransactionContract(marks, yield* CommitBoundary);
 
-        const outcome = yield* storage.mutate({
-          operations: [
-            {
-              _tag: "Create",
-              record: {
-                id: StreamId.make("exported-entry"),
-                config: { contentType: "text/plain", createdAt: 0 },
-                lifecycle: { closed: false, softDeleted: false },
-                currentOffset: ZERO_OFFSET,
-              },
-              initialMessages: [],
-            },
-          ],
-        });
+        const outcome = yield* storage.mutate(createStream(StreamId.make("exported-entry")));
 
         return {
           outcome: outcome._tag,
@@ -199,8 +201,49 @@ export class StorageObject {
       }),
     );
 
+    const sharedStorage = await entryRuntime.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const second = yield* Layer.build(
+          DurableObjectStorage.layerProtocol({ client: { storage: this.#ctx.storage } }),
+        );
+
+        const storage = yield* Storage;
+        const firstBoundary = yield* CommitBoundary;
+        const secondStorage = Context.get(second, Storage);
+        const secondBoundary = Context.get(second, CommitBoundary);
+        const nested = StreamId.make("shared-storage-nested");
+        const lone = StreamId.make("shared-storage-lone");
+        let visibleInside = false;
+
+        const exit = yield* firstBoundary
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* secondBoundary.withTransaction(secondStorage.mutate(createStream(nested)));
+              yield* secondStorage.mutate(createStream(lone));
+              visibleInside =
+                Option.isSome(yield* storage.record(nested)) &&
+                Option.isSome(yield* storage.record(lone));
+
+              return yield* Effect.fail("rollback shared storage");
+            }),
+          )
+          .pipe(Effect.exit);
+
+        return {
+          distinctBoundaries: firstBoundary !== secondBoundary,
+          visibleInside,
+          failedAsExpected:
+            Exit.isFailure(exit) &&
+            Option.contains(Cause.findErrorOption(exit.cause), "rollback shared storage"),
+          rolledBack:
+            Option.isNone(yield* storage.record(nested)) &&
+            Option.isNone(yield* storage.record(lone)),
+        };
+      }).pipe(Effect.scoped),
+    );
+
     await entryRuntime.dispose();
 
-    return Response.json({ boundary, ownerCleanup, repair, entry });
+    return Response.json({ boundary, ownerCleanup, repair, entry, sharedStorage });
   }
 }

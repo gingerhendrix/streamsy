@@ -19,7 +19,8 @@ import { commitHookRegistry, type CommitHooksApi } from "@streamsy/core/internal
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 interface Pending {
-  readonly owner: SqlClient.SqlClient;
+  readonly transactionService: SqlClient.SqlClient["transactionService"];
+  readonly parent: Pending | undefined;
   readonly keys: Set<string>;
   /** Stream ids that the transaction's mutations wrote, for `Storage.committed`. */
   readonly ids: Set<StreamId>;
@@ -137,6 +138,7 @@ const makeBoundary = (
     if (!Number.isFinite(repairIntervalMs) || repairIntervalMs <= 0)
       return yield* Effect.die(new RangeError("repairIntervalMs must be positive"));
     const sql = yield* SqlClient.SqlClient;
+    const transactionService = sql.transactionService;
     const reactivity = yield* Reactivity.Reactivity;
     const subscriptions = new Set<ActiveSubscription>();
 
@@ -162,22 +164,37 @@ const makeBoundary = (
       }),
     );
 
-    // withoutTransforms() keeps the transaction function and service. The DO driver
-    // reuses its service across clients, so also check the per-client function.
-    const ownsPending = ({ owner }: Pending) =>
-      owner.withTransaction === sql.withTransaction &&
-      owner.transactionService === sql.transactionService;
+    // withoutTransforms() preserves the service. The DO driver shares it across clients.
+    const ambientTransaction = Effect.serviceOption(transactionService);
+    const currentPending = Effect.serviceOption(PendingInvalidations);
 
-    const activePending = Effect.serviceOption(PendingInvalidations).pipe(
-      Effect.map(Option.filter((pending: Pending) => pending.active)),
+    const ownedPending = currentPending.pipe(
+      Effect.map((head) => {
+        for (
+          let pending = Option.getOrUndefined(head);
+          pending !== undefined;
+          pending = pending.parent
+        ) {
+          if (pending.active && pending.transactionService === transactionService)
+            return Option.some(pending);
+        }
+
+        return Option.none();
+      }),
     );
 
-    const ownedPending = activePending.pipe(Effect.map(Option.filter(ownsPending)));
-
     const ownedTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-      Effect.suspend(() => {
+      Effect.flatMap(currentPending, (parent) => {
         if (probe !== undefined) probe.transactionAttempts += 1;
-        const pending: Pending = { owner: sql, keys: new Set(), ids: new Set(), active: true };
+
+        const pending: Pending = {
+          transactionService,
+          parent: Option.getOrUndefined(parent),
+          keys: new Set(),
+          ids: new Set(),
+          active: true,
+        };
+
         let bodyCompleted = false;
 
         // Hooks run last in the body, so a hook's SqlError is retryable like a body error.
@@ -230,17 +247,10 @@ const makeBoundary = (
       });
 
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
-      Effect.flatMap(activePending, (pending) => {
-        if (Option.isSome(pending))
-          return ownsPending(pending.value)
-            ? body
-            : Effect.die(
-                new Error(
-                  "Commit boundary cannot join a transaction owned by a different SQL client",
-                ),
-              );
+      Effect.flatMap(ownedPending, (pending) => {
+        if (Option.isSome(pending)) return body;
 
-        return Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) => {
+        return Effect.flatMap(ambientTransaction, (ambient) => {
           if (Option.isSome(ambient))
             return Effect.die(
               new Error("Commit boundary cannot enter an unowned ambient SQL transaction"),
@@ -251,10 +261,10 @@ const makeBoundary = (
       });
 
     const mutation: BoundaryRuntime["mutation"] = ({ keys, ids, effect, retryable }) =>
-      Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
+      Effect.flatMap(ambientTransaction, (ambient) =>
         Effect.flatMap(ownedPending, (pendingBefore) => {
-          // Reject unowned ambient transactions before executing any SQL. With no
-          // ambient transaction this mutation opens its own, even inside another boundary.
+          // A mutation joins an owned entry or opens its own transaction.
+          // Reject unowned ambient transactions before executing any SQL.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
 
@@ -273,7 +283,7 @@ const makeBoundary = (
             }),
           );
 
-          return Option.isSome(ambient)
+          return Option.isSome(pendingBefore)
             ? run
             : retryWithPolicy(ownedTransaction(run), transactionRetry, (error) =>
                 SqlError.isSqlError(error) ? error.isRetryable : retryable(error),
