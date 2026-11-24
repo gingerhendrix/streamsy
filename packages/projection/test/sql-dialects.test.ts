@@ -579,9 +579,12 @@ test.skipIf(sqlDialects.pg.url === undefined)(
             },
           };
 
-          yield* Projection.forget(binding).pipe(
-            Effect.provideService(CheckpointStore, interleaved),
-          );
+          expect(
+            yield* Projection.forget(binding).pipe(
+              Effect.provideService(CheckpointStore, interleaved),
+              Effect.flip,
+            ),
+          ).toMatchObject({ phase: "checkpoint", reason: "token-conflict", retryable: true });
           expect((yield* store.load(binding)).token).toBe("1");
           const id = RoutedResult.at({ shard: binding.id, generation: 1 }).id;
           expect(yield* routes.state(binding, "result", id)).toBe("live");

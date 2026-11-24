@@ -462,6 +462,8 @@ value returned by `declaration.at(params)` so `forget` marks its route records.
 Passing a bare key leaves them live and allows a replay to append to old data.
 Use a store that supports owner-record listing for routed forget on an existing
 checkpoint, including automatic forget after a gone input.
+With a transaction Commit, forgetting an absent checkpoint fails with a retryable
+`token-conflict` if another host commits the binding's first unit meanwhile.
 
 `Projection.retire` writes a tombstone even if the checkpoint cannot be decoded.
 It can remove or close owned streams after a forget when you pass the declaration

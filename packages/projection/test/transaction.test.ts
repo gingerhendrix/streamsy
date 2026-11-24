@@ -1,6 +1,19 @@
 import { it as baseIt, layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Array, Cause, Context, Effect, Exit, Layer, Option, Ref, Schema, Stream } from "effect";
+import {
+  Array,
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
@@ -323,6 +336,113 @@ for (const [name, host] of [
         expect(yield* routed.head(params).pipe(Effect.flip)).toMatchObject(missing);
       }),
     );
+
+    for (const kind of ["unrouted", "routed"] as const) {
+      const declare = (
+        id: string,
+        cleanup: Effect.Effect<void, ProjectionFault>,
+        unit: Effect.Effect<void> = Effect.void,
+      ) => {
+        const commit = Commit.transactionWithCleanup(() => cleanup);
+        const spec = { ...common, id, commit };
+
+        return kind === "unrouted"
+          ? Projection.process({ ...spec, process: () => unit })
+          : Projection.process({
+              ...spec,
+              outputs: {
+                routed: Projection.perGeneration(Routed, "generation", { routeBy: ["bucket"] }),
+              },
+              process: (_batch, _unit, { outputs: { routed } }) =>
+                routed.open({ bucket: "a" }).pipe(Effect.andThen(unit)),
+            });
+      };
+
+      for (const created of ["checkpoint", "tombstone"] as const) {
+        it.effect(`${kind} forget rolls back when a ${created} appears after it loaded none`, () =>
+          Effect.gen(function* () {
+            yield* seed;
+            const store = yield* CheckpointStore;
+            const records = yield* OwnerRecords;
+            const id = `appeared-${kind}-${created}`;
+
+            // A memory or SQLite owner runs one transaction at a time, so the cleanup itself
+            // creates the record that another SQL host can commit at this point.
+            const bound = declare(
+              id,
+              Effect.gen(function* () {
+                yield* records.write("cleanup", id).pipe(Effect.orDie);
+
+                yield* created === "checkpoint"
+                  ? store.compareAndSet(key, "0", {
+                      identity: { inputs: {} },
+                      inputs: {},
+                      adapters: {},
+                    })
+                  : store.retire!(key);
+              }),
+            ).at({});
+
+            const key = Projection.key(bound);
+            const route = Routed.at({ bucket: "a", generation }).id;
+            yield* store.routes!.add(key, "routed", route);
+
+            expect(yield* Projection.forget(bound).pipe(Effect.flip)).toMatchObject({
+              phase: "checkpoint",
+              reason: "token-conflict",
+              retryable: true,
+            });
+            expect((yield* store.load(key)).token).toBe("0");
+            expect(yield* records.read("cleanup")).toEqual(Option.none());
+            expect(yield* store.routes!.state(key, "routed", route)).toBe("live");
+          }),
+        );
+      }
+
+      it.effect(`${kind} forget and a first unit run one after the other`, () =>
+        Effect.gen(function* () {
+          yield* seed;
+          const store = yield* CheckpointStore;
+          const records = yield* OwnerRecords;
+          const cleaning = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+
+          const bound = declare(
+            `serial-${kind}`,
+            Deferred.succeed(cleaning, undefined).pipe(
+              Effect.andThen(Deferred.await(resume)),
+              Effect.andThen(records.remove("unit")),
+              Effect.orDie,
+            ),
+            records.write("unit", kind).pipe(Effect.orDie),
+          ).at({});
+
+          const forget = yield* Projection.forget(bound).pipe(Effect.forkChild);
+          yield* Deferred.await(cleaning);
+          const unit = yield* Projection.run(bound).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(forget);
+          yield* Fiber.join(unit);
+          expect((yield* store.load(bound)).token).toBe("1");
+          expect(yield* records.read("unit")).toEqual(Option.some(kind));
+
+          yield* Projection.forget(bound);
+          expect((yield* store.load(bound)).token).toBe("0");
+          expect(yield* records.read("unit")).toEqual(Option.none());
+        }),
+      );
+
+      it.effect(`${kind} forget of an absent checkpoint still runs cleanup`, () =>
+        Effect.gen(function* () {
+          const records = yield* OwnerRecords;
+          const id = `absent-${kind}`;
+          const bound = declare(id, records.write("cleanup", id).pipe(Effect.orDie)).at({});
+          yield* Projection.forget(bound);
+          expect(yield* records.read("cleanup")).toEqual(Option.some(id));
+        }),
+      );
+    }
 
     for (const operation of ["forget", "retire"] as const) {
       it.effect(`owner cleanup joins ${operation} and rolls back on failure`, () =>

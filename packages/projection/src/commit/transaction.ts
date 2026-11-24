@@ -3,7 +3,13 @@ import { isStreamsFault, ZERO_OFFSET } from "@streamsy/core";
 import { CurrentOwner, isForeignOwner, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { make, type Commit, type RetireRequest } from "./model.ts";
-import { CheckpointStore } from "../checkpoint-store.ts";
+import {
+  CheckpointStore,
+  loadLatest,
+  type CheckpointStoreApi,
+  type Loaded,
+  type ProjectionKey,
+} from "../checkpoint-store.ts";
 import { Transaction } from "../transaction.ts";
 import { ProjectionFault } from "../fault.ts";
 import { createOutput } from "../outputs.ts";
@@ -11,7 +17,6 @@ import { TransactionGenerationOutputs } from "../per-generation.ts";
 import { detailsOf, load, retire, settle, type Result as TransactionResult } from "./internal.ts";
 
 import { inherit, withPrepare, withAccepted } from "./range.ts";
-import type { ProjectionKey } from "../checkpoint-store.ts";
 import {
   requireRouteRecords,
   RoutedOutputs,
@@ -26,32 +31,34 @@ const checkpointOwnerFault = (key: ProjectionKey) =>
     message: `The checkpoint store for ${key.id} does not share the transaction owner`,
   });
 
+type CheckpointState = "present" | "absent" | "retired";
+
+const checkpointState = (
+  loaded: Effect.Effect<Loaded, ProjectionFault>,
+): Effect.Effect<CheckpointState, ProjectionFault> =>
+  loaded.pipe(
+    Effect.map(({ record }): CheckpointState => (Option.isSome(record) ? "present" : "absent")),
+    Effect.catchIf(
+      (fault) => fault.reason === "retired-generation",
+      () => Effect.succeed("retired" as const),
+    ),
+    Effect.catchIf(
+      (fault) => fault.reason === "invalid-record",
+      () => Effect.succeed("present" as const),
+    ),
+    Effect.mapError(
+      ({ reason, message, cause }) =>
+        new ProjectionFault({ phase: "checkpoint", reason, message, cause }),
+    ),
+  );
+
 const removeWithRoutes = (
+  store: CheckpointStoreApi,
   key: ProjectionKey,
-  owner: (typeof Transaction.Service)["owner"],
-): Effect.Effect<void, ProjectionFault, CheckpointStore> =>
+  checkpoint: CheckpointState,
+): Effect.Effect<void, ProjectionFault> =>
   Effect.gen(function* () {
-    const store = yield* CheckpointStore;
-
-    if (ownerOf(store.load) !== owner) return yield* checkpointOwnerFault(key);
-
     const records = yield* requireRouteRecords(store, "checkpoint");
-
-    // An existing row is locked by the load. An absent row cannot be locked,
-    // so do not remove a checkpoint that another runner might create afterward.
-    const checkpoint = yield* store.load(key).pipe(
-      Effect.map(({ record }): "present" | "absent" =>
-        Option.isSome(record) ? "present" : "absent",
-      ),
-      Effect.catchIf(
-        (fault) => fault.reason === "retired-generation",
-        () => Effect.succeed("retired" as const),
-      ),
-      Effect.catchIf(
-        (fault) => fault.reason === "invalid-record",
-        () => Effect.succeed("present" as const),
-      ),
-    );
 
     if (checkpoint === "absent") {
       yield* records.forget(key, { ignoreUnsupportedList: true });
@@ -92,16 +99,28 @@ const removeInTransaction = <R>(
 ) =>
   tx.withTransaction(
     Effect.gen(function* () {
-      if (RoutedOutputs in key) yield* removeWithRoutes(key, tx.owner);
-      else {
-        const store = yield* CheckpointStore;
+      const store = yield* CheckpointStore;
 
-        if (ownerOf(store.load) !== tx.owner) return yield* checkpointOwnerFault(key);
+      if (ownerOf(store.load) !== tx.owner) return yield* checkpointOwnerFault(key);
 
-        yield* store.remove(key);
-      }
+      // An existing row is locked by the load. An absent row cannot be locked,
+      // so do not remove a checkpoint that another runner might create afterward.
+      const checkpoint = yield* checkpointState(store.load(key));
 
-      return yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
+      if (RoutedOutputs in key) yield* removeWithRoutes(store, key, checkpoint);
+      else yield* store.remove(key);
+
+      yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
+
+      // The cleanup may have deleted rows of a unit that committed since the load.
+      if (checkpoint === "absent" && (yield* checkpointState(loadLatest(store, key))) !== "absent")
+        return yield* new ProjectionFault({
+          phase: "checkpoint",
+          reason: "token-conflict",
+          message: `Record of ${key.id} was created while it was being forgotten. A second writer on the same key is the likely cause. Stop its runners, then forget again.`,
+        });
+
+      return yield* Effect.void;
     }),
   );
 
