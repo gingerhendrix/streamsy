@@ -51,6 +51,8 @@ below show complete applications, from a plain HTTP host to served projections.
   backed by one process-local memory store and exercised with `curl`.
 - [Issue tracker](examples/issue-tracker-demo/README.md): a complete application
   with conditional writes, SQLite persistence, and live browser collections.
+- [Foldkit issue tracker with Views](examples/issue-tracker-demo-foldkit-views/README.md)
+  reads browser-local Views snapshots and confirms writes by offset.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.

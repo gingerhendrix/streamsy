@@ -1,9 +1,9 @@
 ---
 title: Run Views in memory
-description: Choose the Views memory layer for a host that owns State streams or a reader with external inputs.
+description: Run a Views circuit on a memory owner or open a scoped View.live reader.
 ---
 
-Use `ViewBackend.layerMemory` when your application already owns streams with `MemoryStorage`. Use `ViewBackend.layerMemoryHost` when the application only needs an owner for Views state and checkpoints, as in a browser reading remote State streams.
+Use `ViewBackend.layerMemory` for a `View.circuit` that runs over a `MemoryStorage` host.
 
 ## Use an existing memory owner
 
@@ -29,8 +29,8 @@ export const host = Layer.mergeAll(
 
 At the start of each outer transaction, `MemoryStorage` copies the owner's stream state, including stored message bytes, into a transaction draft. A host that owns streams pays that cost even when a unit writes only a small part of its view state. The Views backend records its own changes in an undo journal.
 
-## Use a memory owner for a live reader
+## Open a live reader
 
-`ViewBackend.layerMemoryHost` provides the backend, checkpoint store, and owner transaction over an internal memory owner with no streams. Supply your declared input services separately. See [Read live snapshots](/docs/views/live) for a complete host.
+Each `View.live` reader creates a private memory host for its operator state and checkpoints. Supply the declared State input services and an Effect scope. Open the reader outside any transaction. The inputs keep their own hosts and lifetimes. See [Read live snapshots](/docs/views/live).
 
-Both layers keep their state in memory and need no migration. Operator state, checkpoints, and streams owned by your memory host disappear when you discard the host. The lifetime of any external input belongs to its own host.
+Memory circuits and live readers need no migration. A memory circuit's operator state, checkpoints, and streams live as long as its host. A live reader releases its host when its scope closes and retains its final committed snapshot.

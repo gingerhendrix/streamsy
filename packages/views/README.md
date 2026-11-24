@@ -84,6 +84,8 @@ Set `maxAffectedKeys` on a circuit to limit the distinct relation keys changed i
 
 Unsupported features include `avg`, `distinct`, fact folds, dynamic parameters-as-data, frontier rows and `old_value` on upserts. Parameters bind separate circuit namespaces. Input values must be JSON objects and collection codecs must need no services, as required by Streamsy 0.12 projection declarations. Retain input history for rebuilding.
 
+`View.live` runs named views in a scoped reader with a private memory host. Provide the input State services and open it outside any transaction. Use `snapshot` or `snapshots` to read all views and their input offsets together. Await `caughtUp` to wait for the initial replay. [Read live snapshots](https://streamsy.dev/docs/views/live)
+
 | Export            | Purpose                                        |
 | ----------------- | ---------------------------------------------- |
 | `@streamsy/views` | `View`, `ViewBackend`, fault classes and types |

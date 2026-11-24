@@ -58,51 +58,34 @@ export const workspaceViews = View.live({
 
 ## Open the reader in a subscription
 
-`workspaceMessages` merges the remote input layer with `ViewBackend.layerMemoryHost`. The Foldkit subscription owns the scope for the binding. It waits for initial catch-up before showing the tracker. On a change notification, it reads all five current snapshots for one `ReceivedViews` message. That keeps the lists and counts in the same update.
+`workspaceMessages` supplies the remote State service and opens a reader in the Foldkit subscription's scope. The reader keeps its own memory state and checkpoints. Each snapshot supplies all five views and the workspace offset. Foldkit applies the lists and counts in one `ReceivedViews` message and shows the tracker once `caughtUp` is true.
 
 ```ts title="src/subscription.ts"
-    const host = Layer.merge(
-      ViewBackend.layerMemoryHost,
-      RemoteStreams.layer(Streamsy.group(Workspaces), { baseUrl }).pipe(
-        Layer.provide(FetchHttpClient.layer),
-      ),
+    const inputs = RemoteStreams.layer(Streamsy.group(Workspaces), { baseUrl }).pipe(
+      Layer.provide(FetchHttpClient.layer),
     );
 
     return Effect.gen(function* () {
-      const params = { workspaceId };
-      const live = yield* workspaceViews.at(params);
-      const workspaces = yield* Workspaces;
+      const live = yield* workspaceViews.at({ workspaceId });
+
+      yield* live.snapshots.pipe(
+        Stream.map(({ rows, offsets, caughtUp }) =>
+          Message.ReceivedViews({
+            caughtUp,
+            offset: offsets[Workspaces.key] ?? ZERO_OFFSET,
 // ...
-export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
-  workspaceStream: entry(
-    { workspaceId: Schema.String },
-    {
-      modelToDependencies: (model) => ({ workspaceId: model.workspaceId }),
-      dependenciesToStream: ({ workspaceId }) =>
-        workspaceMessages(workspaceId, new URL("/streams", window.location.origin).href),
-    },
-  ),
-}));
 ```
 
 ## Confirm writes
 
-The page reads the same workspace stream twice. The circuit reads it to maintain rows and counts. A separate `workspaces.follow(params)` reads the `txid` headers the snapshots leave out, and sends `ConfirmedWrites` messages to the Model. Both readers belong to the subscription scope.
+`SendWrite` decodes the API's `Written` response and dispatches `SucceededSendWrite` with its `awaitOffset`. The model compares that offset with the latest workspace snapshot. When the response arrives first, the model saves `awaitOffset` on the pending write and removes it when a snapshot reaches that offset. When the snapshot arrives first, the model removes the pending write as soon as the response arrives. While the response is in flight, the optimistic row overlays the committed row with the same ID.
 
-```ts title="src/subscription.ts"
-const confirmations = workspaces.follow(params).pipe(
-  // ...
-  Stream.catch(() => Stream.empty),
-  Stream.concat(Stream.succeed(Message.StoppedConfirmingWrites())),
-);
-```
-
-If the confirmation reader ends or fails with a typed error, the app clears pending indicators and shows a warning. HTTP writes and live view updates continue. Reload the page to restart confirmation. A live follower or startup catch-up failure reaches the workspace error display.
+A terminal startup or follower fault reaches the workspace error display. Leaving the page closes the reader.
 
 ## Replay and build measurements
 
-Each page load replays the workspace from the beginning. Before the change that kept live Views running when write confirmation stops, a local preview measured elapsed time from navigation until the filter count showed 300 and all 300 issue rows appeared in the DOM. The first load took 559 ms. Four reloads took 379–425 ms.
+Each page load replays the workspace from the beginning. With the earlier reader and separate write confirmation subscription, a local preview measured elapsed time from navigation until the filter count showed 300 and all 300 issue rows appeared in the DOM. The first load took 559 ms. Four reloads took 379–425 ms.
 
-That earlier Vite production build measured the main JavaScript chunk at 701,553 bytes minified and 198,978 bytes gzipped. The [Foldkit variant](/docs/examples/issue-tracker/foldkit) measured 401,930 bytes minified and 129,711 bytes gzipped in the same comparison. A production rebuild with the confirmation change measured the main JavaScript chunk at 702,111 bytes minified and 199,160 bytes gzipped.
+That earlier Vite production build measured the main JavaScript chunk at 701,553 bytes minified and 198,978 bytes gzipped. The [Foldkit variant](/docs/examples/issue-tracker/foldkit) measured 401,930 bytes minified and 129,711 bytes gzipped in the same comparison.
 
 Run `bun run smoke:issue-tracker-foldkit-views` from the repository root to check replay, live writes, errors, and cancellation against the base API.

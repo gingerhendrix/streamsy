@@ -18,6 +18,7 @@ import type {
   CircuitDeclaration,
   CircuitError,
   Input,
+  LiveReader,
   LiveSnapshot,
   ParameterExpressions,
   Reference,
@@ -36,7 +37,8 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | -------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `View`                     | Namespace                    | Relation builders, aggregates, expressions, `circuit`, `live`, and `migrate`                         |
 | `ViewBackend`              | Service                      | Host-selected operator storage                                                                       |
-| `LiveSnapshot`             | Type                         | Committed rows and initial catch-up status                                                           |
+| `LiveReader`               | Type                         | Scoped reader returned by `View.live`'s `at(params)`                                                 |
+| `LiveSnapshot`             | Type                         | Committed rows and input offsets with initial catch-up status                                        |
 | `PlanChanged`              | Class (`Schema.TaggedError`) | Non-retryable fault (`_tag: "ViewPlanChanged"`) when a namespace's plan hash changes                 |
 | `ViewFault`                | Class (`Schema.TaggedError`) | Operational or setup fault (`_tag: "ViewFault"`)                                                     |
 | `ViewDataFault`            | Class (`Schema.TaggedError`) | Non-retryable row-level or `maxAffectedKeys` fault (`_tag: "ViewDataFault"`)                         |
@@ -147,14 +149,14 @@ Declaration-time checks:
 
 `View.live({ id, params, views, maxAffectedKeys?, retry? })` compiles named relations and returns a declaration with `at(params)`. Pass a record of relations or a function from typed parameter expressions to that record. The declaration uses the same input parameter checks and affected-key limit as `View.circuit`. Routed relations throw `RangeError`. An invalid compiled plan throws `PlanCheckFailed`.
 
-| Member          | Result                                    | Behavior                                                                                                                                   |
-| --------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `at(params)`    | Effect of the reader, with `CircuitError` | Opens a binding in `Scope`. Requires `ViewBackend`, `Transaction`, `CheckpointStore`, and the input State services                         |
-| `rows(name)`    | `Effect<LiveSnapshot<Row>>`               | Reads the latest committed snapshot                                                                                                        |
-| `changes(name)` | `Stream<LiveSnapshot<Row>, CircuitError>` | Emits snapshots on subscription, on committed output changes, and when catch-up succeeds. Slow subscribers can skip intermediate snapshots |
-| `caughtUp`      | `Effect<void, CircuitError>`              | Waits for the initial input tails. A failed startup check can fail this Effect while the follower continues                                |
+| Member       | Result                                         | Behavior                                                                                                                                     |
+| ------------ | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `at(params)` | Effect of `LiveReader<V>`, with `CircuitError` | Opens a reader with a private heap host. Requires `Scope` and the input State services                                                       |
+| `snapshot`   | `Effect<LiveSnapshot<V>>`                      | Reads the latest committed rows of all views, their input offsets, and catch-up status                                                       |
+| `snapshots`  | `Stream<LiveSnapshot<V>, CircuitError>`        | Starts with the latest snapshot and emits after commits and when initial catch-up succeeds. Slow subscribers can skip intermediate snapshots |
+| `caughtUp`   | `Effect<void, CircuitError>`                   | Waits for the first snapshot that reaches the startup tails                                                                                  |
 
-`at` fails with `ViewFault` when the backend is SQL, the memory backend and checkpoint store do not share the transaction owner, the binding is already active on that owner, or the checkpoint is already in use. Loading the checkpoint can fail with `ProjectionFault`. Follower errors propagate to `changes` and `caughtUp`, including `ViewDataFault` from a bad input row and `ProjectionFault` with reason `history-unavailable` when required history is missing. See [Read live snapshots](/docs/views/live) for retry and scope behavior.
+Open a reader outside any transaction. A terminal startup or follower fault fails `snapshots`, including `ViewDataFault` from a bad input row and `ProjectionFault` with reason `history-unavailable` when required history is missing. A `caughtUp` wait that is still waiting for the first caught-up snapshot gets the same fault. Offsets are scoped to their input streams. A follower parked when an input closes without data can take up to 30 seconds to notice the close. See [Read live snapshots](/docs/views/live).
 
 ### `View.migrate`
 
@@ -312,15 +314,14 @@ Methods available on `TypedExpression<T>` depend on `T`:
 
 `ViewBackend` is an opaque Effect service. Supply it through a layer.
 
-| Layer                         | Provides                                        | Requires              | Layer error                            |
-| ----------------------------- | ----------------------------------------------- | --------------------- | -------------------------------------- |
-| `ViewBackend.layerSql`        | `ViewBackend`                                   | `SqlClient.SqlClient` | `ViewFault` for an unsupported dialect |
-| `ViewBackend.layerMemory`     | `ViewBackend`                                   | `CommitBoundary`      | `never`                                |
-| `ViewBackend.layerMemoryHost` | `ViewBackend`, `CheckpointStore`, `Transaction` | `never`               | `never`                                |
+| Layer                     | Provides      | Requires              | Layer error                            |
+| ------------------------- | ------------- | --------------------- | -------------------------------------- |
+| `ViewBackend.layerSql`    | `ViewBackend` | `SqlClient.SqlClient` | `ViewFault` for an unsupported dialect |
+| `ViewBackend.layerMemory` | `ViewBackend` | `CommitBoundary`      | `never`                                |
 
 `layerSql` uses the storage owner's `SqlClient`. Run `View.migrate` with that client before running the circuit. If the transaction for that client is absent, the fault message is `The Views SQL client is outside the storage owner's transaction`.
 
-`layerMemory` requires an active memory owner transaction on the running fiber when the circuit uses the store. If the transaction is absent or belongs to another owner, the fault message is `Views memory state requires the active memory owner transaction on this fiber`. `layerMemoryHost` supplies the three services over a memory owner with no streams.
+`layerMemory` requires an active memory owner transaction on the running fiber when the circuit uses the store. If the transaction is absent or belongs to another owner, the fault message is `Views memory state requires the active memory owner transaction on this fiber`.
 
 For either transaction check, a circuit unit fails with a non-retryable `ViewFault`. During `Projection.forget` or `Projection.retire`, the same check fails cleanup with a `ProjectionFault` with phase `checkpoint` and reason `unsupported-composition`. The cleanup fault keeps the same message.
 
@@ -393,22 +394,40 @@ interface PlanCheckFailed {
 
 ## Types
 
-### `LiveSnapshot`
+### `LiveReader` and `LiveSnapshot`
 
 ```ts
-import type { LiveSnapshot as ExportedSnapshot } from "@streamsy/views";
+import type { Offset } from "@streamsy/core";
+import type { Effect, Stream } from "effect";
+import type {
+  CircuitError,
+  LiveReader as ExportedReader,
+  LiveSnapshot as ExportedSnapshot,
+  Relation,
+} from "@streamsy/views";
 import { same } from "./reference-check.ts";
 // ---cut---
-interface LiveSnapshot<Row> {
-  readonly rows: ReadonlyArray<Row>;
+interface LiveSnapshot<V> {
+  readonly rows: {
+    readonly [K in keyof V]: ReadonlyArray<V[K] extends Relation<infer Row> ? Row : never>;
+  };
+  readonly offsets: Readonly<Record<string, Offset>>;
   readonly caughtUp: boolean;
 }
 
+interface LiveReader<V> {
+  readonly snapshot: Effect.Effect<LiveSnapshot<V>>;
+  readonly snapshots: Stream.Stream<LiveSnapshot<V>, CircuitError>;
+  readonly caughtUp: Effect.Effect<void, CircuitError>;
+}
+
 // ---cut-after---
-same<LiveSnapshot<{ id: string }>, ExportedSnapshot<{ id: string }>>(true);
+type Views = { orders: Relation<{ id: string }> };
+same<LiveSnapshot<Views>, ExportedSnapshot<Views>>(true);
+same<LiveReader<Views>, ExportedReader<Views>>(true);
 ```
 
-The snapshot and its rows are read-only. `caughtUp` records completion of the initial replay. Rows are ordered by the encoded relation key. The key is absent unless the view selects it as a row field.
+The snapshot and its rows are read-only. Use a State input's `key` to look up its committed offset. `caughtUp` records completion of the initial replay. Rows within each view are ordered by the encoded relation key. Select a key as a row field when the caller needs it.
 
 ### `CircuitError`
 

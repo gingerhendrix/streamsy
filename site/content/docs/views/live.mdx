@@ -3,7 +3,7 @@ title: Read live snapshots
 description: Open a scoped View.live reader and consume committed snapshots in Effect or Foldkit.
 ---
 
-Use `View.live` to maintain named relations in memory and read their committed rows. Inputs are State streams that the host provides. The reader has no argument for local rows, pending writes, or a relation of parameter values. Pass binding parameter values to `at(params)`.
+Use `View.live` to maintain named relations in memory and read their committed rows together. Provide the input State services and pass binding parameters to `at(params)`. Each reader builds its own memory host for operator state and checkpoints. Open the reader outside any transaction.
 
 ## Read from Effect
 
@@ -18,7 +18,7 @@ import { Effect, Layer, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Streamsy } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
-import { View, ViewBackend } from "@streamsy/views";
+import { View } from "@streamsy/views";
 import { Orders } from "./streams.ts";
 
 export const shop = View.live({
@@ -28,27 +28,34 @@ export const shop = View.live({
 });
 
 export const pageHost = (baseUrl: string) =>
-  Layer.merge(
-    ViewBackend.layerMemoryHost,
-    RemoteStreams.layer(Streamsy.group(Orders), { baseUrl }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-    ),
+  RemoteStreams.layer(Streamsy.group(Orders), { baseUrl }).pipe(
+    Layer.provide(FetchHttpClient.layer),
   );
 
 export const watchOrders = (baseUrl: string, shopId: string) =>
   Effect.gen(function* () {
     const live = yield* shop.at({ shopId });
     yield* live.caughtUp;
-    const initial = yield* live.rows("orders");
-    yield* Effect.log(`Replayed ${initial.rows.length} orders`);
+    const initial = yield* live.snapshot;
+    yield* Effect.log(`Replayed ${initial.rows.orders.length} orders`);
 
-    yield* live.changes("orders").pipe(Stream.runForEach(Effect.log));
+    yield* live.snapshots.pipe(
+      Stream.map(({ rows }) => rows.orders),
+      Stream.changesWith(Object.is),
+      Stream.runForEach(Effect.log),
+    );
   }).pipe(Effect.scoped, Effect.provide(pageHost(baseUrl)));
 ```
 
-`rows(name)` reads the current snapshot. `changes(name)` starts with the current snapshot, then emits the latest snapshot when the view changes or initial catch-up completes. A slow subscriber can skip intermediate snapshots. Each snapshot contains the rows after a committed unit and a `caughtUp` flag.
+`snapshot` reads the latest committed snapshot. `snapshots` starts with that snapshot and emits after committed units and when initial catch-up completes. Every snapshot holds the rows of all views after the same unit, the committed offset per input, and a `caughtUp` flag. A slow subscriber can skip intermediate snapshots. To watch one view, select its row array and use `Stream.changesWith(Object.is)`. A view keeps its array identity until its rows change.
 
-`caughtUp` waits until the binding reaches the input tails captured at startup. The flag stays true as later changes arrive. The follower uses the declaration's retry schedule or the default `ProjectionRetry`. If a finite schedule runs out on a retryable startup tail or catch-up check, the reader restarts that check every 250 ms until it succeeds or the reader ends. A follower that exhausts its retries fails.
+`caughtUp` waits for the first snapshot that reaches the input tails captured at startup. The flag stays true as later changes arrive. The startup tail reads and the follower use the declaration's retry schedule or the default `ProjectionRetry`. A terminal fault or exhausted retry schedule fails `snapshots`.
+
+## Confirm a write
+
+Keep the append offset from the write response. Read the input's offset using its State key, for example `snapshot.offsets[Orders.key]`. Once that offset is defined and `compare(offset, awaitOffset) >= 0`, the snapshot includes the write's effect. Use `compare` from `@streamsy/core`.
+
+If the response arrives first, save its offset on the pending write and check it on each snapshot. If the snapshot arrives first, compare the response with the offset you already have. Offsets confirm writes only to that input stream. They cannot confirm a write to another stream, including a command stream that feeds the input through a projection.
 
 ## Subscribe from Foldkit
 
@@ -76,17 +83,15 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
       modelToDependencies: ({ shopId }) => ({ shopId }),
       dependenciesToStream: ({ shopId }) =>
         Stream.unwrap(
-          Effect.map(shop.at({ shopId }), (live) => {
-            const snapshots = live.changes("orders").pipe(
+          Effect.map(shop.at({ shopId }), (live) =>
+            live.snapshots.pipe(
               Stream.map(({ rows, caughtUp }): Message => ({
                 _tag: "ReceivedOrders",
-                rows,
+                rows: rows.orders,
                 caughtUp,
               })),
-            );
-            const startup = Stream.fromEffect(live.caughtUp).pipe(Stream.drain);
-            return Stream.merge(snapshots, startup);
-          }).pipe(Effect.provide(pageHost(new URL("/streams", window.location.origin).href))),
+            ),
+          ).pipe(Effect.provide(pageHost(new URL("/streams", window.location.origin).href))),
         ).pipe(
           Stream.catch((error) =>
             Stream.succeed<Message>({ _tag: "OrderReadFailed", message: error.message }),
@@ -97,15 +102,15 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
 }));
 ```
 
-The subscription turns snapshots into messages and reports typed read failures. Watching `caughtUp` alongside `changes` also reports a startup check failure that leaves the follower running. See the [Foldkit Views example](/docs/examples/issue-tracker/foldkit-views) for a subscription that reads several outputs together.
+The subscription turns snapshots into messages and reports typed read failures. See the [Foldkit Views example](/docs/examples/issue-tracker/foldkit-views) for a subscription that reads several outputs and confirms writes.
 
 ## End a reader
 
-Each memory owner permits one active binding for a given circuit ID and parameter values. The same owner can run different bindings at once.
+Two readers can open the same circuit and parameters. Each replays the inputs independently. When a reader's scope closes, Views interrupts the follower and releases its private host. Existing and late subscribers can receive the final snapshot before the stream ends. `snapshot` keeps the final committed rows and offsets after close. A pending `caughtUp` wait is interrupted if the reader ends before it reaches the startup tails.
 
-When the scope closes, Views interrupts the follower and removes the checkpoint, operator state, snapshots, and reservation in the owner transaction. Existing `changes` subscriptions end, a pending `caughtUp` wait is interrupted, and `rows` returns an empty array in its snapshot. Close the scope outside a caller-owned transaction. If that transaction rolls back, the follower stays stopped and the checkpoint, state, and reservation stay in place. Build a fresh memory host to reopen that binding.
+If the reader fails, `snapshots` delivers the terminal fault after any final snapshot. A `caughtUp` wait that has yet to see a caught-up snapshot gets the same fault. Missing input history can fail the reader with `history-unavailable`. See the [live reader reference](/docs/views/reference#viewlive).
 
-If the follower fails, `changes` and subsequent waits on `caughtUp` fail, while `rows` keeps the last committed snapshot until cleanup. If the inputs reach a terminal end or a previously read input is removed and the follower ends normally, `changes` ends normally and `rows` keeps the last committed snapshot until cleanup. Missing input history can fail the reader with `history-unavailable`. See the [live reader reference](/docs/views/reference#viewlive) for errors.
+The stream ends normally when all inputs close or a previously read input is removed and the follower ends. When an input closes without new data while `Projection.follow` is parked, the follower can take up to its 30-second repair interval to notice the close.
 
 ## Replay and snapshot costs
 

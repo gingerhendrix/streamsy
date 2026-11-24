@@ -20,4 +20,4 @@ const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBacken
 
 Keep calling `View.migrate(sql)` at startup. If the SQLite host uses `StateTable`, also run `StateTable.migrate(sql)`. Code that names a circuit's commit type now uses `Commit.TransactionCommit`.
 
-For in-memory streams, compose `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over `MemoryStorage.layer(group)`. Circuit checkpoints, operator state, and output streams commit together in memory. This host needs no SQL client or migration. [Run Views in memory](https://streamsy.dev/docs/views/memory)
+For a `View.circuit` with in-memory streams, compose `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over `MemoryStorage.layer(group)`. Circuit checkpoints, operator state, and output streams commit together in memory. This host needs no SQL client or migration. [Run Views in memory](https://streamsy.dev/docs/views/memory)
