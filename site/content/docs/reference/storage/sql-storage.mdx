@@ -111,7 +111,7 @@ The store follows these rules:
 
 Version 4 supports prefix listing for `Projection.bindings`, startup inventory, and routed `Projection.retire` and `Projection.forget`. A range that contains a legacy hashed key without its full key fails with `OWNER_RECORDS_LIST_UNSUPPORTED`. The checkpoint store maps the fault to `unsupported-composition`. Point reads still work. Writing the original key restores listing for that record.
 
-Outside a transaction, listing is a plain read. Inside a MySQL transaction, `Projection.bindings` uses `FOR SHARE` on the owner record range it reads. At `READ COMMITTED`, these are shared locks on existing rows. Another host can insert a new binding for the same projection while the listing transaction is open.
+Outside a transaction, listing is a plain read. Inside a MySQL transaction, a listing uses `FOR UPDATE` on the owner record range it reads, so transactions that list and then rewrite the same records run one after the other. At `READ COMMITTED`, these are exclusive locks on existing rows. Another host can insert a new binding for the same projection while the listing transaction is open.
 
 #### MySQL transactions
 

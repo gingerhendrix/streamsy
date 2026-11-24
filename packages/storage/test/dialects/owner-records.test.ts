@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own host in a fresh database scope. */
 /* oxlint-disable effecttsgo/async-function -- Bun owns the database fixtures. */
 import { describe, expect, test } from "vitest";
-import { Context, Effect, Layer, Option } from "effect";
+import { Array, Context, Deferred, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary } from "@streamsy/core";
 import { OWNER_RECORDS_LIST_UNSUPPORTED, OwnerRecords, fitKey } from "@streamsy/core/internal";
@@ -19,6 +19,50 @@ const dialect = sqlDialects.mysql;
 const url = dialect.url;
 
 describe.skipIf(url === undefined)("mysql owner record transactions", () => {
+  test("two transactions list and rewrite the same range one after the other", async () => {
+    if (url === undefined) return;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fresh = yield* freshDatabase(dialect, url);
+
+        const host = () =>
+          Layer.build(storageLayer().pipe(Layer.provideMerge(dialectClient(dialect, fresh))));
+
+        const hosts = [yield* host(), yield* host()];
+        const routes = ["route:a", "route:b"];
+
+        for (const route of routes)
+          yield* Context.get(hosts[0]!, OwnerRecords).write(route, "live");
+
+        let listing = 0;
+        const bothListed = yield* Deferred.make<void>();
+
+        const rewrite = (context: (typeof hosts)[number]) => {
+          const records = Context.get(context, OwnerRecords);
+
+          return Context.get(context, CommitBoundary).withTransaction(
+            Effect.gen(function* () {
+              const rows = yield* records.list("route:");
+
+              if (++listing === 2) yield* Deferred.succeed(bothListed, undefined);
+              // A listing that excludes the other one never meets it here.
+              yield* Deferred.await(bothListed).pipe(Effect.timeoutOption("500 millis"));
+
+              for (const [key] of rows) yield* records.write(key, "forgotten");
+            }),
+          );
+        };
+
+        yield* Effect.all(Array.map(hosts, rewrite), { concurrency: "unbounded" });
+
+        expect(yield* Context.get(hosts[0]!, OwnerRecords).list("route:")).toEqual(
+          Array.map(routes, (route) => [route, "forgotten"]),
+        );
+      }).pipe(Effect.scoped),
+    );
+  }, 15_000);
+
   test("lists a route committed after the first read of a transaction", async () => {
     if (url === undefined) return;
 

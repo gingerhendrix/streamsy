@@ -946,7 +946,8 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
             );
 
             const transaction = yield* Effect.serviceOption(sql.transactionService);
-            const lock = lockingRead(sql, Option.isSome(transaction) ? "share" : undefined);
+            // Forget and retire rewrite the rows they list, and shared locks would deadlock them.
+            const lock = lockingRead(sql, Option.isSome(transaction) ? "update" : undefined);
 
             const rows = yield* attempt(
               "records.list",
