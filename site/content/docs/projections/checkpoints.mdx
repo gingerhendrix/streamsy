@@ -140,23 +140,23 @@ Use `Projection.forget(bound)` to discard a binding's progress at its current ge
 
 For routed outputs, pass the binding from `declaration.at(params)` and keep its routed output declarations. A bare key or a declaration without routed outputs deletes the checkpoint and leaves the route records live, so replay can append to old data. Passing the routed binding marks the route records forgotten in the checkpoint transaction so `retire` can still find the streams.
 
-Routed forget, including the runner's automatic forget after the final unit for a gone input, requires owner-record listing. MySQL fails with `unsupported-composition` when the checkpoint exists. Forgetting an absent routed checkpoint on MySQL leaves the route records as they are. If you recreate a gone input at the same address after a successful forget, a populated wrapped output or accepted stream can make replay fail with non-retryable `invalid-output`. Raise `generation` to replay the recreated input into fresh streams. [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)
+Routed forget, including the runner's automatic forget after the final unit for a gone input, requires owner-record listing. If listing is unsupported, forgetting an existing checkpoint fails with `unsupported-composition`, and forgetting an absent checkpoint leaves the route records as they are. If you recreate a gone input at the same address after a successful forget, a populated wrapped output or accepted stream can make replay fail with non-retryable `invalid-output`. Raise `generation` to replay the recreated input into fresh streams. [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)
 
 Forget treats a checkpoint that cannot be decoded as live. If that checkpoint was a retirement tombstone, forgetting it lets the generation run again.
 
 After forgetting a live checkpoint, the next run starts at zero offsets. Handler side effects run again, even when the stream drops duplicate appends.
 
-A legacy hashed route key in the MySQL listing range fails routed forget of an existing checkpoint with `unsupported-composition`. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
+MySQL supports listing. A legacy hashed route key in the listing range makes listing unsupported for that binding. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
-| Projection kind                            | Next run at the same generation                                                                                                                                                 |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fold with no outputs                       | Rebuilds from its initial state.                                                                                                                                                |
-| `FoldByKey` into an existing State stream  | Folds the input history over the existing rows. A counter that adds each input again doubles.                                                                                   |
-| Unwrapped output with `Commit.producer`    | Restarts at producer sequence `0` in the same epoch. A stream that retains the producer position answers `Duplicate` for sequences it already accepted and drops those appends. |
-| Unwrapped output with `Commit.transaction` | Appends the replayed items after the existing items.                                                                                                                            |
-| Exclusive fixed `perGeneration` output     | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
-| Routed output                              | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
-| Views circuit                              | Starts with an empty SQL operator namespace. An output fault rolls back the unit.                                                                                               |
+| Projection kind                                                         | Next run at the same generation                                                                                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fold with no outputs                                                    | Rebuilds from its initial state.                                                                                                                                                |
+| `FoldByKey` into an existing State stream                               | Folds the input history over the existing rows. A counter that adds each input again doubles.                                                                                   |
+| Unwrapped output with `Commit.producer`                                 | Restarts at producer sequence `0` in the same epoch. A stream that retains the producer position answers `Duplicate` for sequences it already accepted and drops those appends. |
+| Unwrapped output with `Commit.transaction` or `Commit.ownerTransaction` | Appends the replayed items after the existing items.                                                                                                                            |
+| Exclusive fixed `perGeneration` output                                  | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
+| Routed output                                                           | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
+| Views circuit                                                           | Starts with an empty operator namespace. An output fault rolls back the unit.                                                                                                   |
 
 ## Retire a generation
 
@@ -196,7 +196,7 @@ Retirement writes a tombstone even if the checkpoint is absent or cannot be deco
 
 The result is `{ record, streams }`. `record` is `"retired"` or `"already-retired"`. `streams` is a flat array of `RetiredStream` entries with `{ output, id, result }`, sorted by output name and then stream id in code-unit order. It includes fixed and routed outputs, shared wrapped outputs, and the wrapped accepted stream under `"@streamsy/accepted"`. A `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared and unwrapped streams stay in place. A removed stream with a dependent fork stays reserved by stream storage.
 
-Retirement finds routed streams through the binding's live and forgotten route records. Use a declaration with the original routed output names and routes. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves the routed streams and their records in place. Retirement keeps the records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
+Retirement finds routed streams through the binding's live and forgotten route records. Use a declaration with the original routed output names and routes. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves the routed streams and their records in place. Retirement keeps the records after a close and clears them after removal. An owner store without owner-record listing support fails routed retirement with `unsupported-composition`.
 
 Routed retirement also fails with `unsupported-composition` if the MySQL listing range contains a legacy hashed route key without its full key. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 

@@ -5,7 +5,7 @@ packages:
 
 ## Retire routed streams after forgetting a binding
 
-`Projection.forget(bound)` now marks route records forgotten so `Projection.retire` can still find the streams. Replay checks that each forgotten stream starts empty and open. Pass the binding from `declaration.at(params)` with its routed outputs. MySQL lacks owner-record listing, so routed forget for an existing checkpoint and routed retirement fail with `unsupported-composition`.
+`Projection.forget(bound)` now marks route records forgotten so `Projection.retire` can still find the streams. Replay checks that each forgotten stream starts empty and open. Pass the binding from `declaration.at(params)` with its routed outputs. Routed forget for an existing checkpoint and routed retirement fail with `unsupported-composition` when the owner store cannot list the binding's records, such as a MySQL range with a legacy hashed key.
 
 `Projection.retire` can now write a tombstone over an undecodable checkpoint and clean up its streams in the same call. [Checkpoints and generations](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation)
 
