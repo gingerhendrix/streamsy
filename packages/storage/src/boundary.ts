@@ -19,9 +19,12 @@ import { commitHookRegistry, type CommitHooksApi } from "@streamsy/core/internal
 import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 interface Pending {
+  readonly transactionService: SqlClient.SqlClient["transactionService"];
+  readonly parent: Pending | undefined;
   readonly keys: Set<string>;
   /** Stream ids that the transaction's mutations wrote, for `Storage.committed`. */
   readonly ids: Set<StreamId>;
+  active: boolean;
 }
 
 class PendingInvalidations extends Context.Service<PendingInvalidations, Pending>()(
@@ -135,6 +138,7 @@ const makeBoundary = (
     if (!Number.isFinite(repairIntervalMs) || repairIntervalMs <= 0)
       return yield* Effect.die(new RangeError("repairIntervalMs must be positive"));
     const sql = yield* SqlClient.SqlClient;
+    const transactionService = sql.transactionService;
     const reactivity = yield* Reactivity.Reactivity;
     const subscriptions = new Set<ActiveSubscription>();
 
@@ -160,10 +164,41 @@ const makeBoundary = (
       }),
     );
 
+    // withoutTransforms() preserves the service. The DO driver shares it across clients.
+    const ambientTransaction = Effect.serviceOption(transactionService);
+    const currentPending = Effect.serviceOption(PendingInvalidations);
+
+    const ownedPending = currentPending.pipe(
+      Effect.map((head) => {
+        for (
+          let pending = Option.getOrUndefined(head);
+          pending !== undefined;
+          pending = pending.parent
+        ) {
+          if (pending.active && pending.transactionService === transactionService)
+            return Option.some(pending);
+        }
+
+        return Option.none();
+      }),
+    );
+
     const ownedTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
-      Effect.suspend(() => {
+      Effect.flatMap(currentPending, (parent) => {
         if (probe !== undefined) probe.transactionAttempts += 1;
-        const pending: Pending = { keys: new Set(), ids: new Set() };
+
+        let activeParent = Option.getOrUndefined(parent);
+
+        while (activeParent?.active === false) activeParent = activeParent.parent;
+
+        const pending: Pending = {
+          transactionService,
+          parent: activeParent,
+          keys: new Set(),
+          ids: new Set(),
+          active: true,
+        };
+
         let bodyCompleted = false;
 
         // Hooks run last in the body, so a hook's SqlError is retryable like a body error.
@@ -173,6 +208,12 @@ const makeBoundary = (
           Effect.tap(() =>
             Effect.sync(() => {
               bodyCompleted = true;
+            }),
+          ),
+          // SqlClient.afterCommit callbacks can capture this context and run after COMMIT.
+          Effect.ensuring(
+            Effect.sync(() => {
+              pending.active = false;
             }),
           ),
         );
@@ -210,10 +251,10 @@ const makeBoundary = (
       });
 
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
-      Effect.flatMap(Effect.serviceOption(PendingInvalidations), (owned) => {
-        if (Option.isSome(owned)) return body;
+      Effect.flatMap(ownedPending, (pending) => {
+        if (Option.isSome(pending)) return body;
 
-        return Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) => {
+        return Effect.flatMap(ambientTransaction, (ambient) => {
           if (Option.isSome(ambient))
             return Effect.die(
               new Error("Commit boundary cannot enter an unowned ambient SQL transaction"),
@@ -224,15 +265,14 @@ const makeBoundary = (
       });
 
     const mutation: BoundaryRuntime["mutation"] = ({ keys, ids, effect, retryable }) =>
-      Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
-        Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pendingBefore) => {
-          // This check is deliberately before `effect`: a foreign raw ambient
-          // transaction cannot execute an unnotified storage statement.
+      Effect.flatMap(ambientTransaction, (ambient) =>
+        Effect.flatMap(ownedPending, (pendingBefore) => {
+          // A mutation joins an owned ambient transaction or opens its own.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
 
           const run = Effect.tap(effect, () =>
-            Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pending) => {
+            Effect.flatMap(ownedPending, (pending) => {
               if (Option.isNone(pending))
                 return Effect.die(new Error("CommitBoundary owner context disappeared"));
 

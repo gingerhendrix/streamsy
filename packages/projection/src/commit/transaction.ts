@@ -79,6 +79,19 @@ const retireInTransaction = (request: RetireRequest) =>
     );
   });
 
+/**
+ * Run and checkpoint a unit on one SQL owner. On the same client the unit joins
+ * the outer transaction without a savepoint. With two boundaries over one client,
+ * only the outer boundary's hooks and `committed` subscribers see the commit.
+ *
+ * On another SQL client the unit opens its own transaction. It commits first and
+ * survives an outer rollback. Use one client per database for nested work. With
+ * two clients on one database, SQLite can wait until it reports a busy lock.
+ * Postgres or MySQL can wait for a row lock that the outer transaction holds.
+ *
+ * Durable Object clients share the driver's transaction, so a second client
+ * joins the first. Using a second object's storage on one fiber is unsupported.
+ */
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({
     name: "transaction",
@@ -200,7 +213,10 @@ export const transaction = withPrepare(
   }),
 ).pipe(withAccepted);
 
-/** Clean up binding state in the owner transaction on both forget and retire. */
+/**
+ * Clean up binding state in the owner's SQL transaction on forget and retire.
+ * The boundary follows the same nesting rules as {@link transaction}.
+ */
 export const transactionWithCleanup = (
   cleanup: (key: ProjectionKey, sql: SqlClient.SqlClient) => Effect.Effect<void, ProjectionFault>,
 ) =>
