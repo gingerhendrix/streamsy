@@ -56,34 +56,26 @@ export interface TransactionParticipant {
   readonly onRollback: () => void;
 }
 
-class MemoryEnlistDefect extends Schema.TaggedError<
-  MemoryEnlistDefect,
+class MemoryEnlistFault extends Schema.TaggedError<
+  MemoryEnlistFault,
   { readonly brand: unique symbol }
->()("MemoryEnlistDefect", {
+>()("MemoryEnlistFault", {
   message: Schema.String,
 }) {}
+
+const rejectEnlist = () =>
+  Effect.fail(
+    new MemoryEnlistFault({ message: "Enlisting requires the active memory owner fiber" }),
+  );
 
 /** Join the memory owner transaction open on this fiber. */
 export function enlist(
   // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
   owner: object,
   participant: TransactionParticipant,
-  onReject: "fail",
-): Effect.Effect<void, MemoryEnlistDefect>;
-// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
-export function enlist(owner: object, participant: TransactionParticipant): Effect.Effect<void>;
-// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
-export function enlist(owner: object, participant: TransactionParticipant, onReject?: "fail") {
-  const reject = () => {
-    const fault = new MemoryEnlistDefect({
-      message: "Enlisting requires the active memory owner fiber",
-    });
-
-    return onReject === "fail" ? Effect.fail(fault) : Effect.die(fault);
-  };
-
-  return Effect.flatMap(activeDraft(owner, reject), (draft) => {
-    if (Option.isNone(draft)) return reject();
+): Effect.Effect<void, MemoryEnlistFault> {
+  return Effect.flatMap(activeDraft(owner, rejectEnlist), (draft) => {
+    if (Option.isNone(draft)) return rejectEnlist();
 
     draft.value.participants.add(participant);
 

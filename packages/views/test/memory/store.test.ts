@@ -117,7 +117,7 @@ describe("Memory Views store", () => {
         expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
           _tag: "Some",
           value: {
-            _tag: "MemoryEnlistDefect",
+            _tag: "MemoryEnlistFault",
             message: "Enlisting requires the active memory owner fiber",
           },
         });

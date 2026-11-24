@@ -21,9 +21,8 @@ export interface Accumulator {
 }
 
 /** The typed rejection returned by the memory owner's enlist operation. */
-export interface MemoryEnlistFailure extends Error {
-  readonly _tag: "MemoryEnlistDefect";
-}
+export type MemoryEnlistFailure = Error &
+  Pick<Effect.Error<ReturnType<typeof import("@streamsy/core/internal").enlist>>, "_tag">;
 
 export type Query<A> = Effect.Effect<A, SqlError.SqlError | ViewDataFault | MemoryEnlistFailure>;
 

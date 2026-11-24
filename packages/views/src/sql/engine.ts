@@ -215,7 +215,7 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     });
 
     return yield* backend.atomic(run).pipe(
-      Effect.catchTag("MemoryEnlistDefect", (cause) => Effect.fail(new SqlEngineFault({ cause }))),
+      Effect.catchTag("MemoryEnlistFault", (cause) => Effect.fail(new SqlEngineFault({ cause }))),
       Effect.catchDefect((cause) =>
         Effect.fail(Schema.is(ViewDataFault)(cause) ? cause : new SqlEngineFault({ cause })),
       ),

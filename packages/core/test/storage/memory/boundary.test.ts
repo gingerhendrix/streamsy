@@ -180,33 +180,25 @@ test("enlist requires the matching draft on the owner fiber", () =>
         },
       };
 
-      const registration = enlist(ownerOf(boundary), participant, "fail");
+      const registration = enlist(ownerOf(boundary), participant);
       const noDraft = yield* registration.pipe(Effect.exit);
       expect(Exit.isFailure(noDraft) && Cause.findErrorOption(noDraft.cause)).toMatchObject({
         _tag: "Some",
         value: {
-          _tag: "MemoryEnlistDefect",
+          _tag: "MemoryEnlistFault",
           message: "Enlisting requires the active memory owner fiber",
         },
       });
 
-      const defaultExit = yield* enlist(ownerOf(boundary), participant).pipe(Effect.exit);
-      expect(
-        Exit.isFailure(defaultExit) && Result.getOrThrow(Cause.findDefect(defaultExit.cause)),
-      ).toMatchObject({
-        _tag: "MemoryEnlistDefect",
-        message: "Enlisting requires the active memory owner fiber",
-      });
-
       yield* boundary.withTransaction(
         Effect.gen(function* () {
-          const wrongOwner = yield* enlist({}, participant, "fail").pipe(Effect.exit);
+          const wrongOwner = yield* enlist({}, participant).pipe(Effect.exit);
           expect(
             Exit.isFailure(wrongOwner) && Cause.findErrorOption(wrongOwner.cause),
           ).toMatchObject({
             _tag: "Some",
             value: {
-              _tag: "MemoryEnlistDefect",
+              _tag: "MemoryEnlistFault",
               message: "Enlisting requires the active memory owner fiber",
             },
           });
@@ -218,7 +210,7 @@ test("enlist requires the matching draft on the owner fiber", () =>
           ).toMatchObject({
             _tag: "Some",
             value: {
-              _tag: "MemoryEnlistDefect",
+              _tag: "MemoryEnlistFault",
               message: "Enlisting requires the active memory owner fiber",
             },
           });
@@ -346,7 +338,7 @@ test("enlist rejects a captured draft after the transaction ends", () =>
       const captured = yield* boundary.withTransaction(Effect.context());
       const participant = { onCommit: () => {}, onRollback: () => {} };
 
-      const exit = yield* enlist(ownerOf(boundary), participant, "fail").pipe(
+      const exit = yield* enlist(ownerOf(boundary), participant).pipe(
         Effect.provideContext(captured),
         Effect.exit,
       );
@@ -354,7 +346,7 @@ test("enlist rejects a captured draft after the transaction ends", () =>
       expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
         _tag: "Some",
         value: {
-          _tag: "MemoryEnlistDefect",
+          _tag: "MemoryEnlistFault",
           message: "Enlisting requires the active memory owner fiber",
         },
       });

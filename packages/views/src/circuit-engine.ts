@@ -79,7 +79,7 @@ export const circuitErrors = <A, R>(
 ): Effect.Effect<A, CircuitError, R> =>
   body.pipe(
     Effect.catchTags({
-      MemoryEnlistDefect: () => Effect.fail(memoryEnlistFault()),
+      MemoryEnlistFault: () => Effect.fail(memoryEnlistFault()),
       SqlError: (cause) =>
         new ProjectionFault({
           phase: "process",

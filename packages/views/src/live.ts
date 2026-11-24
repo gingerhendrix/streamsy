@@ -124,7 +124,7 @@ function liveCommit(
               yield* enlist(tx.owner, {
                 onCommit: () => publish?.(),
                 onRollback: discard,
-              });
+              }).pipe(Effect.orDie);
 
               // This declaration has no prepare, accepted stream or outputs.
               const run = pending.run.pipe(
@@ -145,7 +145,7 @@ function liveCommit(
         )
         .pipe(
           Effect.catchTags({
-            MemoryEnlistDefect: Effect.die,
+            MemoryEnlistFault: Effect.die,
             SqlError: (cause) =>
               Effect.fail(
                 new ProjectionFault({
@@ -323,7 +323,7 @@ export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
                         outputs.close();
                       },
                       onRollback: () => {},
-                    }),
+                    }).pipe(Effect.orDie),
                   ),
                 ),
               )

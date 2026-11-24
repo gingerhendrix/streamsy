@@ -466,13 +466,13 @@ layer(sqlite, { buildPerTest: true })((it) => {
       const participant = { onCommit: () => {}, onRollback: () => {} };
 
       const exit = yield* boundary
-        .withTransaction(enlist(ownerOf(boundary), participant, "fail"))
+        .withTransaction(enlist(ownerOf(boundary), participant))
         .pipe(Effect.exit);
 
       expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
         _tag: "Some",
         value: {
-          _tag: "MemoryEnlistDefect",
+          _tag: "MemoryEnlistFault",
           message: "Enlisting requires the active memory owner fiber",
         },
       });

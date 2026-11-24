@@ -289,7 +289,7 @@ const commit = Commit.ownerTransactionWithCleanup((key) =>
   currentBackend.pipe(
     Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
     Effect.mapError((error) => {
-      const cause = Predicate.isTagged(error, "MemoryEnlistDefect") ? memoryEnlistFault() : error;
+      const cause = Predicate.isTagged(error, "MemoryEnlistFault") ? memoryEnlistFault() : error;
       const wrongOwner = Predicate.isTagged(cause, "ViewFault");
 
       return new ProjectionFault({
