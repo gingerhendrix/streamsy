@@ -64,12 +64,47 @@ for (const fixture of serverFixtures) {
       }),
     );
 
+    for (const field of ["sort_key", "row_key"] as const) {
+      for (const reverse of [false, true]) {
+        it.live(
+          `repairs a saturated ${field} tie in ${reverse ? "reverse" : "forward"} order`,
+          () =>
+            Effect.gen(function* () {
+              const backend = yield* createBackend(fixture);
+              const store = backend.store("long-ties");
+              const prefix = "x".repeat(1040);
+              const index_key = "tied";
+
+              const rows = Array.makeBy(12, (i) => {
+                const suffix = i.toString().padStart(2, "0");
+
+                return {
+                  row_key: encodeRowKey(field === "row_key" ? prefix + suffix : suffix + prefix),
+                  sort_key: scalarKey(field === "sort_key" ? prefix + suffix : 0),
+                };
+              });
+
+              const unordered = Array.makeBy(rows.length, (i) => ({
+                ...rows[(i * 7 + 5) % rows.length]!,
+                index_key,
+              }));
+
+              yield* store.indexPut("a", unordered);
+
+              const expected = (reverse ? Array.reverse(rows) : rows).slice(0, 3);
+              expect(yield* store.lookup("a", index_key, 3, reverse)).toEqual(expected);
+            }),
+        );
+      }
+    }
+
     it.live("rolls back prior chunks when a concurrent batch rejects a row key", () =>
       Effect.gen(function* () {
         const backend = yield* createBackend(fixture);
         const store = backend.store("rollback");
         const lone = "\ud800";
         const first = Array.makeBy(20, (i) => ({ key: `key-${i}`, row: {} }));
+
         const write = store.put("rows", [
           ...first,
           { key: "sibling", row: {} },

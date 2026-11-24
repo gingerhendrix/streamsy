@@ -1,6 +1,6 @@
 import { Effect } from "effect";
+import { backendFor } from "../support/backends.ts";
 import { SqlClient } from "effect/sql";
-import { backendFor } from "../../src/sql/backend.ts";
 import { migrate } from "../../src/sql/sqlite.ts";
 import type { OutputChange } from "../../src/sql/engine.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";

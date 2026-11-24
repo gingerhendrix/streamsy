@@ -34,11 +34,6 @@ export interface ServerDialect {
   readonly withMigrationLock: (sql: SqlClient.SqlClient, migrate: Migration) => Migration;
 }
 
-export interface ServerOptions {
-  readonly prefixLength?: number;
-  readonly onTieRepair?: () => void;
-}
-
 const digest = (bytes: Bytes) => globalThis.crypto.subtle.digest("SHA-256", bytes);
 
 const hashBytes = (bytes: Bytes) =>
@@ -78,13 +73,14 @@ const hashKeys = (node: string, keys: readonly string[]) =>
 
 const hashKey = (node: string, key: string) => Effect.flatMap(keyBytes(node, key), hashBytes);
 
-function ordPrefix(sortKey: string, row: Bytes, limit: number): Bytes {
+function ordPrefix(sortKey: string, row: Bytes): Bytes {
   // sort_key is ASCII hex. Leave a zero between it and the UTF-8 row key.
-  const sort = encoder.encode(sortKey.slice(0, limit));
-  const prefix = new Uint8Array(Math.min(limit, sort.length + 1 + row.length));
+  const sort = encoder.encode(sortKey.slice(0, prefixLength));
+  const prefix = new Uint8Array(Math.min(prefixLength, sort.length + 1 + row.length));
   prefix.set(sort);
 
-  if (sort.length < limit) prefix.set(row.subarray(0, limit - sort.length - 1), sort.length + 1);
+  if (sort.length < prefixLength)
+    prefix.set(row.subarray(0, prefixLength - sort.length - 1), sort.length + 1);
 
   return prefix;
 }
@@ -136,14 +132,28 @@ export const migrateServer = (sql: SqlClient.SqlClient, dialect: ServerDialect):
     }),
   );
 
+const arrangementEntry = (arrangement: string, entry: IndexEntry) =>
+  Effect.gen(function* () {
+    const row_key = yield* keyBytes(arrangement, entry.row_key);
+
+    const [index_hash, row_hash] = yield* Effect.all([hash(entry.index_key), hashBytes(row_key)], {
+      concurrency: "unbounded",
+    });
+
+    return {
+      index_hash,
+      ord_prefix: ordPrefix(entry.sort_key, row_key),
+      row_hash,
+      sort_key: entry.sort_key,
+      row_key,
+    };
+  });
+
 function storeFor(
   sql: SqlClient.SqlClient,
   namespaceHash: Effect.Effect<Bytes>,
   dialect: ServerDialect,
-  options: ServerOptions,
 ): Store {
-  const length = options.prefixLength ?? prefixLength;
-
   const integralUpsert = sql.literal(
     dialect.upsert(["ns", "relation", "row_hash"], ["row_key", "value"]),
   );
@@ -157,24 +167,6 @@ function storeFor(
   );
 
   const doNothing = sql.literal(dialect.doNothing);
-
-  const arrangementEntry = (arrangement: string, entry: IndexEntry) =>
-    Effect.gen(function* () {
-      const row_key = yield* keyBytes(arrangement, entry.row_key);
-
-      const [index_hash, row_hash] = yield* Effect.all(
-        [hash(entry.index_key), hashBytes(row_key)],
-        { concurrency: "unbounded" },
-      );
-
-      return {
-        index_hash,
-        ord_prefix: ordPrefix(entry.sort_key, row_key, length),
-        row_hash,
-        sort_key: entry.sort_key,
-        row_key,
-      };
-    });
 
   return {
     rows: (relation) =>
@@ -327,8 +319,11 @@ function storeFor(
 
         const last = rows.at(-1);
 
-        if (limit !== undefined && rows.length === limit && last?.ord_prefix.length === length) {
-          options.onTieRepair?.();
+        if (
+          limit !== undefined &&
+          rows.length === limit &&
+          last?.ord_prefix.length === prefixLength
+        ) {
           const tied = yield* sql<ArrangementRow>`${base} AND ord_prefix = ${last.ord_prefix}`;
           rows = [
             ...Arr.filter(rows, (row) => !sameBytes(row.ord_prefix, last.ord_prefix)),
@@ -434,11 +429,7 @@ function storeFor(
   };
 }
 
-export function serverBackend(
-  sql: SqlClient.SqlClient,
-  dialect: ServerDialect,
-  options: ServerOptions = {},
-): Backend {
+export function serverBackend(sql: SqlClient.SqlClient, dialect: ServerDialect): Backend {
   // A circuit gets one backend per unit. Share the namespace digest across its
   // guard, normalization and engine work.
   const hashes = new Map<string, Promise<ArrayBuffer>>();
@@ -460,7 +451,7 @@ export function serverBackend(
 
       return encoder.encode(id).length > idLimit ? idFault(id) : undefined;
     },
-    store: (namespace) => storeFor(sql, namespaceHash(namespace), dialect, options),
+    store: (namespace) => storeFor(sql, namespaceHash(namespace), dialect),
     circuit: (namespace) => ({
       load: Effect.gen(function* () {
         const ns = yield* namespaceHash(namespace);

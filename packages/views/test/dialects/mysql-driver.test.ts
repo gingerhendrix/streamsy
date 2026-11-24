@@ -2,9 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
 import { View } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
 import { dialectClient } from "../../../storage/test/dialects/support.ts";
-import { fixtureDatabase, mysql } from "../support/backends.ts";
+import { backendFor, fixtureDatabase, mysql } from "../support/backends.ts";
 
 describe.skipIf(mysql.server.url === undefined)("MySQL Views driver", () => {
   it.live("preserves bound binary bytes under different connection character sets", () =>

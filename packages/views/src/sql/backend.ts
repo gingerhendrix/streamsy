@@ -39,9 +39,6 @@ export const backendFactoryFor = (
     () => Effect.succeed(() => serverBackend(sql, mysqlServer)),
   );
 
-export const backendFor = (sql: SqlClient.SqlClient): Effect.Effect<Backend, ViewFault> =>
-  Effect.map(backendFactoryFor(sql), (create) => create());
-
 export const migrateBackend = (
   sql: SqlClient.SqlClient,
 ): Effect.Effect<void, SqlError.SqlError | ViewFault> =>

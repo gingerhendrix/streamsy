@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test provisions its own database. */
 /* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine or test scheduler. */
 import { expect, it } from "@effect/vitest";
+import { backendFor } from "../support/backends.ts";
 import { CommitBoundary, DurableState, StreamAddress, Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import {
@@ -17,7 +18,6 @@ import {
 } from "@tanstack/db-ivm";
 import { Array as Arr, Effect, Option, Order as Ord, Record as Rec, Schema } from "effect";
 import { SqlClient } from "effect/sql";
-import { backendFor } from "../../src/sql/backend.ts";
 import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import { normalize } from "../../src/sql/normalize.ts";
 import { dataFault } from "../../src/sql/data-fault.ts";

@@ -4,9 +4,8 @@ import { CheckpointStore, NonRetryable, OwnerTransaction, Projection } from "@st
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { View, ViewBackend, ViewFault } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
 import { currentBackend } from "../../src/view-backend.ts";
-import { client, hostFor, sqlite } from "../support/backends.ts";
+import { backendFor, client, hostFor, sqlite } from "../support/backends.ts";
 import { sqlDump } from "../support/layout-dump.ts";
 import {
   editLayout,

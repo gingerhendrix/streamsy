@@ -69,14 +69,16 @@ for (const transactions of [
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
   );
 
-  baseIt.effect("SQL and owner transactions share a boundary", () =>
-    Effect.gen(function* () {
-      const transaction = yield* Transaction;
-      const owner = yield* OwnerTransaction;
-      expect(owner.owner).toBe(transaction.owner);
-      expect(owner.withTransaction).toBe(transaction.withTransaction);
-    }).pipe(Effect.provide(host)),
-  );
+  layer(host)((it) => {
+    it.effect("SQL and owner transactions share a boundary", () =>
+      Effect.gen(function* () {
+        const transaction = yield* Transaction;
+        const owner = yield* OwnerTransaction;
+        expect(owner.owner).toBe(transaction.owner);
+        expect(owner.withTransaction).toBe(transaction.withTransaction);
+      }),
+    );
+  });
 }
 
 baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkpoint", () =>

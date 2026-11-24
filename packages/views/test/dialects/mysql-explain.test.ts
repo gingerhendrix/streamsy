@@ -2,9 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Array, Context, Effect, Layer } from "effect";
 import { SqlClient, Statement } from "effect/sql";
 import { View } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
 import { encodeRowKey } from "../../src/runtime/key.ts";
-import { client, mysql } from "../support/backends.ts";
+import { backendFor, client, mysql } from "../support/backends.ts";
 
 interface Plan {
   readonly key: string | null;

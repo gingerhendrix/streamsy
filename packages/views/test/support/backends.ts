@@ -12,7 +12,7 @@ import {
   type SqlDialect,
 } from "../../../storage/test/dialects/support.ts";
 import { View, ViewBackend } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
+import { backendFactoryFor } from "../../src/sql/backend.ts";
 
 export interface SqlFixture {
   readonly name: string;
@@ -66,6 +66,9 @@ export const hostFor = <const Keys extends readonly Streamsy.Any[]>(
         ),
       )
     : sqlHost(group).pipe(Layer.provideMerge(fixtureClient(fixture.server)));
+
+export const backendFor = (sql: SqlClient.SqlClient) =>
+  Effect.map(backendFactoryFor(sql), (create) => create());
 
 export const createBackend = (fixture: SqlFixture) =>
   Effect.gen(function* () {

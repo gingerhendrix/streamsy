@@ -1,9 +1,9 @@
 import { expect, it } from "@effect/vitest";
+import { backendFor } from "../support/backends.ts";
 import { Effect, Layer } from "effect";
 import { Reactivity } from "effect/reactivity";
 import { SqlClient, Statement } from "effect/sql";
 import { View, ViewBackend, ViewFault } from "../../src/index.ts";
-import { backendFor } from "../../src/sql/backend.ts";
 
 it.live("rejects unsupported SQL dialects in backend selection and the public migration", () =>
   Effect.gen(function* () {

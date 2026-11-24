@@ -10,7 +10,7 @@ import { shopPlans } from "./fixtures.ts";
 
 import { identity, materialize } from "./support.ts";
 
-export const engineConformance = (backend: Backend, seeds: number) =>
+export const engineConformance = (backend: Backend, seeds: number, orderKeyPrefix = "") =>
   Effect.gen(function* () {
     const started = performance.now();
     const plans = shopPlans(true);
@@ -38,7 +38,7 @@ export const engineConformance = (backend: Backend, seeds: number) =>
         const change = () => {
           const isOrder = random(4) !== 0;
           const sourceId = isOrder ? "orders" : "customers";
-          const key = isOrder ? `o-${random(12)}` : `c-${random(4)}`;
+          const key = isOrder ? `${orderKeyPrefix}o-${random(12)}` : `c-${random(4)}`;
           const rows = isOrder ? orders : customers;
 
           if (random(5) === 0) {
