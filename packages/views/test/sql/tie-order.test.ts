@@ -167,9 +167,11 @@ it.live("sums floating-point operands in encoded row-key order", () =>
   }).pipe(Effect.provide(sqlite)),
 );
 
-it("orders lone surrogates as replacement characters", () => {
-  expect(compareRowKeys("s1:\ud800", "s1:\ufffd")).toBe(0);
-  expect(compareRowKeys("s1:\udfff", "s1:\ufffd")).toBe(0);
+it("orders lone surrogates as replacement characters and breaks ties by code unit", () => {
+  expect(compareRowKeys("s1:\ud800", "s1:\udfff")).toBeLessThan(0);
+  expect(compareRowKeys("s1:\udfff", "s1:\ufffd")).toBeLessThan(0);
+  expect(compareRowKeys("s1:\ufffd", "s1:\udfff")).toBeGreaterThan(0);
+  expect(compareRowKeys("s1:\udfff", "s1:\udfff")).toBe(0);
   expect(compareRowKeys("s1:\ue000", "s1:\ud800")).toBeLessThan(0);
   expect(compareRowKeys("s2:\ud800a", "s2:\ufffdb")).toBeLessThan(0);
   expect(compareRowKeys("s2:\ud800a", "s2:😀")).toBeLessThan(0);

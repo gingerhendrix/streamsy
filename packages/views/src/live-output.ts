@@ -8,10 +8,9 @@ import { compareRowKeys, encodeRowKey } from "./runtime/key.ts";
 import type { OutputChange } from "./sql/engine.ts";
 
 const snapshotKeyOrder = Order.make<string>((left, right) => {
-  // UTF-8 replacement makes lone surrogates compare equal to each other and U+FFFD.
   const order = compareRowKeys(left, right);
 
-  return order < 0 ? -1 : order > 0 ? 1 : Order.String(left, right);
+  return order < 0 ? -1 : order > 0 ? 1 : 0;
 });
 
 type Tails = Readonly<Record<string, { readonly offset: Offset }>>;

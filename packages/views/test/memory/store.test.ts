@@ -2,7 +2,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { CommitBoundary, Streamsy } from "@streamsy/core";
 import { Array as Arr, Cause, Effect, Exit, Fiber } from "effect";
-import { compareRowKeys, encodeRowKey } from "../../src/runtime/key.ts";
+import { encodeRowKey } from "../../src/runtime/key.ts";
 import { currentBackend } from "../../src/view-backend.ts";
 import { inBackend, memoryHost } from "../support/memory.ts";
 import { storeContract } from "../support/store-contract.ts";
@@ -14,7 +14,7 @@ const indexEntry = (row_key: string) => ({ row_key, index_key: "bucket", sort_ke
 describe("Memory Views store", () => {
   storeContract("Store", (run) => inBackend(run).pipe(Effect.provide(host)));
 
-  it.live("separates distinct lone surrogates whose row keys compare equal", () =>
+  it.live("separates distinct lone surrogates and lists them in code-unit order", () =>
     inBackend((backend) =>
       Effect.gen(function* () {
         const store = backend.store("board");
@@ -22,17 +22,16 @@ describe("Memory Views store", () => {
         const second = encodeRowKey("\ud801");
         const absent = encodeRowKey("\ud802");
 
-        expect(compareRowKeys(first, second)).toBe(0);
         yield* store.put("rows", [
           { key: "\ud800", row: { value: 1 } },
           { key: "\ud801", row: { value: 2 } },
         ]);
-        yield* store.indexPut("i", [indexEntry(first), indexEntry(second), indexEntry(first)]);
+        yield* store.indexPut("i", [indexEntry(second), indexEntry(first), indexEntry(second)]);
         yield* store.indexRemove("i", [indexEntry(absent)]);
-        expect(
-          new Set(Arr.map(yield* store.lookup("i", "bucket"), (entry) => entry.row_key)),
-        ).toEqual(new Set([first, second]));
-        expect(yield* store.lookup("i", "bucket")).toHaveLength(2);
+        expect(Arr.map(yield* store.lookup("i", "bucket"), (entry) => entry.row_key)).toEqual([
+          first,
+          second,
+        ]);
         yield* store.indexRemove("i", [indexEntry(first)]);
         yield* store.remove("rows", [first]);
         expect(yield* store.lookup("i", "bucket")).toEqual([{ row_key: second, sort_key: "1" }]);

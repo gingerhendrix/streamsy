@@ -57,16 +57,9 @@ function lowerBound(bucket: readonly IndexEntry[], entry: IndexEntry) {
 }
 
 function findEntry(bucket: readonly IndexEntry[], entry: IndexEntry, first: number) {
-  for (let i = first; i < bucket.length; i++) {
-    const candidate = bucket[i]!;
+  const candidate = bucket[first];
 
-    if (candidate.row_key === entry.row_key && candidate.sort_key === entry.sort_key) return i;
-
-    // Different lone surrogates can compare equal after UTF-8 replacement.
-    if (compareIndex(candidate, entry) !== 0) break;
-  }
-
-  return -1;
+  return candidate !== undefined && compareIndex(candidate, entry) === 0 ? first : -1;
 }
 
 /** One owner serializes access to these maps and the shared undo journal. */

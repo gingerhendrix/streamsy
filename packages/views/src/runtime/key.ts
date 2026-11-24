@@ -10,7 +10,10 @@ export function encodeRowKey(key: RowKey): string {
     : encodePart(key);
 }
 
-/** Order encoded row keys by code point, matching lexicographic UTF-8 byte order. */
+/**
+ * Order encoded row keys by code point, matching lexicographic UTF-8 byte order.
+ * Lone surrogates have the order of U+FFFD, then of their code units, so only equal keys tie.
+ */
 export function compareRowKeys(left: string, right: string): number {
   let i = 0,
     j = 0;
@@ -26,7 +29,7 @@ export function compareRowKeys(left: string, right: string): number {
     j += b > 0xffff ? 2 : 1;
   }
 
-  return left.length - i - (right.length - j);
+  return left.length - i - (right.length - j) || (left < right ? -1 : left > right ? 1 : 0);
 }
 
 function utf8CodePoint(point: number): number {
