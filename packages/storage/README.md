@@ -78,8 +78,10 @@ database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wa
 row lock that the outer transaction holds.
 
 Durable Object clients share the driver's transaction, so a second client joins the first.
-Use only one object's storage on a fiber. `MemoryStorage` dies when work enters another owner.
+Use only one object's storage on a fiber. `MemoryStorage` dies when work enters another
+`MemoryStorage` owner.
 
+Open the boundary first. A raw transaction on that client may be nested inside it.
 A boundary call or mutation in a raw `sql.withTransaction` without a matching
 `CommitBoundary` dies before writing. A rejected mutation fails with `MutationRejected`
 and rolls back its transaction when the failure escapes the boundary. Catch it outside the
@@ -124,6 +126,9 @@ one projection never both win. `Transaction.layer` gives the SQL-only `Transacti
 service. `Commit.transaction` uses them to commit SQL, same-owner stream
 appends, and the checkpoint together. A projection unit on a second SQL client
 opens its own transaction under the nesting rules above.
+Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client.
+With separate clients, the checkpoint commits on its own and can survive a rollback
+of the projection's transaction.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.

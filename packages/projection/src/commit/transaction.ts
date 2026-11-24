@@ -86,7 +86,6 @@ const retireInTransaction = (request: RetireRequest) =>
  *
  * Durable Object clients share the driver's transaction, so a second client
  * joins the first. Using a second object's storage on one fiber is unsupported.
- * On memory hosts, `MemoryStorage` dies when work enters another owner.
  */
 export const transaction = withPrepare(
   make<Result, SqlClient.SqlClient, CheckpointStore | Transaction>({

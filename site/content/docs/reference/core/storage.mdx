@@ -182,13 +182,17 @@ same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
 
 - A nested `withTransaction` on the same owner joins the outer transaction without a savepoint. With two boundaries over one SQL client, only the outer boundary's hooks and `committed` subscribers see the commit.
 - On another SQL client, a nested boundary or a lone `Storage.mutate` opens its own transaction. It commits first and survives an outer rollback. This also applies to units run by `Commit.transaction`.
-- Use one client per database for nested work. With two clients on one database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wait for a row lock that the outer transaction holds.
-- Durable Object clients share the driver's transaction, so a second client joins the first. Using a second object's storage on one fiber is unsupported. `MemoryStorage` dies when work enters another owner.
-- A boundary call or mutation inside raw `sql.withTransaction` needs a matching boundary on that client.
+- Work on the outer client inside the inner client's body or hooks belongs to the outer transaction. If the outer body catches a failure from the inner transaction, that work can still commit. A retry of a lone inner mutation repeats any such work in its hooks. Register the outer client's `sql.afterCommit` outside the inner body.
+- Use one client per database for nested work. With two clients on one database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wait for a row lock that the outer transaction holds. Nest clients in a consistent order across fibers. Two fibers that take clients in opposite orders can wait forever.
+- Durable Object clients share the driver's transaction, so a second client joins the first. If the second client uses another object's storage, its statements go to the first object's database. The second client's raw `sql.withTransaction` fails inside the join.
+- Open the boundary first. A raw transaction on that client may be nested inside it. A boundary call or mutation inside raw `sql.withTransaction` needs a matching boundary on that client.
+- `MemoryStorage` dies when work enters another `MemoryStorage` owner.
 - Keep `body` on the calling fiber. The memory host dies when another fiber writes in the transaction.
 - Do not wait in `body` for a wake that only its own commit publishes. The wake comes after the commit, so the wait never ends.
 
 Only a SQL host fails with `SqlError`.
+
+Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client. With separate clients, the checkpoint commits on its own and can survive a rollback of the projection's transaction. Inside a transactional handler, creating or appending to a declared output in a nested transactional projection on another client raises `unsupported-composition`, as does an append in a nested non-transactional projection on that client.
 
 ## Mutations
 

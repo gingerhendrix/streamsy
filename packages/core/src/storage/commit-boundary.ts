@@ -17,7 +17,7 @@ export interface CommitBoundaryApi {
    *
    * Durable Object clients share the driver's transaction, so a second client
    * joins the first. Using a second object's storage on one fiber is unsupported.
-   * `MemoryStorage` dies when work enters another owner.
+   * `MemoryStorage` dies when work enters another `MemoryStorage` owner.
    *
    * Keep the body on the calling fiber, and do not wait in it for wakes that only
    * its own commit publishes. Only SQL hosts fail with `SqlError`.
