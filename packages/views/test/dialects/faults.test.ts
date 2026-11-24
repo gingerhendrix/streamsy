@@ -4,10 +4,12 @@ import { DurableState, StreamAddress, Streamsy } from "@streamsy/core";
 import { NonRetryable, Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
+import { normalizeUnit } from "../../src/circuit-engine.ts";
 import { View } from "../../src/index.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { ViewDataFault } from "../../src/sql/data-fault.ts";
-import { hostFor, serverFixtures } from "../support/backends.ts";
+import { makeEngine } from "../../src/sql/engine.ts";
+import { createBackend, hostFor, serverFixtures } from "../support/backends.ts";
 
 const collections = {
   row: { key: "id", schema: Schema.Struct({ id: Schema.String, target: Schema.String }) },
@@ -78,6 +80,39 @@ for (const fixture of serverFixtures) {
         }).pipe(Effect.provide(host)),
       );
     }
+
+    it.live("validates an inactive source before preparing the circuit namespace", () =>
+      Effect.gen(function* () {
+        const backend = yield* createBackend(fixture);
+        const engine = yield* makeEngine({});
+        const id = canonicalJson([WideSource.key, "row"]);
+        const sources = new Map([[id, { state: WideSource, collection: "row" }]]);
+        const circuit = backend.circuit("invalid-source");
+        let prepared = false;
+
+        const prepareNamespace = Effect.gen(function* () {
+          prepared = true;
+          yield* circuit.save("plan");
+
+          return "invalid-source";
+        });
+
+        const failure = yield* backend
+          .atomic(normalizeUnit(engine, backend, prepareNamespace, sources, {}))
+          .pipe(Effect.flip);
+
+        expect(failure).toMatchObject({
+          _tag: "ViewDataFault",
+          view: "*",
+          node: id,
+          key: id,
+          message: `*/${id}: Views identifier for ${canonicalJson(id)} exceeds 255 UTF-8 bytes`,
+          [NonRetryable]: true,
+        });
+        expect(prepared).toBe(false);
+        expect(yield* circuit.load).toBeUndefined();
+      }),
+    );
 
     it.live("rejects an overlong UTF-8 identifier in the first unit and names the source", () =>
       Effect.gen(function* () {

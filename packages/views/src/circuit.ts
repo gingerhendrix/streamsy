@@ -500,31 +500,34 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
       Effect.gen(function* () {
         const backend = yield* currentBackend;
 
-        if (backend.validateSource !== undefined)
-          for (const source of sources.keys()) {
-            const failure = backend.validateSource(source);
-
-            if (failure !== undefined) return yield* failure;
-          }
-
         // Unit params are decoded. Re-encode through the declaration to obtain the
-        // exact checkpoint identity, including transformed parameter codecs.
-        const boundParams: Record<string, string> = {};
+        // exact checkpoint identity, including transformed parameter codecs. Source
+        // validation still runs before encoding or reading/writing the plan hash.
+        const prepareNamespace = Effect.gen(function* () {
+          const boundParams: Record<string, string> = {};
 
-        for (const [name, codec] of Record.toEntries(definition.params))
-          boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
+          for (const [name, codec] of Record.toEntries(definition.params))
+            boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
 
-        const namespace = yield* guard(
+          return yield* guard(
+            backend,
+            {
+              id: unit.projectionId,
+              generation: unit.generation,
+              params: boundParams,
+            },
+            hash,
+          );
+        });
+
+        const { namespace, changes } = yield* normalizeUnit(
+          engine,
           backend,
-          {
-            id: unit.projectionId,
-            generation: unit.generation,
-            params: boundParams,
-          },
-          hash,
+          prepareNamespace,
+          sources,
+          batch,
         );
 
-        const changes = yield* normalizeUnit(engine, backend, namespace, sources, batch);
         const changesOut = yield* engine.process(backend, namespace, changes, unit.params);
 
         type HandlerOutput = (typeof outputs)[string];

@@ -144,17 +144,18 @@ function liveCommit(
           ),
         )
         .pipe(
-          Effect.catchTag("MemoryEnlistDefect", Effect.die),
-          Effect.catchTag("SqlError", (cause) =>
-            Effect.fail(
-              new ProjectionFault({
-                phase: "process",
-                reason: "storage-failure",
-                message: "Cannot update live circuit state",
-                cause,
-              }),
-            ),
-          ),
+          Effect.catchTags({
+            MemoryEnlistDefect: Effect.die,
+            SqlError: (cause) =>
+              Effect.fail(
+                new ProjectionFault({
+                  phase: "process",
+                  reason: "storage-failure",
+                  message: "Cannot update live circuit state",
+                  cause,
+                }),
+              ),
+          }),
         ),
   });
 }
@@ -224,7 +225,14 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
       process: (batch, unit) =>
         Effect.gen(function* () {
           const publish = yield* LiveUnit;
-          const changes = yield* normalizeUnit(engine, backend, namespace, sources, batch);
+
+          const { changes } = yield* normalizeUnit(
+            engine,
+            backend,
+            Effect.succeed(namespace),
+            sources,
+            batch,
+          );
 
           publish(yield* engine.process(backend, namespace, changes, unit.params));
         }).pipe(circuitErrors),

@@ -3,7 +3,7 @@ import { StreamAddress } from "@streamsy/core";
 import { encodeRowKey } from "../runtime/key.ts";
 import { type DataFault } from "./data-fault.ts";
 import type { StateChange } from "./engine.ts";
-import type { Backend } from "../backend.ts";
+import type { Store } from "../store.ts";
 
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-known-value-widening -- Keep unvalidated State values intact for the JSON decoder. */
 function omitUndefinedMembers(value: unknown): unknown {
@@ -69,8 +69,7 @@ function omitUndefinedMembers(value: unknown): unknown {
  * Ordinary units touch keys only; resets and snapshot-end may visit a relation.
  */
 export const normalize = Effect.fn("View.normalize")(function* (
-  backend: Backend,
-  namespace: string,
+  store: Store,
   sourceId: string,
   relation: string,
   collection: string,
@@ -78,11 +77,6 @@ export const normalize = Effect.fn("View.normalize")(function* (
   events: readonly StreamAddress.CollectionsEvent<StreamAddress.Collections>[],
   snapshotOpen: boolean,
 ) {
-  const failure = backend.validateSource?.(sourceId);
-
-  if (failure !== undefined) return yield* failure;
-
-  const store = backend.store(namespace);
   const pending = new Map<string, StateChange>();
   const marker = `@snapshot/${sourceId}`;
   const markerKey = encodeRowKey(sourceId);

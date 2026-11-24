@@ -598,8 +598,7 @@ export function registerViewConformance(fixture: Fixture) {
               const snapshotOpen = state.snapshot !== undefined;
 
               const nodeChanges = yield* normalize(
-                backend,
-                namespace,
+                store,
                 nodeSource,
                 nodeRelation,
                 "node",
@@ -609,8 +608,7 @@ export function registerViewConformance(fixture: Fixture) {
               );
 
               const memberChanges = yield* normalize(
-                backend,
-                namespace,
+                store,
                 memberSource,
                 memberRelation,
                 "member",

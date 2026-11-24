@@ -12,16 +12,24 @@ import { memoryEnlistFault } from "./view-backend.ts";
 import { ViewFault } from "./view-fault.ts";
 import type { Input } from "./view.ts";
 
-export const normalizeUnit = (
+export const normalizeUnit = <E>(
   engine: SqlEngine,
   backend: Backend,
-  namespace: string,
+  prepareNamespace: Effect.Effect<string, E>,
   sources: ReadonlyMap<string, { readonly state: Input; readonly collection: string }>,
   batch: Slices<Readonly<Record<string, ReturnType<Input["at"]>>>>,
 ) =>
   Effect.gen(function* () {
-    const changes: StateChange[] = [];
+    if (backend.validateSource !== undefined)
+      for (const source of sources.keys()) {
+        const failure = backend.validateSource(source);
+
+        if (failure !== undefined) return yield* failure;
+      }
+
+    const namespace = yield* prepareNamespace;
     const store = backend.store(namespace);
+    const changes: StateChange[] = [];
 
     const active = Array.flatMap([...sources], ([sourceId, input]) => {
       const slice = batch[input.state.key];
@@ -48,8 +56,7 @@ export const normalizeUnit = (
       if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
       changes.push(
         ...(yield* normalize(
-          backend,
-          namespace,
+          store,
           sourceId,
           source.value.id,
           input.collection,
@@ -60,7 +67,7 @@ export const normalizeUnit = (
       );
     }
 
-    return changes;
+    return { namespace, changes };
   });
 
 export const circuitErrors = <A, R>(

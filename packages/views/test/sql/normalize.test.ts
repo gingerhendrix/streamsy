@@ -6,16 +6,15 @@ import { encodeRowKey } from "../../src/runtime/key.ts";
 import { dataFault } from "../../src/sql/data-fault.ts";
 import { makeEngine } from "../../src/sql/engine.ts";
 import { normalize } from "../../src/sql/normalize.ts";
-import type { Backend } from "../../src/backend.ts";
+import type { Store } from "../../src/store.ts";
 import { migratedSqliteBackend } from "./support.ts";
 import { plan, source } from "./fixtures.ts";
 
 const fault = dataFault({ view: "rows", node: "r0" });
 
-const normalizeUpsert = (backend: Backend, value: { readonly id: string }) =>
+const normalizeUpsert = (store: Store, value: { readonly id: string }) =>
   normalize(
-    backend,
-    "test",
+    store,
     "rows",
     "r0",
     "row",
@@ -41,7 +40,7 @@ it.live("omits undefined object members before storing or comparing State upsert
 
     const expected = { id: "one", nested: { kept: null }, items: [{ kept: true }] };
 
-    const upsert = yield* normalizeUpsert(backend, value);
+    const upsert = yield* normalizeUpsert(store, value);
 
     expect(upsert).toStrictEqual([
       { kind: "upsert", sourceId: "rows", key: "one", value: expected },
@@ -54,7 +53,7 @@ it.live("omits undefined object members before storing or comparing State upsert
       row: expected,
     });
 
-    const equivalent = yield* normalizeUpsert(backend, expected);
+    const equivalent = yield* normalizeUpsert(store, expected);
     expect(yield* engine.process(backend, "test", equivalent)).toStrictEqual([]);
   }).pipe(Effect.provide(sqlite)),
 );
@@ -62,6 +61,7 @@ it.live("omits undefined object members before storing or comparing State upsert
 it.live("keeps invalid State values as non-retryable data faults", () =>
   Effect.gen(function* () {
     const backend = yield* migratedSqliteBackend;
+    const store = backend.store("test");
 
     class Instance {
       readonly absent = undefined;
@@ -80,7 +80,7 @@ it.live("keeps invalid State values as non-retryable data faults", () =>
       cycle,
     })) {
       const value = { id: "one", absent: undefined, invalid };
-      const result = yield* normalizeUpsert(backend, value).pipe(Effect.result);
+      const result = yield* normalizeUpsert(store, value).pipe(Effect.result);
 
       expect(result, label).toMatchObject({
         _tag: "Failure",
