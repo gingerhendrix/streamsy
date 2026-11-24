@@ -7,7 +7,8 @@ import { encodeRowKey } from "./runtime/key.ts";
 import { dataFault } from "./sql/data-fault.ts";
 import { type SqlEngine, type SqlEngineFault, type StateChange } from "./sql/engine.ts";
 import { normalize } from "./sql/normalize.ts";
-import { catchMemoryEnlist } from "./view-backend.ts";
+import type { MemoryEnlistFailure } from "./store.ts";
+import { memoryEnlistFault } from "./view-backend.ts";
 import { ViewFault } from "./view-fault.ts";
 import type { Input } from "./view.ts";
 
@@ -63,11 +64,15 @@ export const normalizeUnit = (
   });
 
 export const circuitErrors = <A, R>(
-  body: Effect.Effect<A, CircuitError | SqlError.SqlError | Schema.SchemaError | SqlEngineFault, R>,
+  body: Effect.Effect<
+    A,
+    CircuitError | SqlError.SqlError | Schema.SchemaError | SqlEngineFault | MemoryEnlistFailure,
+    R
+  >,
 ): Effect.Effect<A, CircuitError, R> =>
   body.pipe(
-    catchMemoryEnlist,
     Effect.catchTags({
+      MemoryEnlistDefect: () => Effect.fail(memoryEnlistFault()),
       SqlError: (cause) =>
         new ProjectionFault({
           phase: "process",

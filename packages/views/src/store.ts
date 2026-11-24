@@ -1,6 +1,8 @@
+import type { enlist } from "@streamsy/core/internal";
 import type { Effect } from "effect";
 import type { SqlError } from "effect/sql";
 import type { JsonObject, RowKey } from "./ir/contracts.ts";
+import type { ViewDataFault } from "./sql/data-fault.ts";
 
 export interface Entry {
   readonly key: RowKey;
@@ -19,7 +21,9 @@ export interface Accumulator {
   readonly integerMass?: Readonly<Record<string, number>>;
 }
 
-export type Query<A> = Effect.Effect<A, SqlError.SqlError>;
+export type MemoryEnlistFailure = Error & Pick<Effect.Error<ReturnType<typeof enlist>>, "_tag">;
+
+export type Query<A> = Effect.Effect<A, SqlError.SqlError | ViewDataFault | MemoryEnlistFailure>;
 
 /** Namespace-local operator state. Keys passed to batch reads are encoded identities. */
 export interface Store {

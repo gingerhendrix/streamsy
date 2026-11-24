@@ -64,6 +64,31 @@ for (const fixture of serverFixtures) {
       }),
     );
 
+    it.live("rolls back prior chunks when a concurrent batch rejects a row key", () =>
+      Effect.gen(function* () {
+        const backend = yield* createBackend(fixture);
+        const store = backend.store("rollback");
+        const lone = "\ud800";
+        const first = Array.makeBy(20, (i) => ({ key: `key-${i}`, row: {} }));
+        const write = store.put("rows", [
+          ...first,
+          { key: "sibling", row: {} },
+          { key: lone, row: {} },
+        ]);
+
+        const fault = yield* backend.atomic(write).pipe(Effect.flip);
+        expect(fault).toMatchObject({
+          _tag: "ViewDataFault",
+          view: "*",
+          node: "rows",
+          key: lone,
+          message: '*/rows: Key "\\ud800" contains a lone surrogate',
+          [NonRetryable]: true,
+        });
+        expect(yield* store.rows("rows")).toEqual([]);
+      }),
+    );
+
     it.live(
       "rejects ill-formed row and owner keys before persisting their replacement characters",
       () =>

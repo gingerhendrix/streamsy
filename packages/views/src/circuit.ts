@@ -27,7 +27,7 @@ import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 import { makeEngine } from "./sql/engine.ts";
 import type { Backend } from "./backend.ts";
 import { migrateBackend } from "./sql/backend.ts";
-import { catchMemoryEnlist, currentBackend, type ViewBackend } from "./view-backend.ts";
+import { currentBackend, memoryEnlistFault, type ViewBackend } from "./view-backend.ts";
 import { ViewFault } from "./view-fault.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
@@ -288,8 +288,8 @@ const guard = Effect.fn("View.guard")(function* (
 const commit = Commit.ownerTransactionWithCleanup((key) =>
   currentBackend.pipe(
     Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
-    catchMemoryEnlist,
-    Effect.mapError((cause) => {
+    Effect.mapError((error) => {
+      const cause = Predicate.isTagged(error, "MemoryEnlistDefect") ? memoryEnlistFault() : error;
       const wrongOwner = Predicate.isTagged(cause, "ViewFault");
 
       return new ProjectionFault({

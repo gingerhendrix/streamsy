@@ -83,12 +83,16 @@ export function makeMemoryBackend(
 
   // Registration is idempotent within the draft. Recheck access on every
   // operation so a forked fiber cannot use an already enlisted store.
-  const access = enlist(owner, {
-    onCommit: () => {
-      journal.length = 0;
+  const access = enlist(
+    owner,
+    {
+      onCommit: () => {
+        journal.length = 0;
+      },
+      onRollback: () => undoTo(0),
     },
-    onRollback: () => undoTo(0),
-  });
+    "fail",
+  );
 
   function write<A>(map: Map<string, A>, key: string, value: A | undefined) {
     const previous = map.get(key);

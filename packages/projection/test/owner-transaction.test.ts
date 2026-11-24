@@ -8,7 +8,6 @@ import {
   CurrentOwner,
   enlist,
   isForeignOwner,
-  isMemoryEnlistDefect,
   ownerOf,
   OwnerRecords,
 } from "@streamsy/core/internal";
@@ -461,16 +460,22 @@ layer(sqlite, { buildPerTest: true })((it) => {
     }),
   );
 
-  it.effect("enlist reports the tagged defect inside a SQLite owner transaction", () =>
+  it.effect("enlist reports a typed error inside a SQLite owner transaction", () =>
     Effect.gen(function* () {
       const boundary = yield* CommitBoundary;
       const participant = { onCommit: () => {}, onRollback: () => {} };
 
       const exit = yield* boundary
-        .withTransaction(enlist(ownerOf(boundary), participant))
+        .withTransaction(enlist(ownerOf(boundary), participant, "fail"))
         .pipe(Effect.exit);
 
-      expect(Exit.isFailure(exit) && isMemoryEnlistDefect(Cause.squash(exit.cause))).toBe(true);
+      expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
+        _tag: "Some",
+        value: {
+          _tag: "MemoryEnlistDefect",
+          message: "Enlisting requires the active memory owner fiber",
+        },
+      });
     }),
   );
 

@@ -1,4 +1,4 @@
-import { Array, Cause, Context, Effect, Exit, Option, Predicate, Schema, Semaphore } from "effect";
+import { Array, Cause, Context, Effect, Exit, Option, Schema, Semaphore } from "effect";
 import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { ProjectionMarks } from "../../internal/projection-marks.ts";
@@ -32,10 +32,7 @@ class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
 
-const activeDraft = (
-  owner: Draft["owner"],
-  reject = () => Effect.die(new Error("Memory boundary requires the active owner fiber")),
-) =>
+const activeDraft = <E>(owner: Draft["owner"], reject: () => Effect.Effect<never, E>) =>
   Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
     Effect.withFiber((fiber) => {
       if (
@@ -59,37 +56,40 @@ export interface TransactionParticipant {
   readonly onRollback: () => void;
 }
 
-const MemoryEnlistDefectType = Symbol.for("@streamsy/core/internal/MemoryEnlistDefect");
-
 class MemoryEnlistDefect extends Schema.TaggedError<
   MemoryEnlistDefect,
   { readonly brand: unique symbol }
 >()("MemoryEnlistDefect", {
   message: Schema.String,
-}) {
-  readonly [MemoryEnlistDefectType] = true;
-}
-
-/** A participant could not join a memory transaction on its owner fiber. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This predicate narrows a runtime defect.
-export const isMemoryEnlistDefect = (value: unknown): value is MemoryEnlistDefect =>
-  Predicate.hasProperty(value, MemoryEnlistDefectType) && value[MemoryEnlistDefectType] === true;
-
-const rejectEnlist = () =>
-  Effect.die(
-    new MemoryEnlistDefect({ message: "Enlisting requires the active memory owner fiber" }),
-  );
+}) {}
 
 /** Join the memory owner transaction open on this fiber. */
 // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
-export const enlist = (owner: object, participant: TransactionParticipant): Effect.Effect<void> =>
-  Effect.flatMap(activeDraft(owner, rejectEnlist), (draft) => {
-    if (Option.isNone(draft)) return rejectEnlist();
+export function enlist(owner: object, participant: TransactionParticipant): Effect.Effect<void>;
+// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
+export function enlist(
+  owner: object,
+  participant: TransactionParticipant,
+  onReject: "fail",
+): Effect.Effect<void, MemoryEnlistDefect>;
+// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
+export function enlist(owner: object, participant: TransactionParticipant, onReject?: "fail") {
+  const reject = () => {
+    const fault = new MemoryEnlistDefect({
+      message: "Enlisting requires the active memory owner fiber",
+    });
+
+    return onReject === "fail" ? Effect.fail(fault) : Effect.die(fault);
+  };
+
+  return Effect.flatMap(activeDraft(owner, reject), (draft) => {
+    if (Option.isNone(draft)) return reject();
 
     draft.value.participants.add(participant);
 
     return Effect.void;
   });
+}
 
 const notifyParticipants = (
   participants: Iterable<TransactionParticipant>,
@@ -120,7 +120,9 @@ export const makeBoundary = (
     let committedMarks: Marks.MarkTable = new Map();
     const hooks = commitHookRegistry();
 
-    const current = activeDraft(owner);
+    const current = activeDraft(owner, () =>
+      Effect.die(new Error("Memory boundary requires the active owner fiber")),
+    );
 
     const withTransaction: WithTransaction = (body) =>
       Effect.flatMap(current, (ambient) => {

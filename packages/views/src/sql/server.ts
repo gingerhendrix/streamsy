@@ -55,28 +55,28 @@ const idFault = (id: string) => {
   );
 };
 
-function idBytes(id: string): Bytes {
+function idBytes(id: string) {
   const bytes = encoder.encode(id);
 
-  if (bytes.length > idLimit) throw idFault(id);
-
-  return bytes;
+  return bytes.length > idLimit ? Effect.fail(idFault(id)) : Effect.succeed(bytes);
 }
 
-function keyBytes(node: string, key: string, original: RowKey = key): Bytes {
+function keyBytes(node: string, key: string, original: RowKey = key) {
   if (!key.isWellFormed())
-    throw dataFault({ view: "*", node })(
-      original,
-      `Key ${JSON.stringify(original)} contains a lone surrogate`,
+    return Effect.fail(
+      dataFault({ view: "*", node })(
+        original,
+        `Key ${JSON.stringify(original)} contains a lone surrogate`,
+      ),
     );
 
-  return encoder.encode(key);
+  return Effect.succeed(encoder.encode(key));
 }
 
 const hashKeys = (node: string, keys: readonly string[]) =>
   Effect.forEach(keys, (key) => hashKey(node, key), { concurrency: "unbounded" });
 
-const hashKey = (node: string, key: string) => Effect.suspend(() => hashBytes(keyBytes(node, key)));
+const hashKey = (node: string, key: string) => Effect.flatMap(keyBytes(node, key), hashBytes);
 
 function ordPrefix(sortKey: string, row: Bytes, limit: number): Bytes {
   // sort_key is ASCII hex. Leave a zero between it and the UTF-8 row key.
@@ -160,7 +160,7 @@ function storeFor(
 
   const arrangementEntry = (arrangement: string, entry: IndexEntry) =>
     Effect.gen(function* () {
-      const row_key = keyBytes(arrangement, entry.row_key);
+      const row_key = yield* keyBytes(arrangement, entry.row_key);
 
       const [index_hash, row_hash] = yield* Effect.all(
         [hash(entry.index_key), hashBytes(row_key)],
@@ -182,7 +182,7 @@ function storeFor(
         const ns = yield* namespaceHash;
 
         const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
-          WHERE ns = ${ns} AND relation = ${idBytes(relation)}`;
+          WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)}`;
 
         return Arr.map(rows, ({ value }) => decodeRow(value));
       }),
@@ -192,7 +192,7 @@ function storeFor(
         const rowHash = yield* hashKey(relation, key);
 
         const [row] = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
-          WHERE ns = ${ns} AND relation = ${idBytes(relation)} AND row_hash = ${rowHash}`;
+          WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)} AND row_hash = ${rowHash}`;
 
         return row === undefined ? undefined : decodeRow(row.value);
       }),
@@ -205,7 +205,7 @@ function storeFor(
           const hashes = yield* hashKeys(relation, batch);
 
           const rows = yield* sql<{ row_key: Bytes; value: string }>`SELECT row_key, value
-            FROM streamsy_view_integrals WHERE ns = ${ns} AND relation = ${idBytes(relation)}
+            FROM streamsy_view_integrals WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)}
             AND ${sql.in("row_hash", hashes)}`;
 
           for (const { row_key, value } of rows)
@@ -218,7 +218,7 @@ function storeFor(
       Effect.gen(function* () {
         for (const batch of Arr.chunksOf(entries, 20)) {
           const ns = yield* namespaceHash;
-          const id = idBytes(relation);
+          const id = yield* idBytes(relation);
           // When the same key appears twice within one insert, keep its final value.
           const keyed = new Map(Arr.map(batch, (entry) => [encodeRowKey(entry.key), entry]));
 
@@ -226,7 +226,7 @@ function storeFor(
             [...keyed],
             ([key, entry]) =>
               Effect.gen(function* () {
-                const row_key = keyBytes(relation, key, entry.key);
+                const row_key = yield* keyBytes(relation, key, entry.key);
                 const row_hash = yield* hashBytes(row_key);
 
                 return { ns, relation: id, row_hash, row_key, value: JSON.stringify(entry) };
@@ -244,13 +244,13 @@ function storeFor(
           const ns = yield* namespaceHash;
           const hashes = yield* hashKeys(relation, batch);
           yield* sql`DELETE FROM streamsy_view_integrals WHERE ns = ${ns}
-            AND relation = ${idBytes(relation)} AND ${sql.in("row_hash", hashes)}`;
+            AND relation = ${yield* idBytes(relation)} AND ${sql.in("row_hash", hashes)}`;
         }
       }),
     snapshotMark: (arrangement, key) =>
       Effect.gen(function* () {
         const ns = yield* namespaceHash;
-        const id = idBytes(arrangement);
+        const id = yield* idBytes(arrangement);
 
         const entry = yield* arrangementEntry(arrangement, {
           index_key: "",
@@ -265,13 +265,13 @@ function storeFor(
       Effect.gen(function* () {
         const ns = yield* namespaceHash;
         yield* sql`DELETE FROM streamsy_view_arrangements WHERE ns = ${ns}
-          AND arrangement = ${idBytes(arrangement)}`;
+          AND arrangement = ${yield* idBytes(arrangement)}`;
       }),
     indexPut: (arrangement, entries) =>
       Effect.gen(function* () {
         for (const batch of Arr.chunksOf(entries, 14)) {
           const ns = yield* namespaceHash;
-          const id = idBytes(arrangement);
+          const id = yield* idBytes(arrangement);
 
           const encoded = yield* Effect.forEach(
             batch,
@@ -289,7 +289,7 @@ function storeFor(
       Effect.gen(function* () {
         for (const batch of Arr.chunksOf(entries, 20)) {
           const ns = yield* namespaceHash;
-          const id = idBytes(arrangement);
+          const id = yield* idBytes(arrangement);
 
           const encoded = yield* Effect.forEach(
             batch,
@@ -314,7 +314,7 @@ function storeFor(
         const indexHash = yield* hash(indexKey);
 
         const base = sql`SELECT row_key, sort_key, ord_prefix FROM streamsy_view_arrangements
-          WHERE ns = ${ns} AND arrangement = ${idBytes(arrangement)} AND index_hash = ${indexHash}`;
+          WHERE ns = ${ns} AND arrangement = ${yield* idBytes(arrangement)} AND index_hash = ${indexHash}`;
 
         const ordered = reverse
           ? sql`${base} ORDER BY ord_prefix DESC`
@@ -360,7 +360,7 @@ function storeFor(
         const groupHash = yield* hash(groupKey);
 
         const [row] = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_accumulators
-          WHERE ns = ${ns} AND node = ${idBytes(node)} AND group_hash = ${groupHash}`;
+          WHERE ns = ${ns} AND node = ${yield* idBytes(node)} AND group_hash = ${groupHash}`;
 
         return row === undefined ? undefined : decodeAcc(row.value);
       }),
@@ -370,14 +370,14 @@ function storeFor(
         const groupHash = yield* hash(groupKey);
         yield* sql`INSERT INTO streamsy_view_accumulators
           (ns, node, group_hash, group_key, value) VALUES
-          (${ns}, ${idBytes(node)}, ${groupHash}, ${groupKey}, ${JSON.stringify(value)}) ${accumulatorUpsert}`;
+          (${ns}, ${yield* idBytes(node)}, ${groupHash}, ${groupKey}, ${JSON.stringify(value)}) ${accumulatorUpsert}`;
       }),
     accumulatorRemove: (node, groupKey) =>
       Effect.gen(function* () {
         const ns = yield* namespaceHash;
         const groupHash = yield* hash(groupKey);
         yield* sql`DELETE FROM streamsy_view_accumulators
-          WHERE ns = ${ns} AND node = ${idBytes(node)} AND group_hash = ${groupHash}`;
+          WHERE ns = ${ns} AND node = ${yield* idBytes(node)} AND group_hash = ${groupHash}`;
       }),
     owners: (relation, keys) =>
       Effect.gen(function* () {
@@ -391,7 +391,7 @@ function storeFor(
             output_key: Bytes;
             owner_key: Bytes;
           }>`SELECT output_key, owner_key
-            FROM streamsy_view_key_owners WHERE ns = ${ns} AND relation = ${idBytes(relation)}
+            FROM streamsy_view_key_owners WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)}
             AND ${sql.in("output_hash", hashes)}`;
 
           for (const { output_key, owner_key } of rows)
@@ -404,14 +404,14 @@ function storeFor(
       Effect.gen(function* () {
         for (const batch of Arr.chunksOf([...owners], 20)) {
           const ns = yield* namespaceHash;
-          const id = idBytes(relation);
+          const id = yield* idBytes(relation);
 
           const values = yield* Effect.forEach(
             batch,
             ([key, owner]) =>
               Effect.gen(function* () {
-                const output_key = keyBytes(relation, key);
-                const owner_key = keyBytes(relation, owner);
+                const output_key = yield* keyBytes(relation, key);
+                const owner_key = yield* keyBytes(relation, owner);
                 const output_hash = yield* hashBytes(output_key);
 
                 return { ns, relation: id, output_hash, output_key, owner_key };
@@ -428,7 +428,7 @@ function storeFor(
           const ns = yield* namespaceHash;
           const hashes = yield* hashKeys(relation, batch);
           yield* sql`DELETE FROM streamsy_view_key_owners WHERE ns = ${ns}
-            AND relation = ${idBytes(relation)} AND ${sql.in("output_hash", hashes)}`;
+            AND relation = ${yield* idBytes(relation)} AND ${sql.in("output_hash", hashes)}`;
         }
       }),
   };

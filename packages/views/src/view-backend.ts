@@ -1,5 +1,5 @@
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
-import { isMemoryEnlistDefect, ownerOf } from "@streamsy/core/internal";
+import { ownerOf } from "@streamsy/core/internal";
 import { CheckpointStore, NonRetryable, OwnerTransaction } from "@streamsy/projection";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
@@ -40,18 +40,8 @@ export function makeViewBackend(backend: Effect.Effect<Backend, ViewFault>): Opa
 const compositionFault = (message: string) =>
   Object.assign(new ViewFault({ message }), { [NonRetryable]: true });
 
-export const catchMemoryEnlist = <A, E, R>(run: Effect.Effect<A, E, R>) =>
-  run.pipe(
-    Effect.catchDefect((defect) =>
-      isMemoryEnlistDefect(defect)
-        ? Effect.fail(
-            compositionFault(
-              "Views memory state requires the active memory owner transaction on this fiber",
-            ),
-          )
-        : Effect.die(defect),
-    ),
-  );
+export const memoryEnlistFault = () =>
+  compositionFault("Views memory state requires the active memory owner transaction on this fiber");
 
 /** Host-selected operator storage for Views circuits. */
 export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(

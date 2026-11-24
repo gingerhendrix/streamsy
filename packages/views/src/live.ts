@@ -144,6 +144,7 @@ function liveCommit(
           ),
         )
         .pipe(
+          Effect.catchTag("MemoryEnlistDefect", Effect.die),
           Effect.catchTag("SqlError", (cause) =>
             Effect.fail(
               new ProjectionFault({

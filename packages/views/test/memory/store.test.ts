@@ -1,7 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test allocates an isolated memory owner. */
 import { describe, expect, it } from "@effect/vitest";
 import { CommitBoundary, Streamsy } from "@streamsy/core";
-import { isMemoryEnlistDefect } from "@streamsy/core/internal";
 import { Array as Arr, Cause, Effect, Exit, Fiber } from "effect";
 import { compareRowKeys, encodeRowKey } from "../../src/runtime/key.ts";
 import { currentBackend } from "../../src/view-backend.ts";
@@ -115,7 +114,13 @@ describe("Memory Views store", () => {
         const child = yield* store.put("rows", [{ key: "child", row: {} }]).pipe(Effect.forkScoped);
         const exit = yield* Fiber.await(child);
 
-        expect(Exit.isFailure(exit) && isMemoryEnlistDefect(Cause.squash(exit.cause))).toBe(true);
+        expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
+          _tag: "Some",
+          value: {
+            _tag: "MemoryEnlistDefect",
+            message: "Enlisting requires the active memory owner fiber",
+          },
+        });
         expect(yield* store.get("rows", encodeRowKey("child"))).toBeUndefined();
       }),
     ).pipe(Effect.provide(host)),
