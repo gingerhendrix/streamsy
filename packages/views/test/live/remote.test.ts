@@ -92,6 +92,34 @@ it.live("follows and catches up with a State stream on a real HTTP server", () =
   }).pipe(Effect.scoped),
 );
 
+for (const closed of [false, true])
+  it.live(`catches up with an empty ${closed ? "closed" : "open"} remote input`, () =>
+    Effect.gen(function* () {
+      const host = yield* page;
+
+      yield* Effect.gen(function* () {
+        const params = { shop: "empty" };
+        const shop = yield* Shop;
+        yield* shop.create(params);
+
+        if (closed) yield* shop.append(params, [], { close: true });
+
+        const live = yield* View.live({
+          id: "remote-empty",
+          params: Shop.paramCodecs,
+          views: { orders },
+        }).at(params);
+
+        yield* live.caughtUp.pipe(Effect.timeout("3 seconds"));
+        expect(yield* live.snapshot).toEqual({
+          rows: { orders: [] },
+          offsets: { [Shop.key]: ZERO_OFFSET },
+          caughtUp: true,
+        });
+      }).pipe(Effect.provide(host));
+    }).pipe(Effect.scoped),
+  );
+
 it.live("replays and follows the same remote State from two independent page layers", () =>
   Effect.gen(function* () {
     const host = yield* page;

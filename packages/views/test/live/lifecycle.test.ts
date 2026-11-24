@@ -407,3 +407,66 @@ it.live("fails snapshots when a finite retry schedule for HEAD runs out", () =>
     expect(heads).toBe(2);
   }).pipe(Effect.provide(inputHost)),
 );
+
+it.live("interrupts caughtUp when a removed input ends the reader before its startup tail", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const first = yield* putOrder(1);
+    const shop = yield* Shop;
+    const letHeadRun = yield* Deferred.make<void>();
+    const captured = yield* Deferred.make<void>();
+    const letReadRun = yield* Deferred.make<void>();
+
+    const live = yield* liveOrders.at(params).pipe(
+      Effect.provideService(Shop, {
+        ...shop,
+        wire: {
+          ...shop.wire,
+          head: (id) =>
+            Deferred.await(letHeadRun).pipe(
+              Effect.andThen(shop.wire.head(id)),
+              Effect.tap(() => Deferred.succeed(captured, undefined)),
+            ),
+          read: (id, options) =>
+            options?.offset === first.offset
+              ? Deferred.await(letReadRun).pipe(Effect.andThen(shop.wire.read(id, options)))
+              : shop.wire.read(id, options),
+        },
+      }),
+    );
+
+    yield* awaitMatch(live.snapshot, ({ offsets }) => offsets[Shop.key] === first.offset);
+    yield* putOrder(2);
+    const ready = yield* live.caughtUp.pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Deferred.succeed(letHeadRun, undefined);
+    yield* Deferred.await(captured);
+    yield* shop.remove(params);
+    yield* Deferred.succeed(letReadRun, undefined);
+
+    const exit = yield* Fiber.await(ready);
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+
+    const last = yield* live.snapshot;
+    expect(last).toMatchObject({ caughtUp: false, offsets: { [Shop.key]: first.offset } });
+    expect((yield* live.snapshots.pipe(Stream.runCollect)).at(-1)).toBe(last);
+
+    const late = yield* live.caughtUp.pipe(Effect.exit);
+    expect(Exit.isFailure(late) && Cause.hasInterruptsOnly(late.cause)).toBe(true);
+  }).pipe(Effect.provide(inputHost)),
+);
+
+it.live("catches up and ends on an input that closed empty", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const shop = yield* Shop;
+    yield* shop.append(params, [], { close: true });
+    const live = yield* liveOrders.at(params);
+    yield* live.caughtUp;
+    const snapshots = yield* live.snapshots.pipe(Stream.runCollect);
+    expect(snapshots.at(-1)).toEqual({
+      rows: { orders: [] },
+      offsets: { [Shop.key]: ZERO_OFFSET },
+      caughtUp: true,
+    });
+  }).pipe(Effect.provide(inputHost)),
+);
