@@ -133,7 +133,7 @@ for (const dialect of dialects) {
   const url = dialect.url;
   describe.skipIf(url === undefined)(`${dialect.name} projection SQL`, () => {
     test(
-      "routed forget and retire respect owner-record listing support",
+      "routed forget marks the routes and retire cleans them up",
       async () => {
         if (url === undefined) return;
         await onFreshDatabase(dialect, url, (fresh) =>
@@ -152,23 +152,7 @@ for (const dialect of dialects) {
 
               yield* initialize;
               yield* Projection.run(binding);
-              const checkpoint = yield* store.load(binding);
               expect(yield* store.routes!.state(binding, "result", id)).toBe("live");
-
-              if (dialect.name === "mysql") {
-                const unsupported = { reason: "unsupported-composition" };
-                expect(yield* Projection.forget(binding).pipe(Effect.flip)).toMatchObject(
-                  unsupported,
-                );
-                expect(
-                  yield* Projection.retire(spec, {}, { generation: 1 }).pipe(Effect.flip),
-                ).toMatchObject(unsupported);
-                expect(yield* store.load(binding)).toEqual(checkpoint);
-                expect(yield* store.routes!.state(binding, "result", id)).toBe("live");
-                expect((yield* target.head(params)).closed).toBe(false);
-
-                return;
-              }
 
               yield* Projection.forget(binding);
               expect((yield* store.load(binding)).token).toBe("0");

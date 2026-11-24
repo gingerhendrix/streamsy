@@ -299,7 +299,14 @@ for (const [name, host] of [
         expect((yield* routed.collect(params)).items).toEqual([1, 100]);
         expect((yield* wakes.collect(outputParams)).items).toEqual(acceptedRows);
         expect(yield* Projection.retire(declaration, {}, { generation })).toMatchObject({
-          routed: { routed: [{ id: Routed.at(params).id, result: "removed" }] },
+          streams: [
+            {
+              output: "@streamsy/accepted",
+              id: Accepted.at(outputParams).id,
+              result: "removed",
+            },
+            { output: "routed", id: Routed.at(params).id, result: "removed" },
+          ],
         });
         expect(yield* routed.head(params).pipe(Effect.flip)).toMatchObject(missing);
       }),

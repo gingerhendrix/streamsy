@@ -26,7 +26,7 @@ const id = "live-oracle";
 
 const declaration = View.live({ id, params: Shop.paramCodecs, views });
 
-const checkpoint = { id, params, version: 1, generation: 1 };
+const checkpoint = { id, params, generation: 1 };
 
 const orderSource = [...orderView.inputs.keys()][0]!;
 

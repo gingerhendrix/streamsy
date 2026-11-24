@@ -154,10 +154,11 @@ export const registerMysqlLifecycle = () => {
             }),
           );
 
-          expect({
-            checkpoint: (yield* store.load(binding)).record,
-            records: yield* readOwnerKeys(sql),
-          }).toEqual({ checkpoint: Option.none(), records: [] });
+          const routes = store.routes!;
+          const streamId = Output.at({ route: "one", generation: 1 }).id;
+          expect((yield* store.load(binding)).record).toEqual(Option.none());
+          expect(yield* routes.list(binding)).toEqual([{ output: "out", streamId }]);
+          expect(yield* routes.state(binding, "out", streamId)).toBe("forgotten");
           expect(
             (yield* Context.get(writer, Output).collect({ route: "one", generation: 1 })).items,
           ).toEqual([1]);
@@ -240,8 +241,7 @@ export const registerMysqlLifecycle = () => {
 
             expect(yield* Projection.retire(routed(1), params, { generation: 1 })).toEqual({
               record: "retired",
-              outputs: {},
-              routed: { out: [{ id: firstId, result: "removed" }] },
+              streams: [{ output: "out", id: firstId, result: "removed" }],
             });
             expect(yield* routes.list(first)).toEqual([]);
             expect(yield* routes.list(neighbour)).toEqual([neighbourRecord]);
@@ -251,7 +251,7 @@ export const registerMysqlLifecycle = () => {
             });
 
             yield* Projection.forget(second);
-            expect(yield* routes.list(second)).toEqual([]);
+            expect(yield* routes.state(second, "out", secondId)).toBe("forgotten");
             expect((yield* store.load(second)).record).toEqual(Option.none());
             expect((yield* output.collect(nextRoute)).items).toEqual([1]);
           }).pipe(Effect.provide(host));
@@ -343,8 +343,7 @@ export const registerMysqlLifecycle = () => {
           yield* Effect.logInfo("MySQL retire retry succeeded", retry);
           expect(retry).toEqual({
             record: "retired",
-            outputs: {},
-            routed: { out: [{ id: Output.at(route).id, result: "removed" }] },
+            streams: [{ output: "out", id: Output.at(route).id, result: "removed" }],
           });
           expect(yield* store.load(binding).pipe(Effect.flip)).toMatchObject({
             reason: "retired-generation",
