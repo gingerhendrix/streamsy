@@ -31,6 +31,25 @@ const checkpointOwnerFault = (key: ProjectionKey) =>
     message: `The checkpoint store for ${key.id} does not share the transaction owner`,
   });
 
+/** Run the body for the owner, and fail when it writes to a stream on another owner. */
+const withOwner =
+  (tx: typeof Transaction.Service, phase: ProjectionFault["phase"]) =>
+  <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    body.pipe(
+      Effect.provideService(CurrentOwner, tx.owner),
+      Effect.catchDefect((defect) =>
+        isForeignOwner(defect)
+          ? Effect.fail(
+              new ProjectionFault({
+                phase,
+                reason: "unsupported-composition",
+                message: defect.message,
+              }),
+            )
+          : Effect.die(defect),
+      ),
+    );
+
 type CheckpointState = "present" | "absent" | "retired";
 
 const checkpointState = (
@@ -76,9 +95,7 @@ const retireInTransaction = <R>(tx: typeof Transaction.Service, request: RetireR
 
     if (ownerOf(store.load) !== tx.owner) return yield* checkpointOwnerFault(request.key);
 
-    return yield* tx.withTransaction(
-      retire(request).pipe(Effect.provideService(CurrentOwner, tx.owner)),
-    );
+    return yield* tx.withTransaction(retire(request).pipe(withOwner(tx, "checkpoint")));
   });
 
 const TransactionCommitTypeId = Symbol("@streamsy/projection/TransactionCommit");
@@ -110,7 +127,7 @@ const removeInTransaction = <R>(
       if (RoutedOutputs in key) yield* removeWithRoutes(store, key, checkpoint);
       else yield* store.remove(key);
 
-      yield* cleanup.pipe(Effect.provideService(CurrentOwner, tx.owner));
+      yield* cleanup.pipe(withOwner(tx, "checkpoint"));
 
       // The cleanup may have deleted rows of a unit that committed since the load.
       if (checkpoint === "absent" && (yield* checkpointState(loadLatest(store, key))) !== "absent")
@@ -198,22 +215,11 @@ export const transaction: TransactionCommit<TransactionResult, CheckpointStore |
                 }
 
                 const result = yield* pending.run.pipe(
-                  Effect.provideService(CurrentOwner, tx.owner),
+                  withOwner(tx, "process"),
                   Effect.provideService(TransactionGenerationOutputs, pending.generationOutputs),
                   Effect.provideService(
                     TransactionRoutedOutputs,
                     hasRoutes ? routedUnit(pending.key, store) : undefined,
-                  ),
-                  Effect.catchDefect((defect) =>
-                    isForeignOwner(defect)
-                      ? Effect.fail(
-                          new ProjectionFault({
-                            phase: "process",
-                            reason: "unsupported-composition",
-                            message: defect.message,
-                          }),
-                        )
-                      : Effect.die(defect),
                   ),
                 );
 

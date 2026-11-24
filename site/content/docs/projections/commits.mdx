@@ -48,6 +48,7 @@ The checkpoint store must share the transaction owner on every unit. Use the `lo
 | ---------------------------------------------------------------- | ------------ | -------------------------------------------------------------- |
 | A declared output is on another owner. The handler does not run  | `load`       | `unsupported-composition`                                      |
 | The handler writes to a stream on another owner                  | `process`    | `unsupported-composition`                                      |
+| Forget or retire cleanup writes to a stream on another owner     | `checkpoint` | `unsupported-composition`                                      |
 | An output append fails                                           | `process`    | `storage-failure`, `output-busy` or `invalid-output`, by cause |
 | The checkpoint store’s load function lacks the transaction owner | `checkpoint` | `unsupported-composition`                                      |
 | Another writer saved the record after the runner loaded it       | `checkpoint` | `token-conflict`                                               |

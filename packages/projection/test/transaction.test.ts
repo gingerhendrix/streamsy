@@ -17,13 +17,7 @@ import {
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
-import {
-  CurrentOwner,
-  enlist,
-  isForeignOwner,
-  ownerOf,
-  OwnerRecords,
-} from "@streamsy/core/internal";
+import { CurrentOwner, enlist, ownerOf, OwnerRecords } from "@streamsy/core/internal";
 import { Protocol, Streams, StreamsWriter } from "@streamsy/core/protocol";
 import { BunStorage } from "@streamsy/storage/bun";
 import {
@@ -681,12 +675,13 @@ layer(sqlite, { buildPerTest: true })((it) => {
             ? Projection.forget(projection)
             : Projection.retire(declaration, {}, { generation }).pipe(Effect.asVoid);
 
-        const exit = yield* cleanup.pipe(
-          Effect.provideService(CurrentOwner, foreign.owner),
-          Effect.exit,
-        );
-
-        expect(Exit.isFailure(exit) && isForeignOwner(Cause.squash(exit.cause))).toBe(true);
+        expect(
+          yield* cleanup.pipe(Effect.provideService(CurrentOwner, foreign.owner), Effect.flip),
+        ).toMatchObject({
+          _tag: "ProjectionFault",
+          phase: "checkpoint",
+          reason: "unsupported-composition",
+        });
         expect(yield* store.load(projection)).toEqual(before);
         expect((yield* local.collect(outputParams)).items).toEqual([1]);
         expect((yield* foreign.collect(outputParams)).items).toEqual([]);
