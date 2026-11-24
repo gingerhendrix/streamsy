@@ -151,9 +151,10 @@ const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
 `CheckpointStore.layer` keeps checkpoints in the storage table
 `streamsy_owner_records`. On Postgres and MySQL, a checkpoint save locks the
 record it read, and a first save is a plain insert, so two concurrent saves of
-one projection never both win. `Transaction.layer` gives the SQL-only `Transaction`
-service. `Commit.transaction` uses them to commit SQL, same-owner stream
-appends, and the checkpoint together. A projection unit on a second SQL client
+one projection never both win. `Transaction.layer` provides `Transaction` and
+`OwnerTransaction` from the same storage owner. `Commit.transaction` uses them to commit SQL, same-owner stream
+appends, and the checkpoint together.
+A projection unit on a second SQL client
 opens its own transaction under the nesting rules above.
 Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client.
 With separate clients, the checkpoint commits on its own and can survive a rollback

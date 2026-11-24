@@ -219,18 +219,18 @@ to discard its progress.
 
 ## Hosts
 
-| Layer                         | Provides                     | Requires                        |
-| ----------------------------- | ---------------------------- | ------------------------------- |
-| `CheckpointStore.layer`       | `CheckpointStore`            | `CommitBoundary`, owner records |
-| `OwnerTransaction.layer`      | `OwnerTransaction`           | `CommitBoundary`                |
-| `Transaction.layer`           | `Transaction`                | `CommitBoundary`, `SqlClient`   |
-| `CheckpointStore.layerMemory` | Standalone `CheckpointStore` | Nothing                         |
+| Layer                         | Provides                          | Requires                        |
+| ----------------------------- | --------------------------------- | ------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore`                 | `CommitBoundary`, owner records |
+| `OwnerTransaction.layer`      | `OwnerTransaction`                | `CommitBoundary`                |
+| `Transaction.layer`           | `Transaction`, `OwnerTransaction` | `CommitBoundary`, `SqlClient`   |
+| `CheckpointStore.layerMemory` | Standalone `CheckpointStore`      | Nothing                         |
 
 `CheckpointStore.layer` keeps checkpoints on the owner of the streams. It works
 over every Streamsy storage host: `MemoryStorage.layer`, `BunStorage.layer`, and
 `DurableObjectStorage.layer`. Add `Transaction.layer` on a SQL host for
-`Commit.transaction`. Add `OwnerTransaction.layer` on a memory or SQL host for
-`Commit.ownerTransaction`. Compose the projection Layers over storage with
+`Commit.transaction` and `Commit.ownerTransaction`. For hosts using only
+`Commit.ownerTransaction`, use `OwnerTransaction.layer` on memory or SQL. Compose the projection Layers over storage with
 `Layer.provideMerge` and retain one Layer graph for the host lifetime:
 
 ```ts

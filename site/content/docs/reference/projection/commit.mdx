@@ -575,7 +575,7 @@ import { Context, type Effect, type Layer } from "effect";
 import type { SqlClient } from "effect/sql";
 import type { CommitBoundary } from "@streamsy/core";
 import type * as Real from "@streamsy/projection";
-import type { ProjectionFault } from "@streamsy/projection";
+import type { OwnerTransaction, ProjectionFault } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 class Transaction extends Context.Service<
@@ -588,7 +588,11 @@ class Transaction extends Context.Service<
     ) => Effect.Effect<A, E | ProjectionFault, R>;
   }
 >()("@streamsy/projection/Transaction") {
-  static readonly layer: Layer.Layer<Transaction, never, CommitBoundary | SqlClient.SqlClient>;
+  static readonly layer: Layer.Layer<
+    Transaction | OwnerTransaction,
+    never,
+    CommitBoundary | SqlClient.SqlClient
+  >;
 }
 // ---cut-after---
 same<typeof Transaction, typeof Real.Transaction>(true);
@@ -597,7 +601,7 @@ same<Transaction, Real.Transaction>(true);
 
 `Transaction` is the service of the SQL transaction that [`Commit.transaction`](#committransaction) uses. `owner` is the storage owner of the transaction, `sql` is the client that the handler gets, and `withTransaction` runs an Effect in the transaction.
 
-`Transaction.layer` builds the service from the `CommitBoundary` and the `SqlClient` of a SQL storage host. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/checkpoints).
+`Transaction.layer` builds both `Transaction` and `OwnerTransaction` from the same SQL storage owner. It requires a `CommitBoundary` and a `SqlClient`. A failed transaction fails with phase `checkpoint` and reason `storage-failure`. A memory host has no `SqlClient`, so `Transaction.layer` does not fit it. See [Checkpoints and generations](/docs/projections/checkpoints).
 
 ### `OwnerTransaction`
 

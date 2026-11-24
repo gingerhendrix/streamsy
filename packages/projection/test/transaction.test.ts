@@ -8,6 +8,7 @@ import { Protocol } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
+  OwnerTransaction,
   Projection,
   ProjectionFault,
   Transaction,
@@ -59,6 +60,24 @@ layer(sqlite)((it) => {
     }),
   );
 });
+
+for (const transactions of [
+  Transaction.layer,
+  Layer.merge(Transaction.layer, OwnerTransaction.layer),
+]) {
+  const host = transactions.pipe(
+    Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
+  );
+
+  baseIt.effect("SQL and owner transactions share a boundary", () =>
+    Effect.gen(function* () {
+      const transaction = yield* Transaction;
+      const owner = yield* OwnerTransaction;
+      expect(owner.owner).toBe(transaction.owner);
+      expect(owner.withTransaction).toBe(transaction.withTransaction);
+    }).pipe(Effect.provide(host)),
+  );
+}
 
 baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkpoint", () =>
   Effect.gen(function* () {

@@ -100,24 +100,15 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
-import {
-  CheckpointStore,
-  OwnerTransaction,
-  Projection,
-  StateTable,
-  Transaction,
-} from "@streamsy/projection";
+import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
 import { View, ViewBackend } from "@streamsy/views";
 
 const storage = BunStorage.layer(Streamsy.group(Shop, ShopViews), {
   client: { filename: "./shop.sqlite" },
 });
-const host = Layer.mergeAll(
-  CheckpointStore.layer,
-  OwnerTransaction.layer,
-  ViewBackend.layerSql,
-  Transaction.layer,
-).pipe(Layer.provideMerge(storage));
+const host = Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer).pipe(
+  Layer.provideMerge(storage),
+);
 const ShopViewsTable = StateTable.define(ShopViews);
 
 const program = Effect.gen(function* () {
@@ -143,7 +134,7 @@ For a long-lived process, attach with `Projection.attach(shopViews, { durable: t
 
 ## Durable Object host
 
-Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql`. Add `Transaction.layer` for `StateTable`. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
+Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` when the host also runs a `StateTable`. `Transaction.layer` supplies both transaction services. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
 
 The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals, per-customer top 3 and order lineage against the full-recompute oracle after each unit. It also checks a no-op unit, a shared `txid` on every emitted change and a generation-2 lineage replay.
 

@@ -67,7 +67,7 @@ When the transaction fails, the next pass runs `prepare` again on a new read of 
 
 ## `ownerTransaction`
 
-`Commit.ownerTransaction` commits the unit and checkpoint together on a memory or SQL storage host. Provide `CheckpointStore.layer` and `OwnerTransaction.layer` over the same storage owner. The handler gets its services from the host. A `SqlClient` used by the handler must be the storage owner's client for its statements to join the transaction.
+`Commit.ownerTransaction` commits the unit and checkpoint together on a memory or SQL storage host. Provide `CheckpointStore.layer` and `OwnerTransaction.layer` over the same storage owner. On SQL hosts, `Transaction.layer` also supplies `OwnerTransaction`. The handler gets its services from the host. A `SqlClient` used by the handler must be the storage owner's client for its statements to join the transaction.
 
 See [`Commit.ownerTransaction`](/docs/reference/projection/commit#commitownertransaction) for composition errors and cleanup.
 

@@ -28,6 +28,13 @@ import {
   TransactionRoutedOutputs,
 } from "../routed-outputs.ts";
 
+const checkpointOwnerFault = (key: ProjectionKey) =>
+  new ProjectionFault({
+    phase: "checkpoint",
+    reason: "unsupported-composition",
+    message: `The checkpoint store for ${key.id} does not share the transaction owner`,
+  });
+
 const removeWithRoutes = (
   key: ProjectionKey,
   owner: OwnerBoundary["owner"],
@@ -35,12 +42,7 @@ const removeWithRoutes = (
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
 
-    if (ownerOf(store.load) !== owner)
-      return yield* new ProjectionFault({
-        phase: "checkpoint",
-        reason: "unsupported-composition",
-        message: `The checkpoint store for ${key.id} does not share the transaction owner`,
-      });
+    if (ownerOf(store.load) !== owner) return yield* checkpointOwnerFault(key);
 
     const records = yield* requireRouteRecords(store, "checkpoint");
 
@@ -80,12 +82,7 @@ const retireInTransaction = (tx: OwnerBoundary, request: RetireRequest) =>
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
 
-    if (ownerOf(store.load) !== tx.owner)
-      return yield* new ProjectionFault({
-        phase: "checkpoint",
-        reason: "unsupported-composition",
-        message: `The checkpoint store for ${request.key.id} does not share the transaction owner`,
-      });
+    if (ownerOf(store.load) !== tx.owner) return yield* checkpointOwnerFault(request.key);
 
     return yield* tx.withTransaction(
       retire(request).pipe(Effect.provideService(CurrentOwner, tx.owner)),
@@ -115,11 +112,7 @@ const makeTransaction = <P, Q>(
           const hasRoutes = RoutedOutputs in pending.key;
 
           if ((requireSharedOwner || hasRoutes) && ownerOf(store.load) !== tx.owner)
-            return yield* new ProjectionFault({
-              phase: "checkpoint",
-              reason: "unsupported-composition",
-              message: `The checkpoint store for ${pending.key.id} does not share the transaction owner`,
-            });
+            return yield* checkpointOwnerFault(pending.key);
 
           for (const { address, service } of Record.values(outputs)) {
             if (service.owner !== tx.owner)
@@ -284,12 +277,7 @@ const removeInOwnerTransaction = <R>(
       else {
         const store = yield* CheckpointStore;
 
-        if (ownerOf(store.load) !== tx.owner)
-          return yield* new ProjectionFault({
-            phase: "checkpoint",
-            reason: "unsupported-composition",
-            message: `The checkpoint store for ${key.id} does not share the transaction owner`,
-          });
+        if (ownerOf(store.load) !== tx.owner) return yield* checkpointOwnerFault(key);
 
         yield* store.remove(key);
       }

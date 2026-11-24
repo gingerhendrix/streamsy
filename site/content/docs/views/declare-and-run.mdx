@@ -168,7 +168,7 @@ Call `View.migrate(sql)` during SQL host startup, before running or attaching an
 - `streamsy_view_key_owners`
 - `streamsy_view_circuits`
 
-For server SQL hosts, see [Run on Postgres](/docs/views/postgres) or [Run on MySQL](/docs/views/mysql). If your SQLite host uses `StateTable`, also provide `Transaction.layer` and call `StateTable.migrate(sql)` at startup.
+For server SQL hosts, see [Run on Postgres](/docs/views/postgres) or [Run on MySQL](/docs/views/mysql). If your SQLite host uses `StateTable`, provide `Transaction.layer` for both transaction services and call `StateTable.migrate(sql)` at startup.
 
 ## Run on Bun SQLite
 
@@ -246,12 +246,7 @@ export const host = Layer.mergeAll(
   Layer.provideMerge(migrate),
   Layer.provideMerge(Projection.Registry.layer),
   Layer.provideMerge(
-    Layer.mergeAll(
-      CheckpointStore.layer,
-      OwnerTransaction.layer,
-      ViewBackend.layerSql,
-      Transaction.layer,
-    ),
+    Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer),
   ),
   Layer.provideMerge(storage),
 );
@@ -261,7 +256,7 @@ Follow the [one-writer rule](/docs/projections/checkpoints#one-writer): do not c
 
 ## Run on a Durable Object
 
-On Cloudflare Durable Objects, provide `DurableObjectStorage.layer` with the object's full `state.storage` handle, alongside `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql`. The example also provides `Transaction.layer` for its `StateTable`. Run `View.migrate(sql)` during object layer initialization, then run bound circuits with `Projection.run` or attach them through `ProjectionWakeup.attach`. The example treats a Views setup failure as fatal to object startup.
+On Cloudflare Durable Objects, provide `DurableObjectStorage.layer` with the object's full `state.storage` handle, alongside `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql`. `Transaction.layer` supplies the transaction services for the circuit and the `StateTable`. Run `View.migrate(sql)` during object layer initialization, then run bound circuits with `Projection.run` or attach them through `ProjectionWakeup.attach`. The example treats a Views setup failure as fatal to object startup.
 
 ```ts
 // @filename: streams.ts
@@ -307,7 +302,6 @@ export class ShopObject extends StreamsyObject.make<unknown, HostServices>({
     return Layer.mergeAll(
       migrate.pipe(Layer.orDie),
       CheckpointStore.layer,
-      OwnerTransaction.layer,
       ViewBackend.layerSql.pipe(Layer.orDie),
       Transaction.layer,
       Projection.Registry.layer,
@@ -346,6 +340,6 @@ const projectionLayers = Layer.mergeAll(
 );
 ```
 
-Provide the group with `Layer.provideMerge(storage)` and keep the `View.migrate(sql)` call. Add `Transaction.layer` to the group if the host also runs a `StateTable`. If your code names the circuit's commit type, use [`Commit.OwnerCommit`](/docs/reference/projection/commit#commitownercommit).
+Provide the group with `Layer.provideMerge(storage)` and keep the `View.migrate(sql)` call. Use `Transaction.layer` in place of `OwnerTransaction.layer` if the SQLite host also runs a `StateTable`. If your code names the circuit's commit type, use [`Commit.OwnerCommit`](/docs/reference/projection/commit#commitownercommit).
 
 If the Views client's transaction is missing from the running fiber, the circuit fails with a non-retryable `ViewFault` whose message is `The Views SQL client is outside the storage owner's transaction`. The check looks for a transaction on that client. Always use the storage owner's client, even if a second client has its own transaction open.

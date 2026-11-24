@@ -1,6 +1,6 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import type { Streamsy } from "@streamsy/core";
-import { CheckpointStore, OwnerTransaction, StateTable, Transaction } from "@streamsy/projection";
+import { CheckpointStore, StateTable, Transaction } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Context, Effect, Layer } from "effect";
@@ -40,12 +40,7 @@ export const client = (fixture: SqlFixture) =>
     ? SqliteClient.layer({ filename: ":memory:" })
     : fixtureClient(fixture.server);
 
-const commits = Layer.mergeAll(
-  CheckpointStore.layer,
-  OwnerTransaction.layer,
-  ViewBackend.layerSql,
-  Transaction.layer,
-);
+const commits = Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer);
 
 const sqlHost = <const Keys extends readonly Streamsy.Any[]>(
   group: Streamsy.Group<Keys>,
