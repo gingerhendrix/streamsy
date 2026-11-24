@@ -2,6 +2,7 @@
 import { MysqlClient } from "@effect/sql-mysql2";
 import { PgClient } from "@effect/sql-pg";
 import {
+  Array,
   Config,
   Context,
   Deferred,
@@ -13,7 +14,7 @@ import {
   type Scope,
 } from "effect";
 import type { Reactivity } from "effect/reactivity";
-import { SqlClient, type SqlError } from "effect/sql";
+import { SqlClient, Statement, type SqlError } from "effect/sql";
 import { clientLayer } from "../../src/boundary.ts";
 
 const optionalUrl = (name: string) =>
@@ -73,6 +74,45 @@ export const forkWaiting = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       ),
     ),
   );
+
+export type StatementMatch = (query: string, params: ReadonlyArray<unknown>) => boolean;
+
+/** Hold the first statement that each matcher accepts, before it runs. */
+export const holdStatements = (...matchers: ReadonlyArray<StatementMatch>) =>
+  Effect.gen(function* () {
+    const gates = yield* Effect.forEach(matchers, (matches) =>
+      Effect.gen(function* () {
+        const reached = yield* Deferred.make<void>();
+        const proceed = yield* Deferred.make<void>();
+
+        return { matches, reached, proceed, held: false };
+      }),
+    );
+
+    return {
+      reached: (index = 0) => Deferred.await(gates[index]!.reached),
+      release: (index = 0) => Deferred.succeed(gates[index]!.proceed, undefined),
+      hold: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [query, params] = statement.compile();
+
+            const gate = Array.findFirst(
+              gates,
+              ({ held, matches }) => !held && matches(query, params),
+            );
+
+            if (Option.isNone(gate)) return Effect.succeed(statement);
+            gate.value.held = true;
+
+            return Deferred.succeed(gate.value.reached, undefined).pipe(
+              Effect.andThen(Deferred.await(gate.value.proceed)),
+              Effect.as(statement),
+            );
+          }),
+        ),
+    };
+  });
 
 /** Use with a single-connection MySQL fixture so the transaction reuses this session. */
 export const withRepeatableRead = <A, E, R>(

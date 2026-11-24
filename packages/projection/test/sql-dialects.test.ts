@@ -22,6 +22,7 @@ import {
   Transaction,
 } from "@streamsy/projection";
 import * as FamilyFixture from "./support/families.ts";
+import { registerFirstUnitRaces } from "./support/first-unit-races.ts";
 import { registerMysqlLifecycle } from "./support/mysql-lifecycle.ts";
 import { initialize, input, output, readAll } from "./support/scenarios.ts";
 import {
@@ -799,3 +800,5 @@ for (const dialect of dialects) {
 }
 
 registerMysqlLifecycle();
+
+registerFirstUnitRaces();
