@@ -132,9 +132,20 @@ Each record write is a compare-and-set on the token that the runner loaded. Run 
 
 `token-conflict` reports a second writer; a retry reloads the token and may succeed. `follow` retries it on its schedule, and attached bindings retry on their own backoff. The handler of the slower writer may already have run its external effects. Stop the second writer.
 
+A second writer can also get a fault that no runner retries. Two hosts that race to commit the first unit of a binding on Postgres or MySQL leave one checkpoint and the winner's output. The slower host usually gets a retryable `storage-failure` or `token-conflict`. These faults are not retryable:
+
+- `invalid-output`, when an exclusive fixed `perGeneration` output is no longer empty because the winner wrote to it.
+- `ViewDataFault` from a Views circuit with routed outputs, when the winner commits a second unit that moves an output key to another row before the slower host continues.
+
+An attached or durable runner stops the binding on such a fault until you call `Registry.retry` or start the runner again, even though the binding's stored state is correct. `follow` fails its stream. Run one host for each binding to avoid both faults.
+
 ## Forget
 
 Use `Projection.forget(bound)` to discard a binding's progress at its current generation. Stop and drain its runners first, including direct `Projection.pass` calls. The built-in Commits delete the checkpoint, including its offsets and any state in the record. The streams and any retirement tombstone stay in place. A Commit with no `remove` fails with phase `checkpoint` and reason `unsupported-composition`.
+
+With `Commit.transaction` and `Commit.transactionWithCleanup`, a forget that finds no checkpoint checks for one again after its cleanup. If another host has committed the binding's first unit or retired it in between, the forget rolls back and fails with phase `checkpoint` and retryable reason `token-conflict`. Stop that host's runners and forget again. The check also covers a runner's own forget after the final unit for a gone input.
+
+The check works at the default isolation levels and at MySQL `REPEATABLE READ`. At `REPEATABLE READ` the overlap can instead end in a deadlock. MySQL then rolls back one of the two transactions, and a forget that loses fails with retryable `storage-failure`. At that level the check misses the checkpoint if a legacy hashed key makes its range unlistable. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 For routed outputs, pass the binding from `declaration.at(params)` and keep its routed output declarations. A bare key or a declaration without routed outputs deletes the checkpoint and leaves the route records live, so replay can append to old data. Passing the routed binding marks the route records forgotten in the checkpoint transaction so `retire` can still find the streams.
 

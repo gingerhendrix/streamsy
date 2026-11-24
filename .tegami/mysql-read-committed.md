@@ -22,8 +22,9 @@ also commit a new binding of the same projection during a transaction that
 calls `Projection.bindings`.
 
 Set Effect's `SqlClient.BeginTransaction` to `"START TRANSACTION"` to use the
-session default. Opting out to `REPEATABLE READ` brings back the stale Views and
-`forget` results in those sequences.
+session default. Opting out to `REPEATABLE READ` brings back the stale Views
+results in those sequences. `Projection.forget` then fails with a retryable
+`token-conflict` if its transaction's snapshot is older than the checkpoint.
 
 Storage sends `SET TRANSACTION` and `START TRANSACTION` in one request. The
 setting applies to that transaction only. Keep the MySQL session in autocommit.

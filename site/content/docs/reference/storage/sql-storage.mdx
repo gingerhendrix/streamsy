@@ -119,7 +119,7 @@ The storage boundary opens MySQL transactions at `READ COMMITTED`. This applies 
 
 At `READ COMMITTED`, each plain read sees a fresh snapshot of committed rows. A locking read can hold existing rows until commit. To protect an absent key or prevent inserts into a range, enforce a unique key or have writers lock an existing parent row. `FOR UPDATE` and `FOR SHARE` alone cannot protect those gaps at this isolation level. See [MySQL transaction isolation levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
 
-To use the session default, provide Effect's `SqlClient.BeginTransaction` with `"START TRANSACTION"`. With `REPEATABLE READ`, a circuit can see stale operator state if another host advances its binding after the transaction's first plain read. `Projection.forget` can also miss a routed checkpoint that another host commits between that first read and the checkpoint load.
+To use the session default, provide Effect's `SqlClient.BeginTransaction` with `"START TRANSACTION"`. With `REPEATABLE READ`, a circuit can see stale operator state if another host advances its binding after the transaction's first plain read. `Projection.forget` fails with a retryable `token-conflict` if another host commits the binding's first checkpoint after that read. Retry it in a new transaction.
 
 Keep the session in autocommit. The boundary sends `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` and `START TRANSACTION` in one request. MySQL applies the isolation setting to that transaction. A custom client with multi-statement requests disabled fails when the boundary first opens a transaction. Effect's mysql2 client enables multi-statement requests by default. The mysql2 flag `-MULTI_STATEMENTS` disables them.
 

@@ -1039,6 +1039,7 @@ same<typeof forget, typeof Projection.forget>(true);
 - Stop and drain the binding's runners before calling `forget`. To rebuild, raise `generation`.
 - For a routed binding, pass the bound declaration from `declaration.at(params)`. This marks route records forgotten so the next open checks that the stream is empty and open. A bare key leaves route records live. [Forget](/docs/projections/checkpoints#forget)
 - Routed forget for an existing checkpoint, including automatic forget after a gone input, requires owner-record listing. MySQL supports listing. A legacy hashed route key in the listing range fails `forget` with `unsupported-composition`. Forgetting an absent checkpoint tolerates unsupported listing and leaves the route records as they are. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
+- Forgetting an absent checkpoint with a transaction Commit fails with a retryable `token-conflict` if another host commits the binding's first unit or retires it before the forget finishes. The transaction rolls back. [Forget](/docs/projections/checkpoints#forget)
 - Forget can delete an undecodable tombstone and allow the generation to run again.
 
 ### `Projection.retire`

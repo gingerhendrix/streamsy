@@ -115,7 +115,7 @@ same<typeof transactionWithCleanup, typeof Commit.transactionWithCleanup>(true);
 
 `transactionWithCleanup` returns a [`transaction`](#committransaction) Commit that also runs `cleanup` during `Projection.forget` and `Projection.retire`. The callback receives the binding's checkpoint key and reads additional services from context. On a SQL host, use the storage owner's `SqlClient` for SQL that must join the transaction. The Commit supports `prepare` and accepted streams.
 
-- `Projection.forget` removes the checkpoint before it runs `cleanup`. For a routed binding, it also marks its route records forgotten when called with the bound declaration. An existing retirement tombstone stays in place.
+- `Projection.forget` removes the checkpoint before it runs `cleanup`. For a routed binding, it also marks its route records forgotten when called with the bound declaration. An existing retirement tombstone stays in place. If it found no checkpoint and one exists after `cleanup`, the transaction rolls back with a retryable `token-conflict`.
 - `Projection.retire` writes the tombstone and removes or closes the owned generation outputs before it runs `cleanup`. If the checkpoint already has a tombstone, it skips the tombstone write and runs output cleanup and `cleanup` again.
 
 If `cleanup` fails, the lifecycle call returns that fault. The transaction rolls back the checkpoint deletion or tombstone write, any owned output changes, and any SQL run with the storage owner's client. A nested memory transaction joins its outer transaction and has no savepoint.
