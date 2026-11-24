@@ -154,11 +154,11 @@ record it read, and a first save is a plain insert, so two concurrent saves of
 one projection never both win. `Transaction.layer` builds `Transaction` from the same storage owner.
 `Commit.transaction` saves same-owner stream appends and the checkpoint together.
 SQL handlers join that transaction through the storage owner’s `SqlClient`.
-A projection unit on a second SQL client
-opens its own transaction under the nesting rules above.
-Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client.
-With separate clients, the checkpoint commits on its own and can survive a rollback
-of the projection's transaction.
+
+A projection unit on a second SQL client opens its own transaction under the
+nesting rules above. Build `Transaction.layer` and `CheckpointStore.layer` over
+the same storage owner. `Commit.transaction` fails with `unsupported-composition`
+when the checkpoint store has another owner.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.
