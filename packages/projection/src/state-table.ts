@@ -52,6 +52,21 @@ const sqlFault = (id: string) => (cause: SqlError.SqlError) =>
     cause,
   });
 
+/** Statements of a client without an open transaction would outlive a rolled-back unit. */
+const transactionClient = (id: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    if (Option.isNone(yield* Effect.serviceOption(sql.transactionService)))
+      return yield* new ProjectionFault({
+        phase: "process",
+        reason: "unsupported-composition",
+        message: `The SqlClient for the rows of ${id} has no open transaction. Use the storage owner's client inside its transaction.`,
+      });
+
+    return sql;
+  });
+
 const apply = Effect.fn("StateTable.apply")(
   function* (
     sql: SqlClient.SqlClient,
@@ -147,7 +162,7 @@ const synchronize = <R>(
   address: Raw<R>,
 ): Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R> =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* transactionClient(address.id);
     const { wire } = yield* address.stream;
 
     const unavailable = () =>
@@ -226,7 +241,7 @@ const applySlice = <R>(
   slice: Slice<string>,
 ): Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R> =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* transactionClient(address.id);
     const stored = yield* head(sql, address.id);
 
     if (
@@ -486,12 +501,12 @@ export function define<
   return Object.assign(declaration, { inputs: { state }, parse: state.parse });
 }
 
-const clearIndex = (sql: SqlClient.SqlClient, id: string) =>
-  clearRows(sql, id).pipe(
-    Effect.andThen(sql`DELETE FROM streamsy_state_heads WHERE stream_id = ${id}`),
-    Effect.catchTag("SqlError", sqlFault(id)),
-    Effect.asVoid,
-  );
+const clearIndex = (id: string) =>
+  Effect.gen(function* () {
+    const sql = yield* transactionClient(id);
+    yield* clearRows(sql, id);
+    yield* sql`DELETE FROM streamsy_state_heads WHERE stream_id = ${id}`;
+  }).pipe(Effect.catchTag("SqlError", sqlFault(id)));
 
 /** Delete cached rows and their applied offset, even if the State stream has been removed. */
 export const clear = Effect.fn("StateTable.clear")(function* <
@@ -499,9 +514,8 @@ export const clear = Effect.fn("StateTable.clear")(function* <
   R,
 >(table: Bound<C, R>) {
   const tx = yield* Transaction;
-  const sql = yield* SqlClient.SqlClient;
 
-  yield* tx.withTransaction(clearIndex(sql, table.inputs.state.id));
+  yield* tx.withTransaction(clearIndex(table.inputs.state.id));
 });
 
 /** Discard the index and replay the State stream atomically, retaining the binding checkpoint. */
@@ -510,10 +524,8 @@ export const rebuild = Effect.fn("StateTable.rebuild")(function* <
   R,
 >(table: Bound<C, R>) {
   const tx = yield* Transaction;
-  const sql = yield* SqlClient.SqlClient;
-  const id = table.inputs.state.id;
 
-  yield* tx.withTransaction(clearIndex(sql, id).pipe(Effect.andThen(table.sync())));
+  yield* tx.withTransaction(clearIndex(table.inputs.state.id).pipe(Effect.andThen(table.sync())));
 });
 
 /** Append a reset to the State stream. The next table run applies it. */

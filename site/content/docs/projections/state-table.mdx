@@ -180,7 +180,7 @@ The first release has no filter and no secondary index. To find rows by a field 
 
 ## Sync
 
-`table.sync()` applies the stream from the head of the table to the tail of the stream, in the caller's transaction. It uses the storage owner’s `SqlClient` from context. Call it inside a `Commit.transaction` unit or wrap it in `Transaction.withTransaction`. `sync` moves the head of the table and never writes the checkpoint of the table binding, so it can run beside an attached table. A read after `sync` in the same transaction sees every write that came before it:
+`table.sync()` applies the stream from the head of the table to the tail of the stream, in the caller's transaction. It uses the storage owner’s `SqlClient` from context. Call it inside a `Commit.transaction` unit or wrap it in `Transaction.withTransaction`. With no transaction open on that client, `sync`, a table run, `rebuild` and `clear` fail with phase `process` and reason `unsupported-composition`. `sync` moves the head of the table and never writes the checkpoint of the table binding, so it can run beside an attached table. A read after `sync` in the same transaction sees every write that came before it:
 
 ```ts
 // @filename: streams.ts

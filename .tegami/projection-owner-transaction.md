@@ -15,6 +15,9 @@ context where you need SQL. The cleanup callback now takes just the checkpoint
 key. Running a projection with a SQL handler requires the storage owner’s
 `SqlClient` in the runner’s context. Use `Layer.provideMerge` to retain it when
 composing the host. This also applies to `StateTable` and `FoldByKey` runners.
+`StateTable` and `FoldByKey` fail with `unsupported-composition` when that client
+has no transaction open. Wrap a direct `table.sync()` in
+`Transaction.withTransaction`.
 
 The transaction checks the checkpoint owner on every unit, including units
 without routed outputs. Use the `load` function supplied by `CheckpointStore.layer`.
