@@ -17,7 +17,6 @@ import type * as StateTable from "./state-table.ts";
 import { deleteJson, upsertJson } from "./state-table-message.ts";
 import { decodeRow, encodeRow, storedValues } from "./state-table-rows.ts";
 import type { Step } from "./step.ts";
-import type { Transaction } from "./transaction.ts";
 import type { Unit } from "./unit.ts";
 import { TransactionGenerationOutputs } from "./per-generation.ts";
 
@@ -56,7 +55,6 @@ export type Handler<
   | R
   | TR
   | SqlClient.SqlClient
-  | Transaction
   | StreamAddress.CollectionsDecodingServices<C>
   | StreamAddress.CollectionsEncodingServices<C>
 >;

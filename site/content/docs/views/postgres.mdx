@@ -1,0 +1,64 @@
+---
+title: Run on Postgres
+description: Configure a Postgres circuit host, run the Views migration, and check key and identifier limits.
+---
+
+## Build the host
+
+Use `SqlStorage.layer` with a Postgres client from `@effect/sql-pg`. Build the storage and Views layers over the same `SqlClient` instance. Call `View.migrate(sql)` before running a circuit.
+
+```ts no-twoslash
+import { Effect, Layer, Redacted } from "effect";
+import { SqlClient } from "effect/sql";
+import { PgClient } from "@effect/sql-pg";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, Transaction, Projection } from "@streamsy/projection";
+import { SqlStorage } from "@streamsy/storage";
+import { View, ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+export const runShop = (databaseUrl: string, shopId: string) => {
+  const client = SqlStorage.clientLayer(PgClient.make({ url: Redacted.make(databaseUrl) }));
+  const storage = SqlStorage.layer(Streamsy.group(Orders, ShopViews)).pipe(
+    Layer.provideMerge(client),
+  );
+  const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
+    Layer.provideMerge(storage),
+  );
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* Projection.run(shopCircuit(1).at({ shopId }));
+  }).pipe(Effect.provide(host));
+};
+```
+
+The example uses the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). Create the input for `shopId` before running the circuit. `StateTable` requires a SQLite host. See [State table operations](/docs/projections/state-table-operations#sqlite-only).
+
+## Migration and stored state
+
+`View.migrate` runs the Postgres migration in a transaction. It acquires the transaction-level advisory lock `pg_advisory_xact_lock(8319400226123769207)` before creating tables and checking the layout version. Concurrent migrations in the same database wait on that lock.
+
+| Table                        | Contents                                        |
+| ---------------------------- | ----------------------------------------------- |
+| `streamsy_view_layout`       | Views storage layout version                    |
+| `streamsy_view_circuits`     | Binding namespaces and plan hashes              |
+| `streamsy_view_integrals`    | Rows retained by circuit relations              |
+| `streamsy_view_arrangements` | Index entries and snapshot marks                |
+| `streamsy_view_accumulators` | Group keys and aggregate state                  |
+| `streamsy_view_key_owners`   | Output keys and the relation keys that own them |
+
+The current Postgres layout version is `1`. The migration inserts that version when the table has no version row. A newer version fails the migration with a non-retryable `ViewFault`. The database layout version is separate from a circuit's plan `version` and `generation`.
+
+Equality lookups use SHA-256 digests of the UTF-8 namespace and keys. The database retains full row keys, output keys, and owner keys as bytes. Values and group keys use JSON text. Namespace text and full encoded sort keys are stored alongside their lookup columns.
+
+## Keys and identifiers
+
+Views adds no length limit for row keys or sort keys on Postgres. It bounds stored relation, arrangement, and node identifiers to 255 UTF-8 bytes. For a source collection, count the whole snapshot arrangement identifier. It is `@snapshot/` followed by the JSON array of the State class's service key and collection name. The prefix, JSON punctuation, and any JSON escapes count toward the bound.
+
+An identifier above the bound fails the unit with a non-retryable `ViewDataFault` that names the identifier. An encoded row, output, or owner key containing a lone UTF-16 surrogate also fails with `ViewDataFault`. U+0000 is valid in a key.
+
+## Ordered lookup cost
+
+An arrangement concatenates its encoded sort key, a zero-byte separator, and its encoded row key. It stores the first 1,024 bytes of the result as an ordered prefix. If a limited lookup fills its limit and the last row has a full 1,024-byte prefix, Views reads every row with that prefix in a second query. It sorts the candidates by the full sort key and row key before applying the limit. A shared prefix can make a bounded lookup read the whole index bucket.

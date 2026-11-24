@@ -1,20 +1,20 @@
 # Streamsy
 
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
-protocol: typed stream refs, checkpointed projections, SQLite storage, and
+protocol: typed stream refs, checkpointed projections, SQL storage, and
 hosts for Bun and Cloudflare.
 
 Documentation: [streamsy.dev](https://streamsy.dev)
 
 ## Packages
 
-| Package                                                 | What it gives you                                                            |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, stream services, memory Layer, HTTP app, remote client |
-| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                   |
-| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs           |
-| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, projection wakeups              |
-| [`@streamsy/views`](packages/views/README.md)           | Incremental SQL views over State collections, run as projections (SQLite)    |
+| Package                                                 | What it gives you                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, stream services, memory Layer, HTTP app, remote client   |
+| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects, plus Postgres and MySQL            |
+| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections with named stream, rows and value outputs             |
+| [`@streamsy/serve`](packages/serve/README.md)           | HttpRouter routes, Bun and Cloudflare hosts, projection wakeups                |
+| [`@streamsy/views`](packages/views/README.md)           | Incremental views over State collections on SQLite, Postgres, MySQL, or memory |
 
 All five packages share one version. `effect` 4 is a peer dependency. See
 [docs/releasing.md](docs/releasing.md) for the release process.
@@ -51,6 +51,8 @@ below show complete applications, from a plain HTTP host to served projections.
   backed by one process-local memory store and exercised with `curl`.
 - [Issue tracker](examples/issue-tracker-demo/README.md): a complete application
   with conditional writes, SQLite persistence, and live browser collections.
+- [Foldkit issue tracker with Views](examples/issue-tracker-demo-foldkit-views/README.md)
+  reads browser-local Views snapshots and confirms writes by offset.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.

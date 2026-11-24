@@ -1,48 +1,12 @@
-import { Array as Arr, Effect, Schema } from "effect";
-import { SqlClient, type SqlError } from "effect/sql";
-import type { JsonObject, RowKey } from "../ir/contracts.ts";
+import { Array as Arr, Effect } from "effect";
+import type { SqlClient } from "effect/sql";
+import type { Backend } from "../backend.ts";
+import type { Accumulator, Entry, IndexEntry, Store } from "../store.ts";
 import { encodeRowKey } from "../runtime/key.ts";
-import { rowKeySchema } from "./data-fault.ts";
-
-export interface Entry {
-  readonly key: RowKey;
-  readonly row: JsonObject;
-}
-
-export interface IndexEntry {
-  readonly index_key: string;
-  readonly sort_key: string;
-  readonly row_key: string;
-}
-
-export interface Accumulator {
-  readonly count: number;
-  readonly sums: Readonly<Record<string, number>>;
-  readonly integerMass?: Readonly<Record<string, number>>;
-}
-
-const rowCodec = Schema.fromJsonString(
-  Schema.Struct({
-    key: rowKeySchema,
-    row: Schema.JsonObject,
-  }),
-);
-
-const accCodec = Schema.fromJsonString(
-  Schema.Struct({
-    count: Schema.Finite,
-    sums: Schema.Record(Schema.String, Schema.Finite),
-    integerMass: Schema.optionalKey(Schema.Record(Schema.String, Schema.Finite)),
-  }),
-);
-
-const decodeRow = Schema.decodeUnknownSync(rowCodec);
-
-const decodeAcc = Schema.decodeUnknownSync(accCodec);
+import { decodeAcc, decodeRow } from "./codecs.ts";
 
 /** All engine SQL is here. Every statement binds at most 100 values. */
-export const migrate = Effect.fn("ViewsSql.migrate")(function* () {
-  const sql = yield* SqlClient.SqlClient;
+export const migrate = Effect.fn("ViewsSql.migrate")(function* (sql: SqlClient.SqlClient) {
   yield* sql`CREATE TABLE IF NOT EXISTS streamsy_view_integrals (
     namespace TEXT NOT NULL, relation TEXT NOT NULL, row_key TEXT NOT NULL, value TEXT NOT NULL,
     PRIMARY KEY (namespace, relation, row_key)) WITHOUT ROWID`;
@@ -58,34 +22,7 @@ export const migrate = Effect.fn("ViewsSql.migrate")(function* () {
     PRIMARY KEY (namespace, relation, output_key)) WITHOUT ROWID`;
 });
 
-type Query<A> = Effect.Effect<A, SqlError.SqlError>;
-
-/** Namespace-local operator state. Keys passed to batch reads are encoded identities. */
-export interface Store {
-  rows(relation: string): Query<readonly Entry[]>;
-  get(relation: string, key: string): Query<Entry | undefined>;
-  getMany(relation: string, keys: readonly string[]): Query<ReadonlyMap<string, Entry>>;
-  put(relation: string, entries: readonly Entry[]): Query<void>;
-  remove(relation: string, keys: readonly string[]): Query<void>;
-  snapshotMark(arrangement: string, key: string): Query<void>;
-  clearIndex(arrangement: string): Query<void>;
-  indexPut(arrangement: string, entries: readonly IndexEntry[]): Query<void>;
-  indexRemove(arrangement: string, entries: readonly IndexEntry[]): Query<void>;
-  lookup(
-    arrangement: string,
-    indexKey: string,
-    limit?: number,
-    reverse?: boolean,
-  ): Query<readonly Pick<IndexEntry, "row_key" | "sort_key">[]>;
-  accumulator(node: string, groupKey: string): Query<Accumulator | undefined>;
-  accumulatorPut(node: string, groupKey: string, value: Accumulator): Query<void>;
-  accumulatorRemove(node: string, groupKey: string): Query<void>;
-  owners(relation: string, keys: readonly string[]): Query<ReadonlyMap<string, string>>;
-  ownersPut(relation: string, owners: ReadonlyMap<string, string>): Query<void>;
-  ownersRemove(relation: string, keys: readonly string[]): Query<void>;
-}
-
-export function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
+function storeFor(sql: SqlClient.SqlClient, namespace: string): Store {
   const get = (relation: string, rowKey: string) =>
     Effect.gen(function* () {
       const rows = yield* sql<{ value: string }>`SELECT value FROM streamsy_view_integrals
@@ -264,7 +201,7 @@ export const migrateCircuits = Effect.fn("ViewsSql.migrateCircuits")(function* (
     namespace TEXT PRIMARY KEY, plan_hash TEXT NOT NULL) WITHOUT ROWID`;
 });
 
-export const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
+const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
   sql: SqlClient.SqlClient,
   namespace: string,
 ) {
@@ -275,9 +212,19 @@ export const clearNamespace = Effect.fn("ViewsSql.clearNamespace")(function* (
   yield* sql`DELETE FROM streamsy_view_circuits WHERE namespace = ${namespace}`;
 });
 
-export const circuitState = (sql: SqlClient.SqlClient, namespace: string) => ({
-  load: () => sql<{ plan_hash: string }>`
-    SELECT plan_hash FROM streamsy_view_circuits WHERE namespace = ${namespace}`,
-  save: (hash: string) => sql`
-    INSERT INTO streamsy_view_circuits (namespace, plan_hash) VALUES (${namespace}, ${hash})`,
+export const sqliteBackend = (sql: SqlClient.SqlClient): Backend => ({
+  store: (namespace) => storeFor(sql, namespace),
+  circuit: (namespace) => ({
+    load: sql<{ plan_hash: string }>`
+    SELECT plan_hash FROM streamsy_view_circuits WHERE namespace = ${namespace}`.pipe(
+      Effect.map(([previous]) => previous?.plan_hash),
+    ),
+    save: (hash) =>
+      sql`
+    INSERT INTO streamsy_view_circuits (namespace, plan_hash) VALUES (${namespace}, ${hash})`.pipe(
+        Effect.asVoid,
+      ),
+  }),
+  clear: (namespace) => clearNamespace(sql, namespace),
+  atomic: sql.withTransaction,
 });

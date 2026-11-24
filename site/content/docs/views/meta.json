@@ -1,4 +1,14 @@
 {
   "title": "Views",
-  "pages": ["index", "declare-and-run", "lifecycle", "ordering-and-limits", "reference"]
+  "pages": [
+    "index",
+    "declare-and-run",
+    "postgres",
+    "mysql",
+    "memory",
+    "live",
+    "lifecycle",
+    "ordering-and-limits",
+    "reference"
+  ]
 }

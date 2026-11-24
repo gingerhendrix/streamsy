@@ -76,9 +76,14 @@ export type Checks = [
     >
   >,
   Assert<Same<Effect.Services<typeof get>, SqlClient.SqlClient>>,
-  Assert<Same<Effect.Services<typeof run>, Workspace | CheckpointStore | Transaction>>,
-  Assert<Same<Effect.Services<typeof sync>, Workspace | Transaction>>,
-  Assert<Same<Effect.Services<typeof rebuild>, Workspace | Transaction>>,
+  Assert<
+    Same<
+      Effect.Services<typeof run>,
+      Workspace | CheckpointStore | Transaction | SqlClient.SqlClient
+    >
+  >,
+  Assert<Same<Effect.Services<typeof sync>, Workspace | SqlClient.SqlClient>>,
+  Assert<Same<Effect.Services<typeof rebuild>, Workspace | Transaction | SqlClient.SqlClient>>,
   Assert<Same<Effect.Success<typeof sync>, void>>,
   Assert<Same<Effect.Error<typeof sync>, ProjectionFault>>,
   Assert<Same<Effect.Error<typeof rebuild>, ProjectionFault>>,

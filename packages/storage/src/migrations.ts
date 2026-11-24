@@ -75,10 +75,10 @@ export const inspectFormat = (
     : Effect.succeed(ownsFormat);
 };
 
-export const newerVersionFault = (version: number) =>
+export const newerVersionFault = (version: number, dialect: StorageDialect) =>
   new StorageFault({
     operation: "migration.open",
-    message: `Unsupported newer Streamsy storage schema version ${version}; supported version is ${STORAGE_SCHEMA_VERSION}`,
+    message: `Unsupported newer Streamsy storage schema version ${version}; supported version is ${STORAGE_SCHEMA_VERSION[dialect]}`,
     retryable: false,
   });
 
@@ -117,27 +117,29 @@ const migrateVersions = (
       ),
     );
 
-    if (current > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(current);
+    const supported = STORAGE_SCHEMA_VERSION[dialect];
 
-    for (let version = current + 1; version <= STORAGE_SCHEMA_VERSION; version++) {
+    if (current > supported) return yield* newerVersionFault(current, dialect);
+
+    for (let version = current + 1; version <= supported; version++) {
       if (hooks.beforeVersion !== undefined) yield* hooks.beforeVersion(version);
       const statements = STORAGE_MIGRATIONS[version - 1]?.[dialect];
 
       if (statements === undefined) return yield* Effect.die(new Error("Missing migration"));
 
       for (const statement of statements) {
-        // MySQL DDL commits immediately. A crash may leave any prefix of v3
-        // applied without its version row. The named lock and reserved connection
-        // cover both this inspection and the addition, so a repeat skips it.
-        if (dialect === "mysql" && version === 3) {
-          const column = statement.match(/ADD COLUMN (\w+)/)?.[1];
+        // MySQL commits DDL immediately. Under the named lock, skip any
+        // column that a previous run added before it recorded the version.
+        const addition =
+          dialect === "mysql" ? /^ALTER TABLE (\w+) ADD COLUMN (\w+) /u.exec(statement) : null;
 
-          if (column === undefined) return yield* Effect.die(new Error("Missing v3 column"));
+        if (addition !== null) {
+          const [, table, column] = addition;
 
           const existing = yield* sqlAttempt(
             "migration.inspect-column",
             sql`SELECT column_name FROM information_schema.columns
- WHERE table_schema = DATABASE() AND table_name = 'streamsy_projection_pending'
+ WHERE table_schema = DATABASE() AND table_name = ${table}
  AND column_name = ${column}`,
           );
 

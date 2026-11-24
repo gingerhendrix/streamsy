@@ -12,10 +12,10 @@ import {
 } from "../../src/ir/contracts.ts";
 import { evaluate, evaluateOptional, isMissing } from "../../src/runtime/expression.ts";
 import type { Evaluated, ExpressionScopes } from "../../src/runtime/expression.ts";
-import { asRowKey, canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
+import { asRowKey, canonicalJson, compareRowKeys, encodeRowKey } from "../../src/runtime/key.ts";
 
 import { dataFault } from "../../src/sql/data-fault.ts";
-import type { Entry as StateRow } from "../../src/sql/store.ts";
+import type { Entry as StateRow } from "../../src/store.ts";
 import { Record as Rec, Array as Arr } from "effect";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- The independent oracle validates dynamic expression results directly; open JSON rows and canonicalization assertions mirror the accepted JSON-only A1 boundary, while sorts only mutate fresh arrays. */
@@ -273,12 +273,9 @@ function recomputeAggregate(
 
         const members =
           aggregate.function === "sum"
-            ? [...bucket.members].sort((a, b) => {
-                const left = encodeRowKey(a.key),
-                  right = encodeRowKey(b.key);
-
-                return left < right ? -1 : left > right ? 1 : 0;
-              })
+            ? [...bucket.members].sort((a, b) =>
+                compareRowKeys(encodeRowKey(a.key), encodeRowKey(b.key)),
+              )
             : bucket.members;
 
         const values = Arr.map(members, (member) =>
@@ -410,10 +407,7 @@ function recomputeTop(
           if (comparison !== 0) return term.direction === "ascending" ? comparison : -comparison;
         }
 
-        const a = encodeRowKey(left.entry.key),
-          b = encodeRowKey(right.entry.key);
-
-        return a < b ? -1 : a > b ? 1 : 0;
+        return compareRowKeys(encodeRowKey(left.entry.key), encodeRowKey(right.entry.key));
       })
       .slice(0, limit);
 

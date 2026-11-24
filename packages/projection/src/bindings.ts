@@ -12,7 +12,8 @@ import { canonicalParams } from "./unit.ts";
  * Each binding appears once, in unspecified order.
  *
  * Fails with `InvalidBinding` if live params cannot round-trip through the current
- * codecs. MySQL owner stores fail because historical hashed keys cannot be decoded.
+ * codecs. On MySQL, listing fails while the range contains a legacy hashed key
+ * that has yet to be rewritten.
  */
 export const bindings = Effect.fn("Projection.bindings")(function* <
   C extends StreamRoute.ParamCodecs,

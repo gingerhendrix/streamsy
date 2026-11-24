@@ -3,11 +3,15 @@
  * Timings include the Effect SQL transaction and generating output changes.
  * The consumer Map applies changes outside the timed window.
  */
-import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { Array as Arr, Effect } from "effect";
+import { Array as Arr, Effect, Layer } from "effect";
+import { Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
 import { join } from "node:path";
+import { SqlClient } from "effect/sql";
+import { View, ViewBackend } from "../src/index.ts";
+import { currentBackend } from "../src/view-backend.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This is a pure compiler, not an Effect service constructor.
-import { makeEngine, migrate, type StateChange, type OutputChange } from "../src/sql/engine.ts";
+import { makeEngine, type StateChange, type OutputChange } from "../src/sql/engine.ts";
 import { canonicalJson, encodeRowKey } from "../src/runtime/key.ts";
 import { shopPlans } from "../test/sql/fixtures.ts";
 import type { JsonObject, RowKey } from "../src/ir/contracts.ts";
@@ -35,6 +39,10 @@ if (!scratch || !Number.isInteger(count) || count < 10 || count % 10)
 const customerCount = count / 10;
 
 const database = join(scratch, `views-sql-${count}-${Date.now()}.sqlite`);
+
+const host = Layer.merge(Transaction.layer, ViewBackend.layerSql).pipe(
+  Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: database } })),
+);
 
 const order = (i: number): Order => ({
   orderId: `o-${i}`,
@@ -82,8 +90,16 @@ function consume(changes: readonly OutputChange[]) {
 
 await Effect.runPromise(
   Effect.gen(function* () {
-    yield* migrate();
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    const owner = yield* Transaction;
     const engine = yield* makeEngine(shopPlans());
+
+    const runUnit = (input: readonly StateChange[]) =>
+      owner.withTransaction(
+        Effect.flatMap(currentBackend, (backend) => engine.process(backend, "bench", input)),
+      );
+
     console.log(
       JSON.stringify({
         orders: count,
@@ -98,8 +114,7 @@ await Effect.runPromise(
 
     for (let i = 0; i < customerCount; i += 1000)
       consume(
-        yield* engine.process(
-          "bench",
+        yield* runUnit(
           Array.from({ length: Math.min(1000, customerCount - i) }, (_, k) =>
             upCustomer(customer(i + k)),
           ),
@@ -108,8 +123,7 @@ await Effect.runPromise(
 
     for (let i = 0; i < count; i += 1000) {
       consume(
-        yield* engine.process(
-          "bench",
+        yield* runUnit(
           Array.from({ length: Math.min(1000, count - i) }, (_, k) => upOrder(order(i + k))),
         ),
       );
@@ -137,7 +151,7 @@ await Effect.runPromise(
       for (let k = 0; k < runs; k++) {
         const input = make(k);
         const start = performance.now();
-        const changes = yield* engine.process("bench", input);
+        const changes = yield* runUnit(input);
         times.push(performance.now() - start);
         output += changes.length;
         consume(changes);
@@ -203,7 +217,7 @@ await Effect.runPromise(
       50,
     );
     verify();
-  }).pipe(Effect.provide(SqliteClient.layer({ filename: database }))),
+  }).pipe(Effect.provide(host)),
 );
 
 /** Independent full recompute of the spike's four views, with indexed JS joins.

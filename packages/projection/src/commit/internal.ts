@@ -5,7 +5,15 @@ import type { StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, Writer } from "@streamsy/core/protocol";
 import { CheckpointStore, type CheckpointRecord } from "../checkpoint-store.ts";
 import { ProjectionFault } from "../fault.ts";
-import type { Commit, Pending, Folded, Emitted, Accumulated, OutputNames } from "./model.ts";
+import type {
+  Commit,
+  RetireRequest,
+  Pending,
+  Folded,
+  Emitted,
+  Accumulated,
+  OutputNames,
+} from "./model.ts";
 import type { WakeAt } from "../wake-at.ts";
 import type { PinnedRange } from "../unit.ts";
 
@@ -51,10 +59,7 @@ export const load: Commit<never, never, CheckpointStore>["load"] = (key) =>
 export const remove: NonNullable<Commit<never, never, CheckpointStore>["remove"]> = (key) =>
   CheckpointStore.use((store) => store.remove(key));
 
-export const retire: NonNullable<Commit<never, never, CheckpointStore>["retire"]> = ({
-  key,
-  cleanup,
-}) =>
+export const retire = <R>({ key, cleanup }: RetireRequest<R>) =>
   CheckpointStore.use((store) =>
     store.retire === undefined
       ? Effect.fail(

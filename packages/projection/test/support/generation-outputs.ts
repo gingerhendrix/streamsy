@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Commit, FoldByKey, Projection, StateTable } from "@streamsy/projection";
+import { Commit, FoldByKey, Projection, StateTable, type Emitted } from "@streamsy/projection";
 import { Fact, fold, Row } from "./fold-by-key.ts";
 
 export class Facts extends Streamsy.json<Facts>()("G1/Facts", "g1/facts/:workspace", {
@@ -43,8 +43,8 @@ export const accepted = Projection.perGeneration(Accepted, "epoch");
 
 export const failedHandler = new Error("generation handler failed");
 
-export const numbers = (
-  commit: typeof Commit.transaction | typeof Commit.producer,
+export const numbers = <R>(
+  commit: Commit.Commit<Emitted<{ readonly numbers: never }>, never, R>,
   generation: number,
   fail = false,
 ) =>

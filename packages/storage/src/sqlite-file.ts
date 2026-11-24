@@ -84,7 +84,8 @@ const preflight = (
 
     yield* inspectFormat(state.names);
 
-    if (state.version > STORAGE_SCHEMA_VERSION) return yield* newerVersionFault(state.version);
+    if (state.version > STORAGE_SCHEMA_VERSION.sqlite)
+      return yield* newerVersionFault(state.version, "sqlite");
 
     return undefined;
   });

@@ -1,7 +1,7 @@
 import type { JsonValue, SortTerm } from "../ir/contracts.ts";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { encodeRowKey } from "../runtime/key.ts";
-import type { Entry } from "./store.ts";
+import type { Entry } from "../store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Ordered JSON scalars are validated at this encoding boundary. */
 /** Self-delimiting hex keys preserve scalar order under SQLite BINARY collation. */
@@ -14,7 +14,11 @@ export function scalarKey(value: JsonValue): string {
       for (let i = 0; i < 8; i++) bytes[i] = 255 - (bytes[i] ?? 0);
     } else bytes[0] = (bytes[0] ?? 0) ^ 128;
 
-    return `1${bytes.toHex()}`;
+    let result = "1";
+
+    for (const byte of bytes) result += byte.toString(16).padStart(2, "0");
+
+    return result;
   }
 
   if (typeof value === "string") {

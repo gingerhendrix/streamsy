@@ -4,6 +4,7 @@ import * as FamilyFixture from "./support/families.ts";
 import { expect } from "vitest";
 import { Array, Deferred, Effect, Fiber, Option, Schema, Stream } from "effect";
 import { StorageFault, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
+import { attachOwner, ownerOf } from "@streamsy/core/internal";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { SqlClient } from "effect/sql";
 import { CheckpointStore, Projection, ProjectionFault } from "@streamsy/projection";
@@ -472,10 +473,13 @@ layer(FamilyFixture.withFamilies(layerSqlite(1000), Numbers, Doubled))((it) => {
         const first = yield* Effect.forkChild(Projection.pass(gated));
         yield* Deferred.await(inside);
 
+        // Without the owner on the wrapper, the commit rejects the store before it compares tokens.
+        const observedLoad: typeof owner.load = (key) =>
+          owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined)));
+
         const observing = CheckpointStore.of({
           ...owner,
-          load: (key) =>
-            owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
+          load: attachOwner(observedLoad, ownerOf(owner.load)),
         });
 
         const second = yield* Effect.forkChild(

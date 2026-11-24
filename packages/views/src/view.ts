@@ -273,3 +273,5 @@ export const key = Object.assign(compositeKey, {
 export { circuit, migrate } from "./circuit.ts";
 
 export type { CircuitDeclaration, CircuitBinding } from "./circuit.ts";
+
+export { live } from "./live.ts";

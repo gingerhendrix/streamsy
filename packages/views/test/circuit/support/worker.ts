@@ -4,6 +4,7 @@ import { Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
 import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { ViewBackend } from "../../../src/index.ts";
 import { Shop, Results } from "./shop.ts";
 import { proof } from "./proof.ts";
 import { routedGroup, routedProof } from "./routed-proof.ts";
@@ -60,7 +61,11 @@ export class ShopObject {
     });
 
     // oxlint-enable anti-slop/no-reflect-get
-    const local = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+    const local = Layer.mergeAll(
+      CheckpointStore.layer,
+      Transaction.layer,
+      ViewBackend.layerSql,
+    ).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layerProtocol({ client: { storage }, readLimit: 200 }),
       ),

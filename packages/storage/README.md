@@ -90,10 +90,9 @@ shows the complete pattern.
 
 On a server database, the stream row lock is taken by the first stream mutation
 inside the transaction, not when the transaction starts. Your SQL before that
-mutation runs before the lock. Storage's reads inside a mutation are safe on
-every dialect: on MySQL they are locking reads (`FOR UPDATE` or `FOR SHARE`),
-so they see the latest committed rows even when your SQL fixed the
-transaction's snapshot first. A stale plan is rejected, never written.
+mutation runs before the lock. On MySQL, storage uses locking reads
+(`FOR UPDATE` or `FOR SHARE`) inside a mutation to see the latest committed
+rows even under a caller-selected isolation level. Storage rejects a stale plan.
 
 The protocol plans an append from `storage.record` and `storage.producer`.
 Inside a transaction on MySQL, these reads are `FOR UPDATE` too, so each replan
@@ -101,11 +100,41 @@ sees the latest tail and the stream row stays locked until your transaction
 ends. Other writers to that stream wait for your commit. Outside a transaction
 they are plain reads and take no lock.
 
-Your reads of your own tables are your job. On Postgres each statement reads
-the latest committed rows. On MySQL at the default REPEATABLE READ, a plain
-read uses the snapshot of the transaction's first plain read, which can be
-older than the stream lock. If a decision depends on a row another writer can
-change, read it with `FOR UPDATE` or `FOR SHARE` on MySQL.
+On MySQL the boundary selects `READ COMMITTED` for each transaction it opens,
+overriding the session default, including `SERIALIZABLE`. This applies even
+when the session inherits its default from the server or its pool sets one.
+Other transactions use the session default unless the caller selects another
+level. This includes transactions that projection marks open directly through
+`SqlClient`. Marks written by a commit hook join the boundary transaction.
+Keep the session in autocommit so the boundary can set the isolation before
+beginning.
+
+At `READ COMMITTED`, also the Postgres default, each plain read takes a fresh
+snapshot of committed rows. `FOR UPDATE` and `FOR SHARE` can hold existing
+rows stable until commit. On MySQL at this level, a locking read cannot lock an
+absent row or guard a range against inserts. Enforce uniqueness with a unique
+key or have writers lock an existing parent row.
+
+At this level, `Projection.bindings` inside a MySQL transaction takes shared
+locks on existing owner records it reads. Another host can commit a new
+binding of the same projection before the listing transaction finishes.
+
+To use the MySQL session's default, provide Effect's
+`SqlClient.BeginTransaction` with the value `"START TRANSACTION"`. Opting out
+to `REPEATABLE READ` can produce stale Views results when another host advances
+the binding inside your transaction's snapshot. It can also cause
+`Projection.forget` to miss a routed binding's first checkpoint when another
+host commits it after the forgetting transaction's first read.
+
+The boundary sends `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` and
+`START TRANSACTION` in one request. A custom client with multi-statement
+requests disabled fails at its first storage transaction. Effect's mysql2
+client enables them by default. The mysql2 `-MULTI_STATEMENTS` flag disables
+them.
+
+With binary logging enabled, use `binlog_format=ROW` or `MIXED`. MySQL logs
+InnoDB writes in these transactions by row in `MIXED` mode. See [MySQL
+transaction isolation levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html).
 
 For a projection on that same connection:
 
@@ -122,13 +151,14 @@ const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
 `CheckpointStore.layer` keeps checkpoints in the storage table
 `streamsy_owner_records`. On Postgres and MySQL, a checkpoint save locks the
 record it read, and a first save is a plain insert, so two concurrent saves of
-one projection never both win. `Transaction.layer` gives the SQL-only `Transaction`
-service. `Commit.transaction` uses them to commit SQL, same-owner stream
-appends, and the checkpoint together. A projection unit on a second SQL client
-opens its own transaction under the nesting rules above.
-Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client.
-With separate clients, the checkpoint commits on its own and can survive a rollback
-of the projection's transaction.
+one projection never both win. `Transaction.layer` builds `Transaction` from the same storage owner.
+`Commit.transaction` saves same-owner stream appends and the checkpoint together.
+SQL handlers join that transaction through the storage owner’s `SqlClient`.
+
+A projection unit on a second SQL client opens its own transaction under the
+nesting rules above. Build `Transaction.layer` and `CheckpointStore.layer` over
+the same storage owner. `Commit.transaction` fails with `unsupported-composition`
+when the checkpoint store has another owner.
 
 In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 `client: { storage: ctx.storage }` in the same composition.
@@ -140,15 +170,24 @@ In a Durable Object, use `DurableObjectStorage.layerProtocol` with
 - Only files in the current storage format are accepted. Older Streamsy files,
   including those from earlier 0.4 builds, and newer unknown schemas are
   rejected without being changed. Use a fresh database path.
-- Opening a schema version 2 database upgrades it to version 3, adding explicit
-  stops, last-failure fields and a nullable `wake_at` timer index to projection marks. Sequence numbers, attempts
-  and due times survive the upgrade. A schema version 2 release cannot reopen it.
-- Stream ids are limited to 512 characters, and producer ids to 255. A longer
+- Migration 3 adds explicit stops, last-failure fields, and a nullable `wake_at`
+  field for timers to projection marks. Sequence numbers, attempts, and due times
+  survive the upgrade from version 2. A schema version 2 release cannot reopen
+  the upgraded database.
+- Storage migrates SQLite and Postgres to schema version 3 and MySQL to version 4.
+  Stop every 0.13.0 process before opening a MySQL database with storage that
+  upgrades it to version 4. See [SQL storage migrations](https://streamsy.dev/docs/reference/storage/sql-storage#sqlstoragelayer).
+- Stream ids are limited to 512 code points, and producer ids to 255. A longer
   id fails with a non-retryable `StorageFault` before anything is written.
-- Projection checkpoint keys have no length limit. MySQL stores 512 key
-  characters, so on MySQL a longer key is stored as its first 447 characters,
-  `#` and the SHA-256 hex of the full key. The other dialects store every key
-  as it is.
+- The checkpoint store adds no length limit to projection checkpoint keys.
+  SQLite and Postgres keep the full key in the lookup column. On MySQL, owner
+  record lookup keys longer than 512 code points use the first
+  447 code points, `#`, and the SHA-256 hex of the full key. Storage saves the
+  original key in `full_key`. A listing range that contains a legacy hashed key
+  without its full key fails until the record is rewritten with the original key.
+- On MySQL, durable projection ids are limited to 255 Unicode code points.
+  Storage saves original pending mark params in `full_params` so they can exceed
+  the 512-code-point lookup column.
 - Bun defaults the client `busyTimeout` to zero and retries storage-owned
   transactions with a bounded yielding policy. Tune `client.busyTimeout`,
   `transactionRetryAttempts`, and `transactionRetryDelayMs` if you need to.

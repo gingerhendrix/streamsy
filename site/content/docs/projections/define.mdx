@@ -38,14 +38,14 @@ A declaration is inert. It reads and writes nothing. `orderTotals.at({})` binds 
 | `state`      | Required for `fold`, `mapAccum`, and `mapAccumBatch`. `{ schema, initial }`. See [Values](/docs/projections/state)                                                                           |
 | `commit`     | The Commit. Optional for `fold`, where the default is `Commit.checkpoint`. Required for `process`, `emit`, `mapAccum`, and `mapAccumBatch`. See [Commits](/docs/projections/commits)         |
 | `accepted`   | Optional wake class for publishing accepted input offsets with `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted)                                  |
-| `prepare`    | Optional, for `process` with `Commit.transaction` only. See [Tables and effects](/docs/projections/process)                                                                                  |
+| `prepare`    | Optional, for `process` with `Commit.transaction`. See [Tables and effects](/docs/projections/process)                                                                                       |
 | The handler  | A field named after the constructor, such as `emit` above. See [Handler](#handler)                                                                                                           |
 
 `Projection.wake` takes `input` and `output` in place of `inputs`, `outputs`, `commit`, and a handler. See [Wake streams](/docs/streams/wake#write-rows).
 
 A declaration that the compiler accepts can still throw a `RangeError`:
 
-- The constructor throws `prepare requires Commit.transaction` when `prepare` has another Commit.
+- An unsupported commit throws `prepare requires Commit.transaction` when the definition declares `prepare`.
 - `at` throws when a parameter value does not encode with its codec.
 - `at` throws when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
 
@@ -138,7 +138,7 @@ For local inputs, `batch.input.offsets[i]` and `entry.offset` are the storage of
 
 When the handler fails, the runner fails with the error of the handler, and the Commit saves no offsets. The next pass reads the same items again.
 
-The host provides the services that the handler needs. `Commit.transaction` also provides `SqlClient` to the handler. A runner needs the handler services, the services of the Commit, and the services of each input and output stream.
+The host provides the services that the handler needs. A SQL handler under `Commit.transaction` reads the storage owner’s `SqlClient` from context. A runner needs the handler services, the services of the Commit, and the services of each input and output stream.
 
 ### Helpers
 

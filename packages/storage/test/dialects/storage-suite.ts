@@ -549,7 +549,11 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
       for (const { kind, table, version } of [
         { kind: "legacy", table: "streamsy_schema_version", version: 3 },
         { kind: "legacy-0.4", table: "streamsy_storage_schema_version", version: 2 },
-        { kind: "newer", table: STORAGE_VERSION_TABLE, version: STORAGE_SCHEMA_VERSION + 1 },
+        {
+          kind: "newer",
+          table: STORAGE_VERSION_TABLE,
+          version: STORAGE_SCHEMA_VERSION[dialect.name] + 1,
+        },
       ]) {
         outcomes.push(
           await Effect.runPromise(
@@ -620,7 +624,7 @@ export const storageDialectSuite = (dialect: SqlDialect): void => {
       expect(result).toEqual({
         left: Option.none(),
         right: Option.none(),
-        versions: Array.range(1, STORAGE_SCHEMA_VERSION),
+        versions: Array.range(1, STORAGE_SCHEMA_VERSION[dialect.name]),
       });
     });
   });

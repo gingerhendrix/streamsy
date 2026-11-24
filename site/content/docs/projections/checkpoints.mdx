@@ -19,15 +19,15 @@ The runner does not detect a codec change that keeps the content type. Declare a
 
 `CheckpointStore` holds the records. `Transaction` gives `Commit.transaction` its SQL client and its transaction. Three Layers build them:
 
-| Layer                         | Provides          | Requires                                           |
-| ----------------------------- | ----------------- | -------------------------------------------------- |
-| `CheckpointStore.layer`       | `CheckpointStore` | The `CommitBoundary` of a local storage host       |
-| `Transaction.layer`           | `Transaction`     | The `CommitBoundary` and `SqlClient` of a SQL host |
-| `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                            |
+| Layer                         | Provides          | Requires                                     |
+| ----------------------------- | ----------------- | -------------------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore` | The `CommitBoundary` of a local storage host |
+| `Transaction.layer`           | `Transaction`     | The `CommitBoundary` of a memory or SQL host |
+| `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                      |
 
 `CheckpointStore.layer` stores the records on the storage owner of the streams. Every local storage host provides that owner: `MemoryStorage.layer`, `BunStorage.layer`, `DurableObjectStorage.layer` and `SqlStorage.layer`. A record write then commits in the same transaction as the stream writes of that owner. With this Layer, `Commit.producer` creates a missing output on the owner.
 
-On a SQL host, add `Transaction.layer` for `Commit.transaction`:
+For `Commit.transaction`, provide `Transaction.layer` and `CheckpointStore.layer` over the same memory or SQL storage layer. The checkpoint store's `load` function must carry the storage owner's identity on every unit. Keep the storage owner's `SqlClient` available on SQL hosts that run SQL handlers. See [Transaction](/docs/reference/projection/commit#transaction).
 
 ```ts
 // @filename: streams.ts
@@ -109,7 +109,7 @@ Use `Projection.perGeneration(route, param)` on each derived output and on `acce
 
 Raise `generation` in the same deployment that adds the wrapper or otherwise changes the output addresses. A checkpoint tracks the input addresses but does not store the output addresses. A transaction with an existing checkpoint skips first-unit creation. A producer can start writing to a new address from the current checkpoint instead of replaying the input from the start.
 
-An unwrapped output keeps the same address when you raise `generation`. Both `Commit.producer` and `Commit.transaction` append the replay after the existing items. For `Commit.producer`, the first append starts a higher epoch for the same producer id. A later append from an older epoch for that id fails with `stale-epoch`. Transaction appends carry no producer position. To rebuild an unwrapped output from empty, move its address or delete the stream before you start the upgraded process. Attach can start replay at startup.
+An unwrapped output keeps the same address when you raise `generation`. `Commit.producer` and `Commit.transaction` append the replay after the existing items. For `Commit.producer`, the first append starts a higher epoch for the same producer id. A later append from an older epoch for that id fails with `stale-epoch`. Transaction appends carry no producer position. To rebuild an unwrapped output from empty, move its address or delete the stream before you start the upgraded process. Attach can start replay at startup.
 
 ### Migrate a declaration that set `version`
 
@@ -132,17 +132,34 @@ Each record write is a compare-and-set on the token that the runner loaded. Run 
 
 `token-conflict` reports a second writer; a retry reloads the token and may succeed. `follow` retries it on its schedule, and attached bindings retry on their own backoff. The handler of the slower writer may already have run its external effects. Stop the second writer.
 
+A second writer can also get a fault that no runner retries. Two hosts that race to commit the first unit of a binding on Postgres or MySQL leave one checkpoint and the winner's output. The slower host usually gets a retryable `storage-failure` or `token-conflict`. These faults are not retryable:
+
+- `invalid-output`, when an exclusive fixed `perGeneration` output is no longer empty because the winner wrote to it.
+- `ViewDataFault` from a Views circuit with routed outputs, when the winner commits a second unit that moves an output key to another row before the slower host continues.
+
+An attached or durable runner stops the binding on such a fault until you call `Registry.retry` or start the runner again, even though the binding's stored state is correct. `follow` fails its stream. Run one host for each binding to avoid both faults.
+
 ## Forget
 
 Use `Projection.forget(bound)` to discard a binding's progress at its current generation. Stop and drain its runners first, including direct `Projection.pass` calls. The built-in Commits delete the checkpoint, including its offsets and any state in the record. The streams and any retirement tombstone stay in place. A Commit with no `remove` fails with phase `checkpoint` and reason `unsupported-composition`.
 
+With `Commit.transaction` and `Commit.transactionWithCleanup`, forget checks the checkpoint again after its cleanup. If another host has committed the binding's first unit or retired it in between, the forget rolls back and fails with phase `checkpoint` and retryable reason `token-conflict`. Stop that host's runners and forget again. The check also covers a runner's own forget after the final unit for a gone input, and the runner runs the binding again after its backoff.
+
+When you call forget inside your own owner transaction, let a fault from it fail that transaction. A nested forget has no savepoint, so a caught fault leaves its deletes in place and your transaction commits them.
+
+A cleanup must also let its SQL errors fail. A caught error can abort the whole transaction. Forget then fails with `storage-failure` on Postgres. After a deadlock on MySQL, which rolls back on the server, it fails with `token-conflict` if it found a checkpoint. Statements that the cleanup runs after the caught deadlock can still take effect.
+
+The check works at the default isolation levels and at MySQL `REPEATABLE READ`. At `REPEATABLE READ` the overlap can instead end in a deadlock. MySQL then rolls back one of the two transactions, and a forget that loses fails with retryable `storage-failure`. At that level the check misses the checkpoint if a legacy hashed key makes its range unlistable, or if the store replaces the `load` function of `CheckpointStore.layer`. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
+
 For routed outputs, pass the binding from `declaration.at(params)` and keep its routed output declarations. A bare key or a declaration without routed outputs deletes the checkpoint and leaves the route records live, so replay can append to old data. Passing the routed binding marks the route records forgotten in the checkpoint transaction so `retire` can still find the streams.
 
-Routed forget, including the runner's automatic forget after the final unit for a gone input, requires owner-record listing. MySQL fails with `unsupported-composition` when the checkpoint exists. Forgetting an absent routed checkpoint on MySQL leaves the route records as they are. If you recreate a gone input at the same address after a successful forget, a populated wrapped output or accepted stream can make replay fail with non-retryable `invalid-output`. Raise `generation` to replay the recreated input into fresh streams. [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)
+Routed forget, including the runner's automatic forget after the final unit for a gone input, requires owner-record listing. If listing is unsupported, forgetting an existing checkpoint fails with `unsupported-composition`, and forgetting an absent checkpoint leaves the route records as they are. If you recreate a gone input at the same address after a successful forget, a populated wrapped output or accepted stream can make replay fail with non-retryable `invalid-output`. Raise `generation` to replay the recreated input into fresh streams. [Closed and gone inputs](/docs/projections/run#closed-and-gone-inputs)
 
 Forget treats a checkpoint that cannot be decoded as live. If that checkpoint was a retirement tombstone, forgetting it lets the generation run again.
 
 After forgetting a live checkpoint, the next run starts at zero offsets. Handler side effects run again, even when the stream drops duplicate appends.
+
+MySQL supports listing. A legacy hashed route key in the listing range makes listing unsupported for that binding. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 | Projection kind                            | Next run at the same generation                                                                                                                                                 |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -152,7 +169,7 @@ After forgetting a live checkpoint, the next run starts at zero offsets. Handler
 | Unwrapped output with `Commit.transaction` | Appends the replayed items after the existing items.                                                                                                                            |
 | Exclusive fixed `perGeneration` output     | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
 | Routed output                              | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
-| Views circuit                              | Starts with an empty SQL operator namespace. An output fault rolls back the unit.                                                                                               |
+| Views circuit                              | Starts with an empty operator namespace. An output fault rolls back the unit.                                                                                                   |
 
 ## Retire a generation
 
@@ -192,7 +209,9 @@ Retirement writes a tombstone even if the checkpoint is absent or cannot be deco
 
 The result is `{ record, streams }`. `record` is `"retired"` or `"already-retired"`. `streams` is a flat array of `RetiredStream` entries with `{ output, id, result }`, sorted by output name and then stream id in code-unit order. It includes fixed and routed outputs, shared wrapped outputs, and the wrapped accepted stream under `"@streamsy/accepted"`. A `result` is `"removed"`, `"closed"`, `"absent"`, or `"shared"`. Shared and unwrapped streams stay in place. A removed stream with a dependent fork stays reserved by stream storage.
 
-Retirement finds routed streams through the binding's live and forgotten route records. Use a declaration with the original routed output names and routes. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves the routed streams and their records in place. Retirement keeps the records after a close and clears them after removal. An owner store without owner-record listing support, such as MySQL, fails routed retirement with `unsupported-composition`.
+Retirement finds routed streams through the binding's live and forgotten route records. Use a declaration with the original routed output names and routes. A renamed output fails with `invalid-record`. A declaration without routed outputs leaves the routed streams and their records in place. Retirement keeps the records after a close and clears them after removal. An owner store without owner-record listing support fails routed retirement with `unsupported-composition`.
+
+Routed retirement also fails with `unsupported-composition` if the MySQL listing range contains a legacy hashed route key without its full key. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
 For a binding forgotten under 0.13.0, the old `forget` deleted its route records. To locate those streams, use the storage owner's stream inventory and match ids with the output route's `parse` and the binding's params and generation.
 
@@ -208,7 +227,7 @@ Registry marks are keyed by projection id and params. A stale runner can stop th
 
 A projection can read its inputs from any storage, including a remote Layer. Where its outputs can live depends on the Commit:
 
-- `Commit.transaction` requires every declared output on its SQL owner.
+- `Commit.transaction` requires every declared output on the transaction owner.
 - `Commit.producer` accepts an output on another owner when that stream already exists.
 
 To write to sinks with different guarantees, use one projection for each sink.

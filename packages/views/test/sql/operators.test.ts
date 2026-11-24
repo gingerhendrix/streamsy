@@ -8,12 +8,12 @@ import { collectPlanIssues } from "../../src/check.ts";
 import { compilePlan } from "../../src/relation.ts";
 import { keyExpression } from "../../src/expression.ts";
 import { circuitPlanHash } from "../../src/plan.ts";
-import { makeEngine, migrate, type StateChange } from "../../src/sql/engine.ts";
+import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
 import type { ClosureNode, JsonObject, RelationNode } from "../../src/ir/contracts.ts";
 import { scalarKey } from "../../src/sql/encoding.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 import { fullRecompute } from "../support/full-recompute.ts";
-import { identity, materialize } from "./support.ts";
+import { migratedSqliteBackend, identity, materialize } from "./support.ts";
 import { plan, ref, shopPlans, source } from "./fixtures.ts";
 
 const up = (sourceId: string, key: string, value: JsonObject): StateChange => ({
@@ -102,13 +102,13 @@ it.live(
   "closure incrementally updates paths on edge edits and keeps absent parents as ancestors",
   () =>
     Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
 
       const engine = yield* makeEngine({
         lineage: lineagePlan(closureNode(3)),
       });
 
-      const run = (changes: readonly StateChange[]) => engine.process("closure", changes);
+      const run = (changes: readonly StateChange[]) => engine.process(backend, "closure", changes);
 
       expect(yield* run([edge("b", "a"), edge("c", "b")])).toEqual([
         expectedPath("b", "a", "b"),
@@ -192,7 +192,7 @@ it.live("closure stops at self parents, cycles and the depth limit", () => {
   ];
 
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
 
     const engine = yield* makeEngine({
       lineage: lineagePlan(closureNode(3)),
@@ -201,7 +201,7 @@ it.live("closure stops at self parents, cycles and the depth limit", () => {
     const current = new Map<string, string>();
 
     for (const { changes, paths } of cases) {
-      materialize(current, yield* engine.process("cycle", changes));
+      materialize(current, yield* engine.process(backend, "cycle", changes));
       expect(current).toEqual(
         new Map(
           Arr.map(paths, ({ key, value }) => [identity("lineage", key), canonicalJson(value)]),
@@ -218,7 +218,7 @@ it.live("closure stops at self parents, cycles and the depth limit", () => {
       const last = String(maxDepth + 2);
 
       const rows = Arr.filter(
-        yield* chain.process(`chain-${maxDepth}`, changes),
+        yield* chain.process(backend, `chain-${maxDepth}`, changes),
         (change) => change.kind === "upsert" && change.value.node === last,
       );
 
@@ -231,7 +231,7 @@ it.live("closure stops at self parents, cycles and the depth limit", () => {
 
 it.live("closure rolls back an absent path part and a subtree beyond maxAffectedKeys", () =>
   Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const sql = yield* SqlClient.SqlClient;
 
     const lineage = plan("lineage", [
@@ -241,7 +241,7 @@ it.live("closure rolls back an absent path part and a subtree beyond maxAffected
     ]);
 
     const engine = yield* makeEngine({ lineage }, false, 8);
-    const run = (changes: readonly StateChange[]) => engine.process("bounded", changes);
+    const run = (changes: readonly StateChange[]) => engine.process(backend, "bounded", changes);
 
     const readState = Effect.gen(function* () {
       return [
@@ -287,20 +287,26 @@ it.live("concat preserves same-key rows from both sides, including composite key
   ]);
 
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const engine = yield* makeEngine({ concat: p });
     const left = { id: "same", group: "g", value: 1 };
     const right = { id: "same", group: "g", value: 2 };
     const inputKey = encodeRowKey(["same", "g"]);
     expect(
-      yield* engine.process("concat", [up("left", left.id, left), up("right", right.id, right)]),
+      yield* engine.process(backend, "concat", [
+        up("left", left.id, left),
+        up("right", right.id, right),
+      ]),
     ).toEqual([
       { view: "concat", kind: "upsert", key: ["l", inputKey], value: left },
       { view: "concat", kind: "upsert", key: ["r", inputKey], value: right },
     ]);
     const updated = { ...right, value: 3 };
     expect(
-      yield* engine.process("concat", [del("left", left.id), up("right", right.id, updated)]),
+      yield* engine.process(backend, "concat", [
+        del("left", left.id),
+        up("right", right.id, updated),
+      ]),
     ).toEqual([
       { view: "concat", kind: "delete", key: ["l", inputKey] },
       { view: "concat", kind: "upsert", key: ["r", inputKey], value: updated },
@@ -336,11 +342,11 @@ it.live("orders mixed View.list values the same way as the full recompute", () =
   });
 
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const engine = yield* makeEngine({ list });
     const output = new Map<string, string>();
     const changes = Arr.map(rows, ({ key, row }) => up(sourceId, key, row));
-    materialize(output, yield* engine.process("mixed-list", changes));
+    materialize(output, yield* engine.process(backend, "mixed-list", changes));
 
     const expected = fullRecompute({ plan: list, sources: { [sourceId]: rows } });
     expect(Arr.map(expected.rows, ({ row }) => row.values)).toEqual([
@@ -358,24 +364,26 @@ it.live(
   "normalizes repeated keys, suppresses net no-ops, and restores using SQL after recompiling",
   () => {
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const plans = shopPlans(true);
       const a = yield* makeEngine(plans);
-      yield* a.process("one", [order("a"), customer("c")]);
+      yield* a.process(backend, "one", [order("a"), customer("c")]);
       expect(
-        yield* a.process("one", [order("a", "x", 100), del("orders", "a"), order("a")]),
+        yield* a.process(backend, "one", [order("a", "x", 100), del("orders", "a"), order("a")]),
       ).toEqual([]);
       expect(
-        yield* a.process("one", [
+        yield* a.process(backend, "one", [
           del("orders", "absent"),
           order("transient"),
           del("orders", "transient"),
         ]),
       ).toEqual([]);
       const b = yield* makeEngine(plans);
-      expect(yield* b.process("one", [order("a"), customer("c")])).toEqual([]);
-      expect((yield* b.process("two", [order("a"), customer("c")])).length).toBeGreaterThan(0);
-      expect(yield* b.process("one", [])).toEqual([]);
+      expect(yield* b.process(backend, "one", [order("a"), customer("c")])).toEqual([]);
+      expect(
+        (yield* b.process(backend, "two", [order("a"), customer("c")])).length,
+      ).toBeGreaterThan(0);
+      expect(yield* b.process(backend, "one", [])).toEqual([]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
   },
 );
@@ -405,10 +413,10 @@ it.live(
     const sourceId = JSON.stringify([Items.key, "item"]);
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ chosen });
 
-      const first = yield* engine.process("p", [
+      const first = yield* engine.process(backend, "p", [
         up(sourceId, "a", { id: "a", groupId: "g1", score: 2 }),
       ]);
 
@@ -416,7 +424,7 @@ it.live(
         { view: "chosen", kind: "upsert", key: "g1", value: { id: "a", groupId: "g1", score: 2 } },
       ]);
 
-      const move = yield* engine.process("p", [
+      const move = yield* engine.process(backend, "p", [
         up(sourceId, "a", { id: "a", groupId: "g2", score: 2 }),
       ]);
 
@@ -425,7 +433,9 @@ it.live(
         { view: "chosen", kind: "upsert", key: "g2", value: { id: "a", groupId: "g2", score: 2 } },
       ]);
       expect(
-        yield* engine.process("p", [up(sourceId, "a", { id: "a", groupId: "g2", score: -1 })]),
+        yield* engine.process(backend, "p", [
+          up(sourceId, "a", { id: "a", groupId: "g2", score: -1 }),
+        ]),
       ).toEqual([{ view: "chosen", kind: "delete", key: "g2" }]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
   },
@@ -455,7 +465,7 @@ it.live(
     const p = plan("join", [left, right, joined]);
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ result: p });
       const current = new Map<string, string>();
 
@@ -478,7 +488,7 @@ it.live(
           else rows.set(c.key.toString(), c.value);
         }
 
-        materialize(current, yield* engine.process("p", unit));
+        materialize(current, yield* engine.process(backend, "p", unit));
 
         const expected = fullRecompute({
           plan: p,
@@ -518,12 +528,12 @@ it.live(
     ]);
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ a: p });
       expect(engine.program.arrangements.size).toBe(2); // One for sum and one for min, max and list.
 
       expect(
-        yield* engine.process("p", [
+        yield* engine.process(backend, "p", [
           aggregateItem("a", -4),
           aggregateItem("b", -4),
           aggregateItem("c", 8),
@@ -537,13 +547,13 @@ it.live(
           value: { group: "g", count: 4, sum: 0, min: -4, max: 8, list: [-4, -4, 8] },
         },
       ]);
-      expect((yield* engine.process("p", [del("items", "a"), del("items", "c")]))[0]).toMatchObject(
-        { value: { count: 2, sum: -4, min: -4, max: -4, list: [-4] } },
-      );
-      expect((yield* engine.process("p", [del("items", "b")]))[0]).toMatchObject({
+      expect(
+        (yield* engine.process(backend, "p", [del("items", "a"), del("items", "c")]))[0],
+      ).toMatchObject({ value: { count: 2, sum: -4, min: -4, max: -4, list: [-4] } });
+      expect((yield* engine.process(backend, "p", [del("items", "b")]))[0]).toMatchObject({
         value: { group: "g", count: 1, sum: 0, list: [] },
       });
-      expect(yield* engine.process("p", [del("items", "d")])).toEqual([
+      expect(yield* engine.process(backend, "p", [del("items", "d")])).toEqual([
         { view: "a", kind: "delete", key: ["g"] },
       ]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
@@ -567,10 +577,10 @@ it.live("top fills vacancies, observes mixed directions and ties, and moves part
   const p = plan("top", [source("items"), top]);
 
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const engine = yield* makeEngine({ top: p });
 
-    const first = yield* engine.process("p", [
+    const first = yield* engine.process(backend, "p", [
       rankedItem("z", 1),
       rankedItem("a", 1),
       rankedItem("b", 1),
@@ -578,11 +588,11 @@ it.live("top fills vacancies, observes mixed directions and ties, and moves part
     ]);
 
     expect(new Set(Arr.map(first, (c) => c.key))).toEqual(new Set(["a", "b"]));
-    expect(yield* engine.process("p", [rankedItem("c", -5)])).toEqual([]);
-    const move = yield* engine.process("p", [rankedItem("a", 1, "h"), del("items", "b")]);
+    expect(yield* engine.process(backend, "p", [rankedItem("c", -5)])).toEqual([]);
+    const move = yield* engine.process(backend, "p", [rankedItem("a", 1, "h"), del("items", "b")]);
     expect(new Set(Arr.map(move, (c) => c.key))).toEqual(new Set(["a", "b", "z", "c"]));
 
-    const reset = yield* engine.process("p", [
+    const reset = yield* engine.process(backend, "p", [
       del("items", "a"),
       del("items", "z"),
       del("items", "c"),
@@ -594,19 +604,21 @@ it.live("top fills vacancies, observes mixed directions and ties, and moves part
 
 it.live("rolls back a failed unit, including its integrals, arrangements, and accumulators", () => {
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const engine = yield* makeEngine(shopPlans());
-    yield* engine.process("p", [customer("c"), order("a")]);
+    yield* engine.process(backend, "p", [customer("c"), order("a")]);
 
     const failed = yield* Effect.exit(
-      engine.process("p", [
+      engine.process(backend, "p", [
         order("b"),
         up("orders", "a", { orderId: "a", customerId: "c", total: "bad" }),
       ]),
     );
 
     expect(Exit.isFailure(failed)).toBe(true);
-    expect(yield* engine.process("p", [customer("c"), order("a"), del("orders", "b")])).toEqual([]);
+    expect(
+      yield* engine.process(backend, "p", [customer("c"), order("a"), del("orders", "b")]),
+    ).toEqual([]);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
 });
 
@@ -619,7 +631,7 @@ it.live(
     if (!totals) throw new Error("missing totals fixture");
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ ...plans, anotherTotals: totals });
       const extrema = Arr.filter(engine.program.arrangements.values(), (a) => a.optional);
       expect(extrema.length).toBe(1); // min/max and two aggregate consumers share one index
@@ -627,7 +639,7 @@ it.live(
       expect(engine.program.stored.size).toBe(3); // sources and joined input to a sum
       const sizes: number[] = [];
       yield* engine
-        .process("p", [
+        .process(backend, "p", [
           ...Array.from({ length: 211 }, (_, i) => order(`o${i}`, `c${i % 3}`, i)),
           customer("c0"),
         ])
@@ -660,16 +672,18 @@ it.live(
 
 it.live("rejects incorrect source IDs and keys", () => {
   return Effect.gen(function* () {
-    yield* migrate();
+    const backend = yield* migratedSqliteBackend;
     const engine = yield* makeEngine(shopPlans());
     expect(
       Exit.isFailure(
-        yield* Effect.exit(engine.process("p", [up("orders", "wrong", { orderId: "other" })])),
+        yield* Effect.exit(
+          engine.process(backend, "p", [up("orders", "wrong", { orderId: "other" })]),
+        ),
       ),
     ).toBe(true);
-    expect(Exit.isFailure(yield* Effect.exit(engine.process("p", [del("unknown", "x")])))).toBe(
-      true,
-    );
+    expect(
+      Exit.isFailure(yield* Effect.exit(engine.process(backend, "p", [del("unknown", "x")]))),
+    ).toBe(true);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" })));
 });
 
@@ -783,7 +797,7 @@ it.live(
     const plans = { best: plan("best", [...prefix, best]), groups: plan("groups", prefix) };
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine(plans);
       expect(engine.program.stored.size).toBe(5); // sources, projected join input, joined aggregate input, grouped top input
 
@@ -807,7 +821,7 @@ it.live(
           else relation.set(String(c.key), c.value);
         }
 
-        materialize(actual, yield* engine.process("chain", changes));
+        materialize(actual, yield* engine.process(backend, "chain", changes));
         const expected = new Map<string, string>();
 
         for (const [name, p] of Rec.toEntries(plans))
@@ -846,13 +860,14 @@ it.live(
     const strings = ["", "A", "a", "aa", "a\u0000", "é", "😀", "😁", "😀x"];
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ strings: p });
       const current = new Map<string, string>();
       const rows = Arr.map(strings, (text, i) => ({ id: `s${i}`, text }));
       materialize(
         current,
         yield* engine.process(
+          backend,
           "p",
           Arr.map(rows, (row) => up("items", row.id, row)),
         ),
@@ -868,7 +883,11 @@ it.live(
       );
       materialize(
         current,
-        yield* engine.process("p", [del("items", "s8"), del("items", "s6"), del("items", "s7")]),
+        yield* engine.process(backend, "p", [
+          del("items", "s8"),
+          del("items", "s6"),
+          del("items", "s7"),
+        ]),
       );
       expect(new Set(current.keys())).toEqual(
         new Set(Arr.map(["s3", "s4", "s5"], (key) => identity("strings", key))),
@@ -918,7 +937,7 @@ it.live(
     };
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
 
       const engine = yield* makeEngine({
         grouped: plan("g", [items, group]),
@@ -927,7 +946,7 @@ it.live(
 
       expect(engine.program.arrangements.size).toBe(1);
 
-      const result = yield* engine.process("p", [
+      const result = yield* engine.process(backend, "p", [
         up("items", "b", { id: "b", group: "g" }),
         up("items", "a", { id: "a", group: "g" }),
       ]);
@@ -958,12 +977,12 @@ it.live(
   "normalization reads the input integral once per distinct key in a multi-change unit",
   () => {
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine({ raw: plan("raw", [source("items")]) });
       let reads = 0;
 
       const result = yield* engine
-        .process("p", [
+        .process(backend, "p", [
           up("items", "a", { id: "a", n: 1 }),
           del("items", "a"),
           up("items", "a", { id: "a", n: 2 }),
@@ -1040,9 +1059,9 @@ it.live(
     const changes = Arr.map(values, (label, i) => up("items", String(i), { id: String(i), label }));
 
     return Effect.gen(function* () {
-      yield* migrate();
+      const backend = yield* migratedSqliteBackend;
       const engine = yield* makeEngine(plans);
-      const output = yield* engine.process("strings", changes);
+      const output = yield* engine.process(backend, "strings", changes);
       expect(Arr.filter(output, (change) => change.view === "filtered")).toEqual([
         { view: "filtered", kind: "upsert", key: "0", value: { id: "0", label: "Z" } },
       ]);

@@ -44,6 +44,8 @@ export interface ProjectionMarkSummary {
  * generation picks up the existing marks.
  */
 export interface ProjectionMarksApi {
+  /** Maximum projection id length in Unicode code points, when bounded by storage. */
+  readonly maxProjectionIdLength?: number;
   /**
    * Insert a mark for each binding, or raise its `seq`. A raise keeps
    * `attempts`, `stopped` and `failure`, so a write never resets backoff or a stop.

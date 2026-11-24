@@ -60,16 +60,17 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 ## Commits
 
-| Commit        | Fits                                | Guarantee                        | Services                         |
-| ------------- | ----------------------------------- | -------------------------------- | -------------------------------- |
-| `checkpoint`  | `fold`                              | Exactly once for the saved value | `CheckpointStore`                |
-| `transaction` | All constructors                    | Exactly once within SQL          | `CheckpointStore`, `Transaction` |
-| `producer`    | `emit`, `mapAccum`, `mapAccumBatch` | Effectively once for outputs     | `CheckpointStore`, output routes |
-| `atLeastOnce` | `process`                           | At least once                    | `CheckpointStore`                |
+| Commit        | Fits                                | Guarantee                                 | Services                         |
+| ------------- | ----------------------------------- | ----------------------------------------- | -------------------------------- |
+| `checkpoint`  | `fold`                              | Exactly once for the saved value          | `CheckpointStore`                |
+| `transaction` | All constructors                    | Exactly once within the owner transaction | `CheckpointStore`, `Transaction` |
+| `producer`    | `emit`, `mapAccum`, `mapAccumBatch` | Effectively once for outputs              | `CheckpointStore`, output routes |
+| `atLeastOnce` | `process`                           | At least once                             | `CheckpointStore`                |
 
-`Commit.transaction` provides `SqlClient`. Its SQL, same-owner stream appends,
-and checkpoint commit together. External calls are at least once. Memory hosts
-provide no `Transaction`.
+`Commit.transaction` commits the unit and checkpoint together on a memory or
+SQL storage host. Checkpoints and stream writes must share the transaction owner.
+A SQL handler reads the storage owner’s `SqlClient` from context to join the
+transaction. External calls are at least once.
 
 `Commit.producer` pins ranges and producer sequences. Retries append with the
 same positions; handlers must be deterministic. A missing output on the
@@ -78,17 +79,17 @@ must already exist: its owner creates it at start. There is no atomicity
 across producer outputs. Chain projections for sinks with different guarantees.
 
 `Commit.atLeastOnce` pins before processing, so retries keep `unit.key`.
-`Projection.process` with `Commit.transaction` can use `prepare(batch, unit)`
-outside the transaction. It runs at least once and passes its result to
+`Projection.process` with `Commit.transaction` can
+use `prepare(batch, unit)` outside the transaction. It runs at least once and passes its result to
 `process`. A retry can read new input and change `unit.key`.
 
-`Commit.transactionWithCleanup((key, sql) => cleanup)` passes the binding's
-checkpoint key and transaction SQL client to the cleanup Effect.
+`Commit.transactionWithCleanup((key) => cleanup)` passes the binding’s
+checkpoint key to the cleanup Effect. The Effect reads its services from context.
 `Projection.forget` runs cleanup after removing the checkpoint and marking any
 route records forgotten. Pass the bound declaration for a routed binding.
 `Projection.retire` runs it after the tombstone write and owned output cleanup.
 The callback also runs on a repeated retirement. A cleanup failure rolls back
-changes in the same transaction, including SQL run with the supplied client.
+changes in the same transaction, including SQL run with the storage owner’s client.
 
 `Commit.withCompensation(f)` calls `f(result, cause, unit)` after successful
 processing if the commit fails. It is also available as a `.pipe` combinator.
@@ -142,10 +143,11 @@ collection. Two outputs cannot name the same stream or an input.
 a declaration and a bound table are `StateTable.Declaration` and
 `StateTable.Bound`.
 
-`FoldByKey.process(table, spec)` builds a `Projection.process` handler, under
-`Commit.transaction` with the State stream in `outputs`, that folds records into
-one collection. It reads each key's previous row from the table. `sync` and the
-fold handler fail with `ProjectionFault` for every wire, SQL and schema failure,
+`FoldByKey.process(table, spec)` builds a `Projection.process` handler on a SQL
+host. Put the State stream in `outputs` to fold records into one collection. Use
+`Commit.transaction` and provide the storage owner’s `SqlClient` to the runner.
+The fold reads each key’s previous row from the table. `sync` and the fold handler
+fail with `ProjectionFault` for every wire, SQL and schema failure,
 and the handler adds `FoldByKeyError` for a row with the wrong key. A fold's
 identity includes its `id`, `generation` and binding params. See
 [State tables](https://streamsy.dev/docs/projections/state-table).
@@ -215,13 +217,13 @@ to discard its progress.
 | Layer                         | Provides                     | Requires                        |
 | ----------------------------- | ---------------------------- | ------------------------------- |
 | `CheckpointStore.layer`       | `CheckpointStore`            | `CommitBoundary`, owner records |
-| `Transaction.layer`           | `Transaction`                | `CommitBoundary`, `SqlClient`   |
+| `Transaction.layer`           | `Transaction`                | `CommitBoundary`                |
 | `CheckpointStore.layerMemory` | Standalone `CheckpointStore` | Nothing                         |
 
 `CheckpointStore.layer` keeps checkpoints on the owner of the streams. It works
 over every Streamsy storage host: `MemoryStorage.layer`, `BunStorage.layer`, and
-`DurableObjectStorage.layer`. Add `Transaction.layer` on a SQL host for
-`Commit.transaction`. Compose the projection Layers over storage with
+`DurableObjectStorage.layer`. Add `Transaction.layer` over the same storage host for `Commit.transaction`.
+Compose the projection Layers over storage with
 `Layer.provideMerge` and retain one Layer graph for the host lifetime:
 
 ```ts
@@ -321,8 +323,8 @@ units within that binding run in order.
 
 Keep `concurrency` below the pool size: each `Commit.transaction` unit holds one
 pooled connection for its whole handler. Both server drivers default to 10 connections;
-leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the
-provided `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
+leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the storage
+owner’s `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
 handler's transaction context waits forever on SQLite, and on a pool once every
 connection holds a transaction. Appending to a shared output last keeps its row
 lock short: units serialize from that append until commit. Units that lock streams
@@ -460,6 +462,8 @@ value returned by `declaration.at(params)` so `forget` marks its route records.
 Passing a bare key leaves them live and allows a replay to append to old data.
 Use a store that supports owner-record listing for routed forget on an existing
 checkpoint, including automatic forget after a gone input.
+With a transaction Commit, forgetting an absent checkpoint fails with a retryable
+`token-conflict` if another host commits the binding's first unit meanwhile.
 
 `Projection.retire` writes a tombstone even if the checkpoint cannot be decoded.
 It can remove or close owned streams after a forget when you pass the declaration

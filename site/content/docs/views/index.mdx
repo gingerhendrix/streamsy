@@ -1,11 +1,11 @@
 ---
 title: Views
-description: Incrementally maintain derived Durable State collections on SQLite with declarative circuits that run as projections.
+description: Incrementally maintain derived Durable State collections with declarative circuits that run as projections.
 ---
 
-`@streamsy/views` maintains derived [Durable State](/docs/streams/durable-state) collections incrementally on SQLite. A circuit is an ordinary projection: it consumes input State pages, updates indexed SQL operator state, appends changed output rows, and commits its input checkpoint in one SQL transaction.
+`@streamsy/views` maintains derived [Durable State](/docs/streams/durable-state) collections incrementally. A circuit consumes input State pages, updates indexed operator state, appends changed output rows, and saves its checkpoint in one owner transaction.
 
-Views supports SQLite only, on Bun SQLite and Cloudflare Durable Object SQLite. It is pre-1.0, so read the [storage layout and generation rule](/docs/views/ordering-and-limits#storage-layout-and-generation-rule) before you upgrade.
+Views supports SQLite, Postgres, and MySQL for SQL operator state. A [memory host](/docs/views/memory) keeps operator state in the heap. Use [`View.live`](/docs/views/live) to read committed snapshots in a browser. The package is pre-1.0, so read the [storage layout and generation rule](/docs/views/ordering-and-limits#storage-layout-and-generation-rule) before you upgrade.
 
 ## Install
 
@@ -15,7 +15,7 @@ Views supports SQLite only, on Bun SQLite and Cloudflare Durable Object SQLite. 
 bun add @streamsy/views @streamsy/projection @streamsy/core effect
 ```
 
-Circuits store operator state in the same SQLite database as their checkpoints. The examples on [Declare and run a circuit](/docs/views/declare-and-run) open it with [`@streamsy/storage`](/docs/storage/sqlite).
+Circuits store operator state on the same storage owner as their checkpoints. The examples on [Declare and run a circuit](/docs/views/declare-and-run) use SQLite.
 
 ## What a circuit does
 
@@ -23,9 +23,9 @@ A circuit compiles one or more relational views into a single transactional `Pro
 
 1. The runner reads new pages from the input State streams discovered from `View.from`.
 2. The circuit checks its stored plan hash for the binding's namespace.
-3. The SQL engine updates shared integrals, arrangements, and accumulators for the affected keys only.
+3. The Views engine updates shared integrals, arrangements, and accumulators for the affected keys only.
 4. The circuit coalesces the resulting row changes and appends at most one change per collection and key pair to each generation-addressed output stream, carrying `txid: unit.key`.
-5. Operator SQL, plan metadata, output appends, and the input checkpoint commit together in the storage owner's SQL transaction.
+5. Operator state, plan metadata, output appends, and the input checkpoint commit together in the storage owner's transaction.
 
 When a unit produces no net output changes, the circuit appends no output messages and still advances its checkpoint.
 
@@ -38,7 +38,7 @@ Streamsy offers four layers for deriving and indexing data. Choose the smallest 
 | Hand-written projection | `Projection.fold`, `emit`, `mapAccum`, `mapAccumBatch`, `process` | Runs custom entry or batch handlers over JSON or State streams, keeping a checkpoint value or writing custom SQL tables. See [Projections](/docs/projections)                                             |
 | Keyed fold              | `FoldByKey.process`                                               | Folds input records into one State collection, loading previous rows from the output's `StateTable`. Good for event-to-row state machines. See [Keyed folds](/docs/projections/fold-by-key)               |
 | State table             | `StateTable.define`                                               | Indexes an existing State stream in SQLite for `get`, `getMany`, and `list` reads by key. Does not join, filter, aggregate, or rank across collections. See [State tables](/docs/projections/state-table) |
-| View circuit            | `View.circuit`                                                    | Maintains joins, filters, projections, grouped aggregates, and bounded top-N relations over State collections incrementally in SQLite, writing derived State streams                                      |
+| View circuit            | `View.circuit`                                                    | Maintains joins, filters, projections, grouped aggregates, and bounded top-N relations over State collections incrementally, writing derived State streams                                                |
 
 Output streams written by a circuit are normal State streams. Readers can materialize them directly or index them with `StateTable.define`.
 
@@ -89,7 +89,7 @@ Supported relational operators:
 - bounded `top` with optional `partitionBy`
 - binding parameter expressions via `views: (params) => ({ ... })`
 
-Views supports SQLite only. Features outside the current scope include `avg`, `distinct`, fact folds, a memory tier, dynamic parameters-as-data, frontier rows, and `old_value` on emitted upserts.
+Features outside the current scope include `avg`, `distinct`, fact folds, dynamic parameters-as-data, frontier rows, and `old_value` on emitted upserts.
 
 ## Next
 

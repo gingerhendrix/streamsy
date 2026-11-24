@@ -55,6 +55,7 @@ const paper = tegami({
     "issue-tracker-demo-atom",
     "issue-tracker-demo-event-sourced",
     "issue-tracker-demo-foldkit",
+    "issue-tracker-demo-foldkit-views",
     "memory-server",
     "platform-matrix",
   ],

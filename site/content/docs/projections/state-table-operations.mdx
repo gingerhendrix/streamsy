@@ -80,4 +80,4 @@ Recovery and health checks need to account for failed marks:
 
 ## SQLite only
 
-The tables need the SQLite family. `StateTable.migrate` fails on Postgres and MySQL with reason `unsupported-composition`.
+`StateTable` requires SQLite. `StateTable.migrate` fails on Postgres and MySQL with reason `unsupported-composition`. Views circuits on those databases maintain their own operator tables through `View.migrate`. See [Migrate tables for Views](/docs/views/declare-and-run#migrate-tables).

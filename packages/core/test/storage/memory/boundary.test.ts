@@ -1,6 +1,18 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own their host Layers, including the deliberate foreign-owner case. */
 import { expect, test } from "vitest";
-import { Array, Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
+import { SqlError } from "effect/sql";
+import {
+  Array,
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Result,
+  Schema,
+  Stream,
+} from "effect";
 import { MemoryStorage } from "../../../src/index.ts";
 import * as Streams from "../../../src/toolkit/streams.ts";
 import * as StreamAddress from "../../../src/toolkit/address.ts";
@@ -8,6 +20,8 @@ import { StreamId } from "../../../src/schema/index.ts";
 import { Storage } from "../../../src/storage/storage.ts";
 import { CommitBoundary } from "../../../src/storage/commit-boundary.ts";
 import { OwnerRecords } from "../../../src/internal/owner-records.ts";
+import { enlist, ownerOf } from "../../../src/internal/index.ts";
+import { makeBoundary } from "../../../src/storage/memory/boundary.ts";
 
 const sink = StreamAddress.json("fused-sink", { schema: Schema.String });
 
@@ -41,12 +55,36 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
         const wake = yield* pull.pipe(Effect.forkScoped);
         const written = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+        const calls: string[] = [];
+
+        const first = {
+          onCommit: () => {
+            calls.push("commit first");
+          },
+          onRollback: () => {
+            calls.push("rollback first");
+          },
+        };
+
+        const second = {
+          onCommit: () => {
+            calls.push("commit second");
+          },
+          onRollback: () => {
+            calls.push("rollback second");
+          },
+        };
+
+        const owner = ownerOf(boundary);
 
         const transaction = yield* boundary
           .withTransaction(
             Effect.gen(function* () {
+              yield* enlist(owner, first);
               yield* boundary.withTransaction(
                 Effect.gen(function* () {
+                  yield* enlist(owner, second);
+                  yield* enlist(owner, first);
                   expect((yield* Streams.append(sink, ["one"]))._tag).toBe("Appended");
                   yield* records.write("state", "1");
                   yield* records.write("checkpoint", "1");
@@ -73,6 +111,7 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
           .pipe(Effect.forkScoped);
 
         yield* Deferred.await(written);
+        expect(calls).toEqual([]);
         expect(yield* read).toEqual(before);
         yield* turns;
         expect(wake.pollUnsafe()).toBeUndefined();
@@ -81,6 +120,24 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
         else yield* Deferred.succeed(release, undefined);
         const exit = yield* Fiber.await(transaction);
         expect(Exit.isSuccess(exit)).toBe(outcome === "commit");
+        expect(calls).toEqual(
+          outcome === "commit"
+            ? ["commit first", "commit second"]
+            : ["rollback second", "rollback first"],
+        );
+
+        if (outcome === "interrupt")
+          expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+
+        if (outcome === "defect")
+          expect(Exit.isFailure(exit) && Result.getOrThrow(Cause.findDefect(exit.cause))).toBe(
+            "after-sink",
+          );
+
+        if (outcome === "failure")
+          expect(Exit.isFailure(exit) && Result.getOrThrow(Cause.findError(exit.cause))).toBe(
+            "after-sink",
+          );
 
         if (outcome === "mutation-rejection") {
           expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
@@ -108,6 +165,354 @@ for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rej
       ),
     ));
 }
+
+test("enlist requires the matching draft on the owner fiber", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const boundary = yield* CommitBoundary;
+
+      const participant = {
+        onCommit: () => {
+          throw new Error("unexpected commit");
+        },
+        onRollback: () => {
+          throw new Error("unexpected rollback");
+        },
+      };
+
+      const registration = enlist(ownerOf(boundary), participant);
+      const noDraft = yield* registration.pipe(Effect.exit);
+      expect(Exit.isFailure(noDraft) && Cause.findErrorOption(noDraft.cause)).toMatchObject({
+        _tag: "Some",
+        value: {
+          _tag: "MemoryEnlistFault",
+          message: "Enlisting requires the active memory owner fiber",
+        },
+      });
+
+      yield* boundary.withTransaction(
+        Effect.gen(function* () {
+          const wrongOwner = yield* enlist({}, participant).pipe(Effect.exit);
+          expect(
+            Exit.isFailure(wrongOwner) && Cause.findErrorOption(wrongOwner.cause),
+          ).toMatchObject({
+            _tag: "Some",
+            value: {
+              _tag: "MemoryEnlistFault",
+              message: "Enlisting requires the active memory owner fiber",
+            },
+          });
+
+          const child = yield* registration.pipe(Effect.forkScoped);
+          const wrongFiber = yield* Fiber.await(child);
+          expect(
+            Exit.isFailure(wrongFiber) && Cause.findErrorOption(wrongFiber.cause),
+          ).toMatchObject({
+            _tag: "Some",
+            value: {
+              _tag: "MemoryEnlistFault",
+              message: "Enlisting requires the active memory owner fiber",
+            },
+          });
+        }),
+      );
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol()), Effect.scoped),
+  ));
+
+for (const outcome of ["commit", "rollback"]) {
+  test(`throwing participant preserves the ${outcome} and runs later callbacks`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const boundary = yield* CommitBoundary;
+        const records = yield* OwnerRecords;
+        const storage = yield* Storage;
+        yield* Streams.create(sink);
+        const pull = yield* Stream.toPull(storage.changes(sink.id));
+        const before = yield* pull;
+        const wake = yield* pull.pipe(Effect.forkScoped);
+        const calls: string[] = [];
+        const defect = new Error("participant threw");
+
+        const other = {
+          onCommit: () => {
+            calls.push("commit");
+          },
+          onRollback: () => {
+            calls.push("rollback");
+          },
+        };
+
+        const broken = {
+          onCommit: () => {
+            throw defect;
+          },
+          onRollback: () => {
+            throw defect;
+          },
+        };
+
+        const owner = ownerOf(boundary);
+
+        const exit = yield* boundary
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* enlist(owner, outcome === "commit" ? broken : other);
+              yield* enlist(owner, outcome === "commit" ? other : broken);
+              yield* records.write("state", "new");
+              yield* Streams.append(sink, ["one"]);
+
+              if (outcome === "rollback") return yield* Effect.fail("body failed");
+
+              return yield* Effect.void;
+            }),
+          )
+          .pipe(Effect.exit);
+
+        expect(calls).toEqual([outcome]);
+
+        const defects = Exit.isFailure(exit)
+          ? Array.filter(exit.cause.reasons, Cause.isDieReason)
+          : [];
+
+        if (outcome === "commit") {
+          expect(defects).toMatchObject([{ defect: { errors: [defect] } }]);
+          expect(yield* records.read("state")).toEqual(Option.some("new"));
+          expect(yield* Fiber.join(wake)).not.toEqual(before);
+        } else {
+          expect(defects).toMatchObject([{ defect: { errors: [defect] } }]);
+          expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toEqual(
+            Option.some("body failed"),
+          );
+          expect(yield* records.read("state")).toEqual(Option.none());
+          yield* turns;
+          expect(wake.pollUnsafe()).toBeUndefined();
+        }
+
+        const batches = yield* Streams.read(sink).pipe(Stream.runCollect);
+        expect(Array.flatMap(batches, (batch) => batch.items)).toEqual(
+          outcome === "commit" ? ["one"] : [],
+        );
+      }).pipe(
+        Effect.provide(MemoryStorage.layerProtocol()),
+        Effect.scoped,
+        Effect.timeout("5 seconds"),
+      ),
+    ));
+}
+
+test("typed recovery cannot recover a throwing rollback participant", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const boundary = yield* CommitBoundary;
+      const defect = new Error("participant threw");
+
+      const participant = {
+        onCommit: () => {},
+        onRollback: () => {
+          throw defect;
+        },
+      };
+
+      const exit = yield* boundary
+        .withTransaction(
+          enlist(ownerOf(boundary), participant).pipe(Effect.andThen(Effect.fail("body failed"))),
+        )
+        .pipe(
+          // oxlint-disable-next-line effecttsgo/catch-to-or-else-succeed -- Pin the recovery behavior of Effect.catch itself.
+          Effect.catch(() => Effect.succeed("recovered")),
+          Effect.exit,
+        );
+
+      expect(
+        Exit.isFailure(exit) && Array.filter(exit.cause.reasons, Cause.isDieReason),
+      ).toContainEqual(
+        expect.objectContaining({ defect: expect.objectContaining({ errors: [defect] }) }),
+      );
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
+  ));
+
+test("enlist rejects a captured draft after the transaction ends", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const boundary = yield* CommitBoundary;
+      const captured = yield* boundary.withTransaction(Effect.context());
+      const participant = { onCommit: () => {}, onRollback: () => {} };
+
+      const exit = yield* enlist(ownerOf(boundary), participant).pipe(
+        Effect.provideContext(captured),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit) && Cause.findErrorOption(exit.cause)).toMatchObject({
+        _tag: "Some",
+        value: {
+          _tag: "MemoryEnlistFault",
+          message: "Enlisting requires the active memory owner fiber",
+        },
+      });
+    }).pipe(Effect.provide(MemoryStorage.layerProtocol())),
+  ));
+
+test("memory participants commit before wakes are published", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const owner = yield* makeBoundary(
+        { entries: new Map(), children: new Map(), deadlines: [] },
+        () =>
+          Effect.sync(() => {
+            calls.push("wake");
+          }),
+      );
+
+      const participant = {
+        onCommit: () => {
+          calls.push("commit");
+        },
+        onRollback: () => {
+          calls.push("rollback");
+        },
+      };
+
+      yield* owner.withTransaction(
+        enlist(ownerOf(owner.boundary), participant).pipe(Effect.andThen(owner.changed([sink.id]))),
+      );
+      expect(calls).toEqual(["commit", "wake"]);
+    }),
+  ));
+
+test("a failing memory commit hook rolls back participants and storage", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const hookFailure = new SqlError.SqlError({
+        reason: new SqlError.ConnectionError({ cause: undefined, message: "hook failed" }),
+      });
+
+      const calls: string[] = [];
+
+      const owner = yield* makeBoundary(
+        { entries: new Map(), children: new Map(), deadlines: [] },
+        () =>
+          Effect.sync(() => {
+            calls.push("wake");
+          }),
+      );
+
+      const participant = {
+        onCommit: () => {
+          calls.push("commit");
+        },
+        onRollback: () => {
+          calls.push("rollback");
+        },
+      };
+
+      yield* owner.hooks.beforeCommit(() => Effect.fail(hookFailure));
+
+      const exit = yield* owner
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* enlist(ownerOf(owner.boundary), participant);
+            yield* owner.records.write("state", "new");
+            yield* owner.changed([sink.id]);
+          }),
+        )
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Result.getOrThrow(Cause.findDefect(exit.cause))).toBe(
+        hookFailure,
+      );
+      expect(calls).toEqual(["rollback"]);
+      expect(yield* owner.records.read("state")).toEqual(Option.none());
+    }).pipe(Effect.scoped),
+  ));
+
+test("a publish defect leaves participants and storage committed", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const defect = new Error("publication failed");
+      const calls: string[] = [];
+
+      const owner = yield* makeBoundary(
+        { entries: new Map(), children: new Map(), deadlines: [] },
+        () => Effect.die(defect),
+      );
+
+      const participant = {
+        onCommit: () => {
+          calls.push("commit");
+        },
+        onRollback: () => {
+          calls.push("rollback");
+        },
+      };
+
+      const exit = yield* owner
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* enlist(ownerOf(owner.boundary), participant);
+            yield* owner.records.write("state", "new");
+            yield* owner.changed([sink.id]);
+          }),
+        )
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Result.getOrThrow(Cause.findDefect(exit.cause))).toBe(defect);
+      expect(calls).toEqual(["commit"]);
+      expect(yield* owner.records.read("state")).toEqual(Option.some("new"));
+    }),
+  ));
+
+test("interrupt after the memory body succeeds cannot interrupt publication", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const publishing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const calls: string[] = [];
+
+      const owner = yield* makeBoundary(
+        { entries: new Map(), children: new Map(), deadlines: [] },
+        () =>
+          Deferred.succeed(publishing, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                calls.push("wake");
+              }),
+            ),
+          ),
+      );
+
+      const participant = {
+        onCommit: () => {
+          calls.push("commit");
+        },
+        onRollback: () => {
+          calls.push("rollback");
+        },
+      };
+
+      const transaction = yield* owner
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* enlist(ownerOf(owner.boundary), participant);
+            yield* owner.records.write("state", "new");
+            yield* owner.changed([sink.id]);
+          }),
+        )
+        .pipe(Effect.forkScoped);
+
+      yield* Deferred.await(publishing);
+      yield* Effect.withFiber((fiber) => Effect.sync(() => transaction.interruptUnsafe(fiber.id)));
+      yield* Deferred.succeed(release, undefined);
+      const exit = yield* Fiber.await(transaction);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect(calls).toEqual(["commit", "wake"]);
+      expect(yield* owner.records.read("state")).toEqual(Option.some("new"));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  ));
 
 test("memory owner rejects inherited child-fiber use and separate owners", () =>
   Effect.runPromise(

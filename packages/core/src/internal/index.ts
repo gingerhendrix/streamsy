@@ -34,5 +34,7 @@ export { compileSegments } from "../toolkit/route-internal.ts";
 
 export { memoryProjectionMarks } from "../storage/memory/marks.ts";
 
+export { enlist, type TransactionParticipant } from "../storage/memory/boundary.ts";
+
 /** Storage message offsets consumed by projection reads. */
 export { attachOffsets, offsetsOf } from "./read-offsets.ts";

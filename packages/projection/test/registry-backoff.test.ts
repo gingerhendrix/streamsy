@@ -3,11 +3,19 @@ import { expect } from "vitest";
 import { Effect, Exit, Layer, Option, Schedule, Schema, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { ProjectionMarks } from "@streamsy/core/internal";
-import { Commit, Projection, ProjectionWakeup } from "@streamsy/projection";
+import {
+  CheckpointStore,
+  Commit,
+  Projection,
+  ProjectionWakeup,
+  Transaction,
+} from "@streamsy/projection";
 import { Source, host, only } from "./support/registry.ts";
 import { eventually } from "./support/eventually.ts";
 
-layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
+layer(
+  Projection.Registry.layer.pipe(Layer.provideMerge(Transaction.layer), Layer.provideMerge(host)),
+)((it) => {
   it.effect(
     "commits preserve durable backoff and schedule makes the binding due across restart",
     () =>
@@ -67,6 +75,60 @@ layer(Projection.Registry.layer.pipe(Layer.provideMerge(host)))((it) => {
         expect(runs).toBe(3);
         expect(yield* mark).toMatchObject({ attempts: 3, dueAt: 6_000 });
       }),
+  );
+
+  it.effect("a token conflict in the forget after a gone input backs off and then forgets", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const store = yield* CheckpointStore;
+      const params = { id: "gone" };
+      const key = { id: "gone-conflict", generation: 1, params };
+      let cleanups = 0;
+
+      const declaration = Projection.process({
+        id: key.id,
+        params: { id: Schema.String },
+        inputs: { source: Source },
+        // The first cleanup leaves a checkpoint, as another host's unit can.
+        commit: Commit.transactionWithCleanup(() =>
+          Effect.suspend(() =>
+            ++cleanups === 1
+              ? store.compareAndSet(key, "0", {
+                  identity: { inputs: {} },
+                  inputs: {},
+                  adapters: {},
+                })
+              : Effect.void,
+          ).pipe(Effect.asVoid),
+        ),
+        process: () => Effect.void,
+      });
+
+      const registry = yield* Projection.Registry;
+      const wakeup = yield* ProjectionWakeup.attach(declaration);
+      const marks = yield* ProjectionMarks;
+      const encoded = '{"id":"gone"}';
+      const mark = marks.read(key.id, [encoded]).pipe(Effect.map((rows) => rows.get(encoded)));
+      const source = yield* Source;
+      yield* source.create(params);
+      yield* source.append(params, ["one"]);
+      yield* wakeup.run;
+      expect((yield* store.load(key)).token).toBe("1");
+
+      yield* source.remove(params);
+      yield* registry.schedule(declaration.at(params));
+      yield* wakeup.run;
+      expect(cleanups).toBe(1);
+      expect(Option.getOrThrow((yield* store.load(key)).record).ended).toBe(true);
+      expect(yield* mark).toMatchObject({ attempts: 1, dueAt: 1_000 });
+      expect(only(yield* registry.status).marks).toMatchObject({ backingOff: 1, stopped: 0 });
+
+      yield* TestClock.adjust(1_000);
+      yield* wakeup.run;
+      expect(cleanups).toBe(2);
+      expect((yield* store.load(key)).token).toBe("0");
+      expect(yield* mark).toBeUndefined();
+    }),
   );
 
   it.effect("the Bun loop leaves commit bursts backed off and schedule runs immediately", () =>

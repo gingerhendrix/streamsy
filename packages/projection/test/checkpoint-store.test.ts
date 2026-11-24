@@ -3,6 +3,7 @@ import { expect } from "vitest";
 import { Array, Effect, Exit, Layer, Option, Order, Result } from "effect";
 import { SqlClient } from "effect/sql";
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
+import { ownerOf } from "@streamsy/core/internal";
 import { CheckpointStore, Commit, Projection, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import { recordKey, type CheckpointRecord } from "@streamsy/projection/checkpoint";
@@ -113,8 +114,9 @@ layer(sqlite)((it) => {
     Effect.gen(function* () {
       const store = yield* CheckpointStore;
       const transaction = yield* Transaction;
+      const boundary = yield* CommitBoundary;
+      expect(transaction.owner).toBe(ownerOf(boundary));
       const client = yield* SqlClient.SqlClient;
-      expect(transaction.sql).toBe(client);
 
       const failed = yield* transaction
         .withTransaction(

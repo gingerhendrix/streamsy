@@ -3,17 +3,17 @@ title: Lifecycle and rebuilds
 description: Rebuild a circuit with generations, run old and new circuits side by side, roll back, forget or retire old generations, and cascade to downstream circuits.
 ---
 
-Views builds its lifecycle directly on `@streamsy/projection` generations and retirement. Because every circuit output must use `Projection.perGeneration`, each generation owns its own SQL operator namespace and its own output stream addresses.
+Views builds its lifecycle directly on `@streamsy/projection` generations and retirement. Because every circuit output must use `Projection.perGeneration`, each generation owns its own operator-state namespace and its own output stream addresses.
 
 Retain your input State stream history so circuits can rebuild from the start when plans change.
 
 ## Plan identity and namespaces
 
-The circuit id, generation, and encoded binding params identify the operator namespace. The first unit in a namespace writes the circuit's canonical plan hash to `streamsy_view_circuits`.
+The circuit id, generation, and encoded binding params identify the operator namespace. The first unit in a namespace stores the circuit's canonical plan hash. SQLite, Postgres, and MySQL store the hash in `streamsy_view_circuits`. A memory backend keeps it in the heap with the namespace's other state.
 
 On every subsequent unit in that namespace, the circuit compares the declared plan hash with the stored hash:
 
-- If they differ, the unit fails before committing with `PlanChanged` (`_tag: "ViewPlanChanged"`). No operator rows, output appends, or checkpoint offsets change.
+- If they differ, the unit fails before committing with `PlanChanged` (`_tag: "ViewPlanChanged"`). Operator state, output streams, and checkpoint offsets stay at their last committed values.
 - Attached runners treat `PlanChanged` as non-retryable and stop only the affected binding.
 - Reordering view keys or object properties preserves the hash. Changing `maxAffectedKeys` also preserves the hash.
 - Collection codec changes are not reflected in the plan hash; raise `generation` when a codec changes.
@@ -104,7 +104,7 @@ Remote and browser readers that stay open on generation 1 keep reading a consist
 
 ## Roll back before retirement
 
-Before you retire an older generation, its checkpoint record, SQL operator namespace, and output streams stay intact.
+Keep the old generation’s checkpoint record, operator state, and output streams until you finish the cutover.
 
 To roll back:
 
@@ -119,7 +119,7 @@ Because old and new operator state and output streams coexist until retirement, 
 
 Stop and drain all runners for a binding before calling either `Projection.forget` or `Projection.retire`. A runner that was already running or pinned before retirement can still append to an open stream.
 
-| Operation                                            | Checkpoint                                                      | Views SQL namespace              | Owned output streams | Route records                                                         | Later run of same generation                                                    |
+| Operation                                            | Checkpoint                                                      | Operator state                   | Owned output streams | Route records                                                         | Later run of same generation                                                    |
 | ---------------------------------------------------- | --------------------------------------------------------------- | -------------------------------- | -------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `Projection.forget(bound)`                           | Deleted. A tombstone stays.                                     | Cleared in the owner transaction | Kept                 | Marked forgotten. Tombstoned bindings keep their records as they are. | An exclusive output that fails the empty-and-open check gives `invalid-output`. |
 | `Projection.retire(circuit, params, { generation })` | Fenced by a tombstone, even if the checkpoint cannot be decoded | Cleared in the owner transaction | Removed or closed    | Cleared on removal and kept on close                                  | Fails at `load` with `retired-generation`.                                      |
@@ -130,7 +130,7 @@ Pass the bound declaration from `circuit.at(params)` so `forget` can mark its ro
 
 ### Retire
 
-`Projection.retire(declaration, params, { generation })` retires one binding of an older generation in a single SQL transaction on the checkpoint owner:
+`Projection.retire(declaration, params, { generation })` retires one binding of an older generation in a single transaction on the checkpoint owner.
 
 ```ts title="examples/views-shop/src/app.ts"
 // Each run above has finished, so generation 1 has no active runner.
@@ -142,13 +142,23 @@ const missing =
 const refused = yield * Projection.run(initial).pipe(Effect.flip);
 ```
 
-In that transaction, retirement writes the checkpoint tombstone, deletes all rows for that namespace from all five Views SQL tables, and removes (or closes, with `streams: "close"`) every exclusively owned wrapped output stream. If any step fails, the entire transaction rolls back, including the tombstone.
+The transaction writes the checkpoint tombstone, clears the binding’s operator state, and removes every exclusively owned wrapped output stream. Pass `streams: "close"` to close the streams and keep their data. If the owner transaction aborts, the tombstone, operator cleanup, and output changes roll back together.
 
-- Repeating `Projection.retire` succeeds and reports `record: "already-retired"`.
+- A successful repeat of `Projection.retire` reports `record: "already-retired"`.
 - `streams` reports `{ output, id, result }` for the wrapped streams, sorted by output name and then stream id in code-unit order.
 - In scenario 2, pass the old declaration (`shopViewsV1`) so retirement targets the old circuit's id and route templates.
 - Retirement operates on one binding at a time, so callers supply the binding `params`.
 - If a `StateTable` indexed the retired stream, stop its runner and clear its cached rows separately with `StateTable.clear(table)`. See [Clear a retired stream's rows](/docs/projections/state-table-operations#clear-a-retired-streams-rows) and [Retire a generation](/docs/projections/checkpoints#retire-a-generation).
+
+### Operator state cleanup by backend
+
+Both operations clear the same state for the binding. The backend decides how to clear it.
+
+| Backend            | Cleanup                                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite             | Deletes the binding’s rows from the five Views tables by namespace. The tables stay in place.                                                  |
+| Postgres and MySQL | Deletes the binding’s rows from the five state tables by namespace digest. The `streamsy_view_layout` table and its version row stay in place. |
+| Memory             | Removes the namespace and its state from the heap. A retirement tombstone also lives in memory and disappears when the host is discarded.      |
 
 ## Cascade to downstream circuits
 

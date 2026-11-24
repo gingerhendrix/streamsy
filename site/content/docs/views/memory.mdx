@@ -1,0 +1,36 @@
+---
+title: Run Views in memory
+description: Run a Views circuit on a memory owner or open a scoped View.live reader.
+---
+
+Use `ViewBackend.layerMemory` for a `View.circuit` that runs over a `MemoryStorage` host.
+
+## Use an existing memory owner
+
+Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over one `MemoryStorage.layer`. The circuit's operator state, checkpoints, and outputs share that owner's transaction.
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Layer } from "effect";
+import { MemoryStorage, Streamsy } from "@streamsy/core";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
+import { ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews } from "./streams.ts";
+
+export const host = Layer.mergeAll(
+  CheckpointStore.layer,
+  Transaction.layer,
+  ViewBackend.layerMemory,
+).pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Orders, ShopViews))));
+```
+
+At the start of each outer transaction, `MemoryStorage` copies the owner's stream state, including stored message bytes, into a transaction draft. A host that owns streams pays that cost even when a unit writes only a small part of its view state. The Views backend records its own changes in an undo journal.
+
+## Open a live reader
+
+Each `View.live` reader creates a private memory host for its operator state and checkpoints. Supply the declared State input services and an Effect scope. Open the reader outside any transaction. The inputs keep their own hosts and lifetimes. See [Read live snapshots](/docs/views/live).
+
+Memory circuits and live readers need no migration. A memory circuit's operator state, checkpoints, and streams live as long as its host. A live reader releases its host when its scope closes and retains its final committed snapshot.

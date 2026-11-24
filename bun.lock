@@ -419,6 +419,31 @@
         "vitest": "catalog:",
       },
     },
+    "examples/issue-tracker-demo-foldkit-views": {
+      "name": "issue-tracker-demo-foldkit-views",
+      "version": "0.0.10",
+      "dependencies": {
+        "@effect/platform-browser": "4.1.2",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/issue-tracker-demo-contract": "workspace:*",
+        "@streamsy/views": "workspace:*",
+        "effect": "4.1.2",
+        "foldkit": "0.170.0",
+        "issue-tracker-demo": "workspace:*",
+      },
+      "devDependencies": {
+        "@effect/platform-bun": "4.1.2",
+        "@foldkit/devtools": "0.170.0",
+        "@foldkit/devtools-mcp": "0.26.0",
+        "@foldkit/ui": "0.170.0",
+        "@foldkit/vite-plugin": "0.29.0",
+        "@streamsy/test-support": "workspace:*",
+        "happy-dom": "21.0.4",
+        "typescript": "catalog:",
+        "vite": "8.3.5",
+        "vitest": "catalog:",
+      },
+    },
     "examples/memory-server": {
       "name": "memory-server",
       "version": "0.0.11",
@@ -709,6 +734,8 @@
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
         "@effect/platform-bun": "4.1.2",
+        "@effect/sql-mysql2": "4.1.2",
+        "@effect/sql-pg": "4.1.2",
         "@effect/sql-sqlite-bun": "4.1.2",
         "@effect/sql-sqlite-do": "4.1.2",
         "@effect/vitest": "catalog:",
@@ -1655,6 +1682,8 @@
     "issue-tracker-demo-event-sourced": ["issue-tracker-demo-event-sourced@workspace:examples/issue-tracker-demo-event-sourced"],
 
     "issue-tracker-demo-foldkit": ["issue-tracker-demo-foldkit@workspace:examples/issue-tracker-demo-foldkit"],
+
+    "issue-tracker-demo-foldkit-views": ["issue-tracker-demo-foldkit-views@workspace:examples/issue-tracker-demo-foldkit-views"],
 
     "jose": ["jose@6.2.13", "", {}, "sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ=="],
 

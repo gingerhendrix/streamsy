@@ -192,7 +192,7 @@ same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
 
 Only a SQL host fails with `SqlError`.
 
-Build `Transaction.layer` and `CheckpointStore.layer` over the same SQL client. With separate clients, the checkpoint commits on its own and can survive a rollback of the projection's transaction. Inside a transactional handler, creating or appending to a declared output in a nested transactional projection on another client raises `unsupported-composition`, as does an append in a nested non-transactional projection on that client.
+Build `Transaction.layer` and `CheckpointStore.layer` over the same storage owner. `Commit.transaction` fails with `unsupported-composition` when the checkpoint store has another owner. Inside a transactional handler, creating or appending to a declared output in a nested transactional projection on another client raises `unsupported-composition`, as does an append in a nested non-transactional projection on that client.
 
 ## Mutations
 

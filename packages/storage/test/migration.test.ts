@@ -2,7 +2,7 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { expect, test } from "vitest";
-import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
+import { Array, Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import { SqlClient as SqlClientTag } from "effect/sql";
 import { ProjectionMarks } from "@streamsy/core/internal";
@@ -40,11 +40,12 @@ test("fresh creation and repeated open retain the current version", async () => 
   const second = await Effect.runPromise(acquire(path));
   await Effect.runPromise(Scope.close(second.scope, Exit.void));
   const db = new Database(path, { readonly: true });
-  expect(
-    db
-      .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
-      .get()?.version,
-  ).toBe(STORAGE_SCHEMA_VERSION);
+
+  const versions = db
+    .query<{ version: number }, []>(`SELECT version FROM ${STORAGE_VERSION_TABLE} ORDER BY version`)
+    .all();
+
+  expect(Array.map(versions, ({ version }) => version)).toEqual([1, 2, 3]);
   db.close(false);
 });
 
@@ -126,7 +127,7 @@ test("upgrades a nonempty v1 database to the current version", async () => {
     upgraded
       .query<{ version: number }, []>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
       .get()?.version,
-  ).toBe(STORAGE_SCHEMA_VERSION);
+  ).toBe(STORAGE_SCHEMA_VERSION.sqlite);
   expect(
     upgraded
       .query("SELECT name FROM sqlite_master WHERE name = 'streamsy_projection_pending'")
@@ -258,7 +259,9 @@ test("legacy and too-new files reject without changing retained bytes", async ()
       db.run(
         `CREATE TABLE ${STORAGE_VERSION_TABLE}(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
       );
-      db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (?, 1)`, [STORAGE_SCHEMA_VERSION + 1]);
+      db.run(`INSERT INTO ${STORAGE_VERSION_TABLE} VALUES (?, 1)`, [
+        STORAGE_SCHEMA_VERSION.sqlite + 1,
+      ]);
     }
 
     db.close(false);

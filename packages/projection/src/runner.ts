@@ -272,10 +272,10 @@ const sourceGone = <I extends InputMap, E>(inputs: I, cause: Cause.Cause<E | Pro
 const durableMarks = (
   projection: string,
   match: (id: StreamId) => Option.Option<readonly [string, unknown]>,
+  marks: Option.Option<ProjectionMarksApi>,
 ) =>
   Effect.gen(function* () {
     const hooks = yield* Effect.serviceOption(CommitHooks);
-    const marks = yield* Effect.serviceOption(ProjectionMarks);
 
     if (Option.isNone(hooks) || Option.isNone(marks))
       return yield* Effect.die(
@@ -339,6 +339,20 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
 
   return Effect.gen(function* () {
     const storage = yield* Storage;
+
+    const storedMarks = durable ? yield* Effect.serviceOption(ProjectionMarks) : Option.none();
+    const maxIdLength = Option.getOrUndefined(storedMarks)?.maxProjectionIdLength;
+
+    // An invalid declaration fails at acquisition, like other attach configuration errors.
+    if (maxIdLength !== undefined && Array.fromIterable(declaration.id).length > maxIdLength)
+      return yield* Effect.die(
+        new StorageFault({
+          operation: "projection.attach",
+          message: `MySQL projection id must be at most ${maxIdLength} characters`,
+          retryable: false,
+        }),
+      );
+
     const registry = yield* Effect.serviceOption(Registry);
     const publish = Option.isSome(registry) ? eventPublisher(registry.value) : undefined;
 
@@ -386,7 +400,7 @@ export const runnerOf = <I extends InputMap, E, R, Q, Result, P, OR, HE, HR, BE,
       );
 
     const marks: ProjectionMarksApi = durable
-      ? yield* durableMarks(declaration.id, match)
+      ? yield* durableMarks(declaration.id, match, storedMarks)
       : memoryProjectionMarks();
 
     let failure = Option.none<RunnerFailure>();

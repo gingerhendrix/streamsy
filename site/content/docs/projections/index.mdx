@@ -37,7 +37,7 @@ The Commit sets the delivery guarantee of a unit.
 | Commit               | What it does                                                                                                                                       |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Commit.checkpoint`  | Saves the encoded value and the offsets in one compare-and-set                                                                                     |
-| `Commit.transaction` | Commits the SQL writes of the handler, the output appends, and the checkpoint in one transaction on the SQL storage owner                          |
+| `Commit.transaction` | Commits the same-owner writes of the handler, the output appends, and the checkpoint in one transaction on a memory or SQL storage owner           |
 | `Commit.producer`    | Saves the input ranges and the output positions, then appends the outputs at those positions. A retry answers `Duplicate` and writes nothing twice |
 | `Commit.atLeastOnce` | Saves the input ranges before the handler runs, and the offsets after it. After a crash, the handler runs again on the same ranges                 |
 

@@ -304,11 +304,10 @@ const lockStreams = (sql: SqlClient.SqlClient, ids: ReadonlyArray<StreamId>) => 
 type RowLock = "share" | "update";
 
 /**
- * A mutation reads with a row lock on MySQL. At REPEATABLE READ a plain read uses
- * the snapshot of the transaction's first plain read, which app SQL in a fused
- * commit may have fixed before the stream lock. A locking read sees the latest
- * committed row. SQLite has one writer, and Postgres at READ COMMITTED reads the
- * latest commit in each statement, so both keep plain reads.
+ * A mutation reads with a row lock on MySQL to see the latest committed row,
+ * including when a caller has selected REPEATABLE READ. SQLite has one writer,
+ * and Postgres at READ COMMITTED takes a fresh snapshot for each statement,
+ * so both keep plain reads.
  */
 const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
   sql.onDialectOrElse({
@@ -319,10 +318,10 @@ const lockingRead = (sql: SqlClient.SqlClient, lock: RowLock | undefined) =>
 
 /**
  * The lock for a read the protocol plans a mutation from. Inside an open
- * transaction on this client, such as a fused commit, it is `update`: on MySQL a
- * plain read would return the snapshot fixed by the transaction's first read, so
- * every replan would see the same stale tail. The row then stays locked until the
- * mutation. Outside a transaction the read stays plain and takes no lock.
+ * transaction on this client, such as a fused commit, it is `update` on MySQL.
+ * The lock keeps the tail stable from planning through commit and reads the
+ * latest row even at a caller-selected REPEATABLE READ. Outside a transaction
+ * the read stays plain and takes no lock.
  */
 const planningLock = (sql: SqlClient.SqlClient) =>
   Effect.map(Effect.serviceOption(sql.transactionService), (open) =>
@@ -797,16 +796,46 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
  */
 const OWNER_RECORD_CONFLICT = "records.conflict";
 
+// fitKey reserves one '#' and 64 SHA-256 hex digits in the stored key.
+const MYSQL_OWNER_KEY_PREFIX_LENGTH = MYSQL_OWNER_KEY_LENGTH - 65;
+
+const HASHED_OWNER_KEY_SUFFIX = /#[0-9a-f]{64}$/u;
+
+const upperBound = (prefix: string): string | undefined => {
+  const points = Array.fromIterable(prefix);
+
+  for (let i = points.length - 1; i >= 0; i--) {
+    const point = points[i]?.codePointAt(0);
+
+    if (point === undefined || point === 0x10ffff) continue;
+
+    const next = point === 0xd7ff ? 0xe000 : point + 1;
+
+    return Array.join(Array.take(points, i), "") + String.fromCodePoint(next);
+  }
+
+  return undefined;
+};
+
+interface OwnerRecordRow {
+  readonly owner_key: string;
+  readonly owner_value: string;
+}
+
+interface MysqlOwnerRecordRow extends OwnerRecordRow {
+  readonly full_key: string | null;
+}
+
 /**
  * Encoded owner records; statements join the boundary transaction when one is open.
  *
  * The checkpoint store reads a record, compares its token and writes it back in one
  * transaction. Inside a transaction, a found record is read again with
  * `FOR UPDATE` on Postgres and MySQL, so a concurrent save waits and then sees the
- * new token. An absent key has no row to lock, and on MySQL a locking read of it
- * takes a gap lock that turns two first saves into a deadlock. So the first read
- * stays plain, the transaction remembers the absent key, and its write is a plain
- * insert: a concurrent first save then fails on the primary key and is not lost.
+ * new token. An absent key has no row to lock. At REPEATABLE READ a locking read
+ * of that key on MySQL can take a gap lock and deadlock concurrent first saves.
+ * The first read stays plain at every level. The transaction remembers the absent
+ * key and uses a plain insert, so the primary key detects a concurrent first save.
  */
 const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
   // Each transaction or savepoint has its own connection tuple in Effect SQL.
@@ -839,15 +868,24 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
           orElse: () => select(key, true),
         });
 
-  const upsert = (key: string, encoded: string) => {
-    const row = sql.insert({ owner_key: key, owner_value: encoded });
+  const ownerRow = (key: string, requested: string, encoded: string) => {
+    const row = { owner_key: key, owner_value: encoded };
+
+    return sql.onDialectOrElse({
+      mysql: () => sql.insert({ ...row, full_key: requested }),
+      orElse: () => sql.insert(row),
+    });
+  };
+
+  const upsert = (key: string, requested: string, encoded: string) => {
+    const row = ownerRow(key, requested, encoded);
 
     return execute(
       "records.write",
       sql.onDialectOrElse({
         mysql: () =>
           sql`INSERT INTO streamsy_owner_records ${row}
- ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value)`,
+ ON DUPLICATE KEY UPDATE owner_value = VALUES(owner_value), full_key = VALUES(full_key)`,
         orElse: () =>
           sql`INSERT INTO streamsy_owner_records ${row}
  ON CONFLICT (owner_key) DO UPDATE SET owner_value = excluded.owner_value`,
@@ -855,8 +893,8 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
     );
   };
 
-  const insert = (key: string, encoded: string) =>
-    sql`INSERT INTO streamsy_owner_records ${sql.insert({ owner_key: key, owner_value: encoded })}`.pipe(
+  const insert = (key: string, requested: string, encoded: string) =>
+    sql`INSERT INTO streamsy_owner_records ${ownerRow(key, requested, encoded)}`.pipe(
       Effect.mapError((error) =>
         Predicate.isTagged(error.reason, "UniqueViolation")
           ? new StorageFault({
@@ -886,32 +924,77 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       return found;
     }),
     list: Effect.fn("SqlStorage.records.list")(function* (prefix: string) {
-      const rows = yield* sql.onDialectOrElse({
+      if (!prefix.isWellFormed())
+        return yield* new StorageFault({
+          operation: "records.list",
+          message: "Owner record prefix must be well-formed UTF-16",
+          retryable: false,
+        });
+
+      const range = (lower: string) => {
+        const upper = upperBound(lower);
+
+        return sql`owner_key >= ${lower}${upper === undefined ? sql`` : sql` AND owner_key < ${upper}`}`;
+      };
+
+      return yield* sql.onDialectOrElse({
         mysql: () =>
-          Effect.fail(
-            new StorageFault({
-              operation: OWNER_RECORDS_LIST_UNSUPPORTED,
-              message: "MySQL cannot list owner records because long keys may have been hashed",
-              retryable: false,
-            }),
-          ),
-        orElse: () => {
-          const startsWith = sql.onDialectOrElse({
-            sqlite: () => sql`instr(owner_key, ${prefix}) = 1`,
-            orElse: () => sql`strpos(owner_key, ${prefix}) = 1`,
-          });
+          Effect.gen(function* () {
+            const lower = Array.join(
+              Array.take(Array.fromIterable(prefix), MYSQL_OWNER_KEY_PREFIX_LENGTH),
+              "",
+            );
 
-          return attempt(
+            const transaction = yield* Effect.serviceOption(sql.transactionService);
+            // Forget and retire rewrite the rows they list, and shared locks would deadlock them.
+            const lock = lockingRead(sql, Option.isSome(transaction) ? "update" : undefined);
+
+            const rows = yield* attempt(
+              "records.list",
+              sql<MysqlOwnerRecordRow>`SELECT owner_key, full_key, owner_value FROM streamsy_owner_records WHERE ${range(lower)}${lock}`,
+            );
+
+            const entries: Array<readonly [string, string]> = [];
+            let unlistable = 0;
+
+            for (const { owner_key, full_key, owner_value } of rows) {
+              if (
+                full_key === null &&
+                Array.fromIterable(owner_key).length === MYSQL_OWNER_KEY_LENGTH &&
+                HASHED_OWNER_KEY_SUFFIX.test(owner_key)
+              ) {
+                unlistable++;
+                continue;
+              }
+
+              const key = full_key ?? owner_key;
+
+              if (key.startsWith(prefix)) entries.push([key, owner_value]);
+            }
+
+            if (unlistable > 0)
+              return yield* new StorageFault({
+                operation: OWNER_RECORDS_LIST_UNSUPPORTED,
+                message: `MySQL owner record range contains ${unlistable} legacy hashed keys without full keys. Writing the original keys restores listing.`,
+                retryable: false,
+              });
+
+            return entries;
+          }),
+        orElse: () =>
+          attempt(
             "records.list",
-            sql<{
-              readonly owner_key: string;
-              readonly owner_value: string;
-            }>`SELECT owner_key, owner_value FROM streamsy_owner_records WHERE ${startsWith}`,
-          );
-        },
+            sql<OwnerRecordRow>`SELECT owner_key, owner_value FROM streamsy_owner_records WHERE ${range(prefix)}`,
+          ).pipe(
+            // A column with another collation can put other keys in the range.
+            Effect.map((rows) =>
+              Array.map(
+                Array.filter(rows, ({ owner_key }) => owner_key.startsWith(prefix)),
+                ({ owner_key, owner_value }) => [owner_key, owner_value] as const,
+              ),
+            ),
+          ),
       });
-
-      return Array.map(rows, ({ owner_key, owner_value }) => [owner_key, owner_value] as const);
     }),
     write: Effect.fn("SqlStorage.records.write")(function* (requested: string, encoded: string) {
       const key = yield* storedKey(requested);
@@ -919,9 +1002,9 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
       const absent = Option.isSome(transaction) ? absentKeys.get(transaction.value) : undefined;
 
       if (absent?.has(key) === true) {
-        yield* insert(key, encoded);
+        yield* insert(key, requested, encoded);
         absent.delete(key);
-      } else yield* upsert(key, encoded);
+      } else yield* upsert(key, requested, encoded);
     }),
     remove: Effect.fn("SqlStorage.records.remove")(function* (requested: string) {
       const key = yield* storedKey(requested);

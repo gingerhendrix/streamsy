@@ -6,6 +6,7 @@
     "event-sourced",
     "---Client variants---",
     "foldkit",
+    "foldkit-views",
     "atom"
   ]
 }

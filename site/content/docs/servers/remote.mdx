@@ -77,7 +77,7 @@ A projection can read its inputs over the remote Layer.
 | `Projection.run`    | Works. It reads pages only                                                                                           |
 | `Projection.follow` | Works. It waits with long polls and replaces a parked poll every `repairIntervalMs` (default 30 s)                   |
 | `Projection.attach` | Needs local `Storage`; process hosts can follow a remote wake stream in `triggers` when its stream class is provided |
-| Outputs             | Existing remote outputs work with `Commit.producer`. `Commit.transaction` needs every output on its own SQL owner    |
+| Outputs             | Existing remote outputs work with `Commit.producer`. `Commit.transaction` requires outputs on its transaction owner  |
 | Checkpoints         | The remote Layer has no `CommitBoundary`. Provide a standalone store, such as `CheckpointStore.layerMemory`          |
 
 See [Trigger streams](/docs/projections/run#trigger-streams) and [Several backends](/docs/projections/checkpoints#several-backends).

@@ -167,6 +167,13 @@ const storageFailure =
  */
 const OWNER_RECORD_CONFLICT = "records.conflict";
 
+/** The load that `loadLatest` uses for a store, keyed by its `load` like the owner metadata. */
+const latestLoads = new WeakMap<CheckpointStoreApi["load"], CheckpointStoreApi["load"]>();
+
+/** Load the latest committed record in a transaction whose snapshot can be older. */
+export const loadLatest = (store: CheckpointStoreApi, key: ProjectionKey) =>
+  (latestLoads.get(store.load) ?? store.load)(key);
+
 type EncodedEntries = ReadonlyArray<readonly [key: string, encoded: string]>;
 
 /** Stores each projection's offsets and encoded state in one compare-and-set record. */
@@ -401,6 +408,46 @@ const routeRecords = (store: EncodedStore): RouteRecords => {
   };
 };
 
+/**
+ * In a MySQL transaction a listing is a locking read, so it sees a record committed since
+ * the transaction's REPEATABLE READ snapshot. A plain read of an absent key does not.
+ * A range that cannot be listed, because of a legacy hashed key, counts as empty.
+ */
+const readListed = (store: EncodedStore, key: string) =>
+  store.list === undefined
+    ? Effect.succeedNone
+    : store.list(key).pipe(
+        Effect.map((entries) =>
+          Array.findFirst(entries, ([stored]) => stored === key).pipe(
+            Option.map(([, encoded]) => encoded),
+          ),
+        ),
+        Effect.catchIf(
+          (fault) => fault.reason === "unsupported-composition",
+          () => Effect.succeedNone,
+        ),
+      );
+
+const loadRecord = (read: EncodedStore["read"]): CheckpointStoreApi["load"] =>
+  Effect.fn("Projection.CheckpointStore.load")(function* (
+    key: ProjectionKey,
+  ): Effect.fn.Return<Loaded, ProjectionFault> {
+    const encoded = yield* read(recordKey(key));
+
+    if (Option.isNone(encoded)) return { record: Option.none(), token: ABSENT_TOKEN };
+
+    const envelope = yield* decodeStored(key.id, encoded.value);
+
+    if ("retired" in envelope)
+      return yield* new ProjectionFault({
+        phase: "load",
+        reason: "retired-generation",
+        message: `Generation ${key.generation} of ${key.id} is retired. Raise generation to run it again.`,
+      });
+
+    return { record: Option.some(envelope.record), token: String(envelope.version) };
+  });
+
 export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
   const list = Effect.fn("Projection.CheckpointStore.list")(function* (id: string) {
     if (store.list === undefined) return yield* unsupportedBindingList();
@@ -432,24 +479,14 @@ export const fromStore = (store: EncodedStore): CheckpointStoreApi => {
     return Array.fromIterable(byKey.values());
   });
 
-  const load = Effect.fn("Projection.CheckpointStore.load")(function* (
-    key: ProjectionKey,
-  ): Effect.fn.Return<Loaded, ProjectionFault> {
-    const encoded = yield* store.read(recordKey(key));
+  const load = loadRecord(store.read);
 
-    if (Option.isNone(encoded)) return { record: Option.none(), token: ABSENT_TOKEN };
-
-    const envelope = yield* decodeStored(key.id, encoded.value);
-
-    if ("retired" in envelope)
-      return yield* new ProjectionFault({
-        phase: "load",
-        reason: "retired-generation",
-        message: `Generation ${key.generation} of ${key.id} is retired. Raise generation to run it again.`,
-      });
-
-    return { record: Option.some(envelope.record), token: String(envelope.version) };
-  });
+  latestLoads.set(
+    load,
+    loadRecord((key) =>
+      store.read(key).pipe(Effect.filterOrElse(Option.isSome, () => readListed(store, key))),
+    ),
+  );
 
   const compareAndSet = Effect.fn("Projection.CheckpointStore.compareAndSet")(function* (
     key: ProjectionKey,

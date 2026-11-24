@@ -56,8 +56,8 @@ for (const operation of ["run", "retire", "forget"] as const) {
         commit:
           operation === "run"
             ? Commit.transaction
-            : Commit.transactionWithCleanup((_, sql) =>
-                sql`INSERT INTO app_rows VALUES (2)`.pipe(
+            : Commit.transactionWithCleanup(() =>
+                SqlClient.SqlClient.use((sql) => sql`INSERT INTO app_rows VALUES (2)`).pipe(
                   Effect.orDie,
                   Effect.andThen(() => (failCleanup ? Effect.fail(cleanupFailure) : Effect.void)),
                 ),
@@ -171,4 +171,37 @@ it.effect(
       expect(yield* contents).toEqual([{ id: "b", n: 2 }]);
       expect(yield* store.load(projection)).toEqual(checkpoint);
     }),
+);
+
+it.effect("a checkpoint store on another SQL client is rejected before the handler runs", () =>
+  Effect.gen(function* () {
+    const left = yield* buildHost();
+    const right = yield* buildHost();
+    const leftSql = Context.get(left, SqlClient.SqlClient);
+    const rightStore = Context.get(right, CheckpointStore);
+
+    const projection = Projection.process({
+      ...declaration,
+      id: "separate-checkpoint-client",
+      commit: Commit.transaction,
+      process: () =>
+        SqlClient.SqlClient.use((sql) => sql`INSERT INTO app_rows VALUES (1)`.pipe(Effect.asVoid)),
+    });
+
+    const bound = projection.at(params);
+    const split = Context.add(left, CheckpointStore, rightStore);
+    const rejected = { reason: "unsupported-composition" };
+
+    for (const operation of [
+      Projection.run(bound),
+      Projection.forget(bound),
+      Projection.retire(projection, params, { generation: 1 }),
+    ])
+      expect(
+        yield* operation.pipe(Effect.provideContext(split), Effect.asVoid, Effect.flip),
+      ).toMatchObject(rejected);
+
+    expect(yield* leftSql`SELECT id FROM app_rows`).toEqual([]);
+    expect((yield* rightStore.load(bound)).token).toBe("0");
+  }),
 );

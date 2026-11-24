@@ -1,5 +1,7 @@
 export * as View from "./view.ts";
 
+export { ViewBackend } from "./view-backend.ts";
+
 export { PlanChanged, ViewFault } from "./circuit.ts";
 
 export { ViewDataFault } from "./sql/data-fault.ts";
@@ -21,3 +23,5 @@ export type {
   TypedAggregateExpression,
   TypedExpression,
 } from "./expression.ts";
+
+export type { LiveReader, LiveSnapshot } from "./live.ts";

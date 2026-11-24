@@ -81,7 +81,7 @@ The row contains `node`, `ancestor` and the edge count `depth`. The row key is t
 
 Declare an output State route with a numeric generation parameter in its path, then pass the route as `output: Projection.perGeneration(ShopViews, "generation")`. For multiple outputs, wrap every route in `outputs` and group the `views` under the same output names. Each State collection needs exactly one view. A circuit rejects incomplete coverage and repeated State classes at declaration time. Collection names can repeat across different State classes. The State collection supplies the output key and schema. TypeScript checks the view row type, and output encoding validates each row at runtime.
 
-A circuit returns a projection declaration with `.at(params)`. The circuit's `generation` defaults to 1. The `retry` option accepts the projection binding policy. Input route parameters and the remaining output route parameters must be circuit parameters with the same decoded types. Projection supplies the generation parameter from the circuit's `generation`. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters as expressions, for example `row.workspace.eq(params.workspace)`. The plan hash includes the parameter names. Each binding evaluates the plan with its own decoded values and SQL namespace.
+A circuit returns a projection declaration with `.at(params)`. The circuit's `generation` defaults to 1. The `retry` option accepts the projection binding policy. Input route parameters and the remaining output route parameters must be circuit parameters with the same decoded types. Projection supplies the generation parameter from the circuit's `generation`. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters as expressions, for example `row.workspace.eq(params.workspace)`. The plan hash includes the parameter names. Each binding evaluates the plan with its own decoded values and operator-state namespace.
 
 ## Routed outputs
 
@@ -101,12 +101,12 @@ import { SqlClient } from "effect/sql";
 import { Streamsy } from "@streamsy/core";
 import { BunStorage } from "@streamsy/storage/bun";
 import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
-import { View } from "@streamsy/views";
+import { View, ViewBackend } from "@streamsy/views";
 
 const storage = BunStorage.layer(Streamsy.group(Shop, ShopViews), {
   client: { filename: "./shop.sqlite" },
 });
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
+const host = Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer).pipe(
   Layer.provideMerge(storage),
 );
 const ShopViewsTable = StateTable.define(ShopViews);
@@ -128,13 +128,13 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Build the host once for its lifetime. Migrate before starting runners. Projection creates or checks each output stream in the first unit transaction. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
+Build the host once for its lifetime. Use the storage owner’s `SqlClient` for the Views backend and migration. Migrate before starting runners. Projection creates or checks non-routed generation outputs in the first unit transaction. It creates or checks each routed stream when the circuit first emits to that stream. Each owned stream must start empty and open. All declared outputs must share the transaction's owner. Its inputs can use the normal projection stream services; no synchronized input `StateTable` is required. The circuit integrates exactly the input pages of its unit.
 
 For a long-lived process, attach with `Projection.attach(shopViews, { durable: true })` over these same host services after migration. Attach the output `StateTable` too when readers need it kept current. Use `Projection.Registry.awaitOffset` for read-your-writes. Do not also run/follow an attached binding. The [README](../README.md) contains the complete example State declarations.
 
 ## Durable Object host
 
-Use `DurableObjectStorage.layer` with the object's full `storage`, plus `CheckpointStore.layer` and `Transaction.layer`. Call the same `View.migrate(sql)` and `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
+Use `DurableObjectStorage.layer` with the object's full `storage`. Provide `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql`, and call `View.migrate(sql)` at startup. If the host runs a `StateTable`, also call `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
 
 The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals, per-customer top 3 and order lineage against the full-recompute oracle after each unit. It also checks a no-op unit, a shared `txid` on every emitted change and a generation-2 lineage replay.
 
@@ -143,17 +143,23 @@ bun run --cwd packages/views test:unit
 bun run --cwd packages/views test:workerd
 ```
 
+## MySQL host
+
+Build `SqlStorage.layer` over a MySQL `SqlClient` from `@effect/sql-mysql2`. Use `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over storage. Run `View.migrate(sql)` with the storage client before starting any circuits. Concurrent hosts can migrate the same database. Assign one writer to each binding.
+
+Install `@streamsy/storage` at the same version as `@streamsy/views` and keep the storage boundary's default `READ COMMITTED` isolation. Tests covered MySQL 8.4.11 only. See [Run on MySQL](https://streamsy.dev/docs/views/mysql) for the host configuration and database limits.
+
 ## Transaction and State semantics
 
-Each unit normalizes input changes using the circuit's own SQL integrals. Numeric State keys use their string wire representation; numeric row fields retain their numeric type. Deletes need no `old_value`. A `reset` retracts the source rows. Snapshots preserve previously visible rows until `snapshot-end`, then retract unseen keys; snapshot bookkeeping persists across units. These controls can visit a whole relation.
+Each unit normalizes input changes using the circuit's own integrals. Numeric State keys use their string wire representation; numeric row fields retain their numeric type. Deletes need no `old_value`. A `reset` retracts the source rows. Snapshots preserve previously visible rows until `snapshot-end`, then retract unseen keys; snapshot bookkeeping persists across units. These controls can visit a whole relation.
 
-The SQL engine shares compatible arrangements within a circuit. It uses affected-key evaluation, differences for `count`/`sum`, and ordered indexes for extrema, lists and top. It coalesces the final differences before output. Output State messages are absolute upserts/deletes and carry `txid: unit.key`. A unit with no changed output rows writes no output messages while still advancing its checkpoint.
+The Views engine shares compatible arrangements within a circuit. It uses affected-key evaluation, differences for `count`/`sum`, and ordered indexes for extrema, lists and top. It coalesces the final differences before output. Output State messages are absolute upserts/deletes and carry `txid: unit.key`. A unit with no changed output rows writes no output messages while still advancing its checkpoint.
 
-Operator SQL, output appends, plan metadata and the checkpoint commit together in the owner transaction.
+Operator state, output appends, plan metadata and the checkpoint commit together in the owner transaction.
 
 ## Plan identity, rebuilds and retirement
 
-Operator namespaces are keyed by projection id, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `PlanChanged` fault. No checkpoint, SQL state or output append is committed. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codec changes also require a new generation. A release that changes the operator-state table layout or internal plan naming marks it as a **Breaking change:** in the changelog. When upgrading to that release, raise `generation` on every affected circuit to rebuild into fresh namespaces and output streams.
+Operator namespaces are keyed by projection id, encoded params and generation. Canonical plan hashes are stored per namespace. Changing an operator, filter, output key or other plan IR under the same generation fails the next unit with the typed `PlanChanged` fault. Checkpoint, operator state, and output streams keep their last committed values. The fault exposes `namespace`, `stored` and `requested`. Attached runners stop the affected binding after a `PlanChanged` or `ViewDataFault`. The registry lists the failure and its message. Reordering object properties alone preserves the hash and compiled state identities. Collection codec changes also require a new generation. A release that changes the operator-state table layout or internal plan naming marks it as a **Breaking change:** in the changelog. When upgrading to that release, raise `generation` on every affected circuit to rebuild into fresh namespaces and output streams.
 
 Delete an explicit `version: 1`. If the old circuit used a different `version`, stop the old runners and keep the full input history for the new generation. Follow the cutover and retirement order in the migration guide. [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
@@ -173,7 +179,7 @@ String expressions compare lexicographically by UTF-16 code units, without local
 
 `View.list(expression)` collects a group's string or finite number values in ascending order and keeps duplicates. Numbers precede strings in a mixed group. Absent operands are skipped. A group with no members has no output row. When a member changes the list, the aggregate emits the whole array. `maxAffectedKeys` does not bound group size.
 
-Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
+Use UTF-8 database encoding on SQLite. Operator state on Bun and Durable Object SQLite uses integrals, payload-free arrangements and accumulators. A separate circuit metadata table records identity and plan hash. The store computes index keys in JavaScript and binds at most 100 values per statement.
 
 A source used only by direct `where` filters keeps rows that pass at least one of those filters. Another consumer of the unfiltered source keeps its full integral.
 
@@ -181,8 +187,8 @@ Set the optional `maxAffectedKeys` to a positive safe integer to cap a unit's di
 
 Closure uses a parent index over the input. An edge or part change recomputes the changed node and descendants within `maxDepth - 1` edges in both the before and after graphs. Reparenting a subtree with `s` nodes from a chain of height `h1` to one of height `h2` can change up to `s * (min(h1, maxDepth) + min(h2, maxDepth))` closure rows. `maxAffectedKeys` checks the number of candidate nodes and counts changed closure keys toward the unit limit. A consumer that reads closure through an arrangement stores those rows in the normal integral. With `part`, each stored row carries `depth` path values, so one descendant carries up to `d * (d + 1) / 2` path values across its closure rows, where `d` is its depth capped at `maxDepth`. An entire untruncated chain holds a cubic number of path values in its height.
 
-Unsupported operators and features include `avg`, `distinct`, fact folds, the memory tier, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Views omits `undefined` members from decoded input objects at every depth and rejects `undefined` array elements. Retained State streams are the source of truth for rebuilding SQL state.
+Unsupported operators and features include `avg`, `distinct`, fact folds, dynamic parameters-as-data, frontier rows and `old_value` output. Input values must be JSON objects and collection codecs must require no services. Views omits `undefined` members from decoded input objects at every depth and rejects `undefined` array elements. Retained State streams are the source of truth for rebuilding operator state.
 
 ## Package exports
 
-The package root exports the `View` namespace, fault classes and types. Internal compiler and SQL modules are available to the package's own tests.
+The package root exports `View`, `ViewBackend`, fault classes, and types. Internal compiler and SQL modules are available to the package's own tests.

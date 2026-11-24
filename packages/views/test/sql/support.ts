@@ -1,3 +1,7 @@
+import { Effect } from "effect";
+import { backendFor } from "../support/backends.ts";
+import { SqlClient } from "effect/sql";
+import { migrate } from "../../src/sql/sqlite.ts";
 import type { OutputChange } from "../../src/sql/engine.ts";
 import { canonicalJson, encodeRowKey } from "../../src/runtime/key.ts";
 
@@ -13,3 +17,10 @@ export function materialize(rows: Map<string, string>, changes: readonly OutputC
     else rows.set(id, canonicalJson(c.value));
   }
 }
+
+export const migratedSqliteBackend = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* migrate(sql);
+
+  return yield* backendFor(sql);
+});

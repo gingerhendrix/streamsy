@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Schema, Record as Rec } from "effect";
-import { SqlClient } from "effect/sql";
+import type { Backend } from "../backend.ts";
 import { evaluate, type ExpressionScopes } from "../runtime/expression.ts";
 import { asRowKey, encodeRowKey } from "../runtime/key.ts";
 import type { JsonObject, RowKey, RelationPlan } from "../ir/contracts.ts";
@@ -8,11 +8,9 @@ import { accepts, aggregate, closure, concat, join, linear, top } from "./operat
 import { delta, runtime, type Delta, type Deltas } from "./runtime.ts";
 import { checkData, dataFault, ViewDataFault } from "./data-fault.ts";
 import { rekey } from "./key-ownership.ts";
-import { storeFor, type Store } from "./store.ts";
+import type { Store } from "../store.ts";
 
 export { ViewDataFault } from "./data-fault.ts";
-
-export { migrate } from "./store.ts";
 
 export type StateChange =
   | {
@@ -39,8 +37,8 @@ export class SqlEngineFault extends Schema.TaggedError<
   cause: Schema.Defect(),
 }) {}
 
-/** Compile once; each namespace has independent SQL state and a fixed plan.
- * process uses SqlClient.withTransaction, composing with an enclosing host transaction.
+/** Compile once; each namespace has independent operator state and a fixed plan.
+ * process uses the backend atomic boundary, composing with an enclosing host transaction.
  * Input keys must agree with their rows; all relation/output keys must be unique.
  * Circuit outputs use the string key space of Durable State.
  */
@@ -193,15 +191,13 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
     });
 
   const process = Effect.fn("ViewsSql.process")(function* (
+    backend: Backend,
     namespace: string,
     input: readonly StateChange[],
     parameter?: ExpressionScopes["parameter"],
   ) {
-    const sql = yield* SqlClient.SqlClient;
-    const store = storeFor(sql, namespace);
-
     const run = Effect.gen(function* () {
-      const rt = yield* evaluateUnit(store, input, parameter);
+      const rt = yield* evaluateUnit(backend.store(namespace), input, parameter);
       const output: OutputChange[] = [];
 
       for (const [view, relation] of Rec.toEntries(program.outputs)) {
@@ -218,13 +214,12 @@ export const makeEngine = Effect.fn("ViewsSql.makeEngine")(function* (
       return output;
     });
 
-    return yield* sql
-      .withTransaction(run)
-      .pipe(
-        Effect.catchDefect((cause) =>
-          Effect.fail(Schema.is(ViewDataFault)(cause) ? cause : new SqlEngineFault({ cause })),
-        ),
-      );
+    return yield* backend.atomic(run).pipe(
+      Effect.catchTag("MemoryEnlistFault", (cause) => Effect.fail(new SqlEngineFault({ cause }))),
+      Effect.catchDefect((cause) =>
+        Effect.fail(Schema.is(ViewDataFault)(cause) ? cause : new SqlEngineFault({ cause })),
+      ),
+    );
   });
 
   return { program, process };

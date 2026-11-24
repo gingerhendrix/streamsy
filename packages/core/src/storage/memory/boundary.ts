@@ -1,4 +1,4 @@
-import { Array, Context, Effect, Option, Semaphore } from "effect";
+import { Array, Cause, Context, Effect, Exit, Option, Schema, Semaphore } from "effect";
 import { CommitHooks, commitHookRegistry } from "../../internal/commit-hooks.ts";
 import { OwnerRecords } from "../../internal/owner-records.ts";
 import { ProjectionMarks } from "../../internal/projection-marks.ts";
@@ -23,6 +23,7 @@ interface Draft {
   readonly records: Map<string, string>;
   readonly marks: Marks.MarkTable;
   readonly ids: Set<StreamId>;
+  readonly participants: Set<TransactionParticipant>;
   active: boolean;
   changed: boolean;
 }
@@ -30,6 +31,75 @@ interface Draft {
 class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
   "@streamsy/core/internal/MemoryActiveDraft",
 ) {}
+
+const activeDraft = <E>(owner: Draft["owner"], reject: () => Effect.Effect<never, E>) =>
+  Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
+    Effect.withFiber((fiber) => {
+      if (
+        Option.isSome(draft) &&
+        (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
+      )
+        return reject();
+
+      return Effect.succeed(draft);
+    }),
+  );
+
+export interface TransactionParticipant {
+  /** Runs synchronously after the draft becomes committed, before wakes. Must not throw. */
+  readonly onCommit: () => void;
+  /**
+   * Runs synchronously when the outer transaction rolls back. Must not throw.
+   * A throw adds a defect to the transaction's cause. Effect's typed recovery
+   * gives defects precedence even when the exit still contains a typed failure.
+   */
+  readonly onRollback: () => void;
+}
+
+class MemoryEnlistFault extends Schema.TaggedError<
+  MemoryEnlistFault,
+  { readonly brand: unique symbol }
+>()("MemoryEnlistFault", {
+  message: Schema.String,
+}) {}
+
+const rejectEnlist = () =>
+  Effect.fail(
+    new MemoryEnlistFault({ message: "Enlisting requires the active memory owner fiber" }),
+  );
+
+/** Join the memory owner transaction open on this fiber. */
+export function enlist(
+  // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
+  owner: object,
+  participant: TransactionParticipant,
+): Effect.Effect<void, MemoryEnlistFault> {
+  return Effect.flatMap(activeDraft(owner, rejectEnlist), (draft) => {
+    if (Option.isNone(draft)) return rejectEnlist();
+
+    draft.value.participants.add(participant);
+
+    return Effect.void;
+  });
+}
+
+const notifyParticipants = (
+  participants: Iterable<TransactionParticipant>,
+  callback: "onCommit" | "onRollback",
+) => {
+  const defects: unknown[] = [];
+
+  for (const participant of participants) {
+    try {
+      participant[callback]();
+    } catch (defect) {
+      defects.push(defect);
+    }
+  }
+
+  if (defects.length > 0)
+    throw new AggregateError(defects, `Memory participant ${callback} failed`);
+};
 
 export const makeBoundary = (
   committed: State,
@@ -42,16 +112,8 @@ export const makeBoundary = (
     let committedMarks: Marks.MarkTable = new Map();
     const hooks = commitHookRegistry();
 
-    const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
-      Effect.withFiber((fiber) => {
-        if (
-          Option.isSome(draft) &&
-          (draft.value.owner !== owner || !draft.value.active || draft.value.fiberId !== fiber.id)
-        )
-          return Effect.die(new Error("Memory boundary requires the active owner fiber"));
-
-        return Effect.succeed(draft);
-      }),
+    const current = activeDraft(owner, () =>
+      Effect.die(new Error("Memory boundary requires the active owner fiber")),
     );
 
     const withTransaction: WithTransaction = (body) =>
@@ -67,6 +129,7 @@ export const makeBoundary = (
               records: new Map(committedRecords),
               marks: Marks.copyMarks(committedMarks),
               ids: new Set(),
+              participants: new Set(),
               active: true,
               changed: false,
             };
@@ -79,18 +142,35 @@ export const makeBoundary = (
             );
 
             return Effect.uninterruptibleMask((restore) =>
-              restore(withHooks).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
+              Effect.exit(restore(withHooks)).pipe(
+                Effect.flatMap((exit) => {
+                  if (Exit.isFailure(exit))
+                    return Effect.sync(() =>
+                      notifyParticipants(
+                        Array.reverse(Array.fromIterable(draft.participants)),
+                        "onRollback",
+                      ),
+                    ).pipe(
+                      // Keep the body's Fail reasons alongside the callback defect in the exit.
+                      Effect.catchCause((rollback) =>
+                        Effect.failCause(Cause.combine(exit.cause, rollback)),
+                      ),
+                      Effect.andThen(exit),
+                    );
+
+                  return Effect.sync(() => {
                     Object.assign(committed, draft.state);
                     committedRecords = draft.records;
                     committedMarks = draft.marks;
+                    notifyParticipants(draft.participants, "onCommit");
                   }).pipe(
-                    Effect.andThen(
+                    // Even a defective participant cannot suppress wakes for committed writes.
+                    Effect.ensuring(
                       Effect.suspend(() => (draft.changed ? publish(draft.ids) : Effect.void)),
                     ),
-                  ),
-                ),
+                    Effect.as(exit.value),
+                  );
+                }),
                 Effect.ensuring(
                   Effect.sync(() => {
                     draft.active = false;

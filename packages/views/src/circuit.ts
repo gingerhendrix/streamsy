@@ -1,20 +1,20 @@
-import { Array, Effect, Option, Order, Predicate, Record, Schema } from "effect";
+import { Array, Effect, Order, Predicate, Record, Schema } from "effect";
 import { DurableState, isStreamsFault } from "@streamsy/core";
 import { Streams, StreamsWriter, type StreamRoute } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
   NonRetryable,
+  Transaction,
   Projection,
   ProjectionFault,
-  Transaction,
   type ProjectionKey,
   type Declaration,
   type Slices,
   type Unit,
   type WakeAt,
 } from "@streamsy/projection";
-import { SqlClient } from "effect/sql";
+import type { SqlClient } from "effect/sql";
 import { compilePlan, type RelationExpression } from "./relation.ts";
 import {
   keyExpression,
@@ -24,17 +24,14 @@ import {
 } from "./expression.ts";
 import { circuitPlanHash, orderPlanFields } from "./plan.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan; it neither constructs nor acquires an Effect service.
-import { makeEngine, type StateChange } from "./sql/engine.ts";
-import {
-  circuitState,
-  clearNamespace,
-  migrate as migrateEngine,
-  migrateCircuits,
-  storeFor,
-} from "./sql/store.ts";
+import { makeEngine } from "./sql/engine.ts";
+import type { Backend } from "./backend.ts";
+import { migrateBackend } from "./sql/backend.ts";
+import { currentBackend, memoryEnlistFault, type ViewBackend } from "./view-backend.ts";
+import { ViewFault } from "./view-fault.ts";
 import type { Input, Relation } from "./view.ts";
 import { dataFault, ViewDataFault } from "./sql/data-fault.ts";
-import { normalize } from "./sql/normalize.ts";
+import { circuitErrors, normalizeUnit } from "./circuit-engine.ts";
 import { encodeRowKey } from "./runtime/key.ts";
 import {
   isJsonObject,
@@ -42,6 +39,8 @@ import {
   type JsonValue,
   type RelationPlan,
 } from "./ir/contracts.ts";
+
+export { ViewFault } from "./view-fault.ts";
 
 interface CircuitView extends Pick<Relation<unknown>, "expression" | "inputs" | "rowType"> {
   readonly routing?: {
@@ -58,7 +57,7 @@ type OutputMap = Readonly<Record<string, Output>>;
 
 type ViewMap = Readonly<Record<string, Views>>;
 
-type InputOf<R> = R extends {
+export type InputOf<R> = R extends {
   readonly inputs: ReadonlyMap<string, { readonly state: infer I extends Input }>;
 }
   ? I
@@ -125,7 +124,7 @@ type InvalidParams<C extends StreamRoute.ParamCodecs, I extends Input | Output> 
       ? InvalidStateParams<C, I>
       : never;
 
-type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
+export type ValidInputs<C extends StreamRoute.ParamCodecs, V extends Views> = {
   readonly [K in keyof V]: V[K]["inputs"] extends ReadonlyMap<
     string,
     { readonly state: infer I extends Input }
@@ -207,14 +206,6 @@ export class PlanChanged extends Schema.TaggedError<
   }
 }
 
-export class ViewFault extends Schema.TaggedError<ViewFault, { readonly brand: unique symbol }>()(
-  "ViewFault",
-  {
-    message: Schema.String,
-    cause: Schema.optionalKey(Schema.Defect()),
-  },
-) {}
-
 const rowReference = (...path: string[]): Expression => ({ kind: "reference", scope: "row", path });
 
 const outputExpression = (
@@ -259,7 +250,7 @@ const outputExpression = (
 };
 
 /** Same projection binding and generation, independent of the unit's ranges. */
-function namespaceOf(key: ProjectionKey) {
+export function namespaceOf(key: ProjectionKey) {
   const params = Record.fromEntries(
     Array.map(Array.sort(Record.keys(key.params), Order.String), (name) => [
       name,
@@ -275,41 +266,39 @@ function namespaceOf(key: ProjectionKey) {
 
 /** Create operator tables at host startup, like StateTable.migrate(sql). */
 export const migrate = Effect.fn("View.migrate")(function* (sql: SqlClient.SqlClient) {
-  yield* sql.onDialectOrElse({
-    sqlite: () => Effect.void,
-    orElse: () => Effect.fail(new ViewFault({ message: "View requires SQLite" })),
-  });
-  yield* migrateEngine().pipe(Effect.provideService(SqlClient.SqlClient, sql));
-  yield* migrateCircuits(sql);
+  yield* migrateBackend(sql);
 });
 
 const guard = Effect.fn("View.guard")(function* (
-  sql: SqlClient.SqlClient,
+  backend: Backend,
   key: ProjectionKey,
   hash: string,
 ) {
   const namespace = namespaceOf(key);
-  const state = circuitState(sql, namespace);
-  const [previous] = yield* state.load();
+  const state = backend.circuit(namespace);
+  const previous = yield* state.load;
 
   if (previous === undefined) yield* state.save(hash);
-  else if (previous.plan_hash !== hash)
-    return yield* new PlanChanged({ namespace, stored: previous.plan_hash, requested: hash });
+  else if (previous !== hash)
+    return yield* new PlanChanged({ namespace, stored: previous, requested: hash });
 
   return namespace;
 });
 
-const commit = Commit.transactionWithCleanup((key, sql) =>
-  clearNamespace(sql, namespaceOf(key)).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ProjectionFault({
-          phase: "checkpoint",
-          reason: "storage-failure",
-          message: "Cannot clear circuit state",
-          cause,
-        }),
-    ),
+const commit = Commit.transactionWithCleanup((key) =>
+  currentBackend.pipe(
+    Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
+    Effect.mapError((error) => {
+      const cause = Predicate.isTagged(error, "MemoryEnlistFault") ? memoryEnlistFault() : error;
+      const wrongOwner = Predicate.isTagged(cause, "ViewFault");
+
+      return new ProjectionFault({
+        phase: "checkpoint",
+        reason: wrongOwner ? "unsupported-composition" : "storage-failure",
+        message: wrongOwner ? cause.message : "Cannot clear circuit state",
+        cause,
+      });
+    }),
   ),
 );
 
@@ -319,7 +308,10 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
   readonly streams: ReturnType<
     ReturnType<typeof Projection.process<StreamRoute.ParamCodecs, InputsOf<V>, O>>["at"]
   >["streams"];
-  readonly commit: Commit.Commit<void | WakeAt, SqlClient.SqlClient, CheckpointStore | Transaction>;
+  readonly commit: Commit.TransactionCommit<
+    void | WakeAt,
+    CheckpointStore | Transaction | ViewBackend
+  >;
   readonly process: (
     batch: Slices<CircuitBinding<V, O>["inputs"]>,
     unit: Unit,
@@ -327,7 +319,7 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
   ) => Effect.Effect<
     void | WakeAt,
     CircuitError,
-    SqlClient.SqlClient | OutputState<O[keyof O]>["Identifier"]
+    ViewBackend | OutputState<O[keyof O]>["Identifier"]
   >;
 }
 
@@ -488,8 +480,8 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     Record<string, Input>,
     OutputMap,
     CircuitError,
-    SqlClient.SqlClient | Input["Identifier"],
-    CheckpointStore | Transaction,
+    ViewBackend | Input["Identifier"],
+    CheckpointStore | Transaction | ViewBackend,
     void,
     never,
     never,
@@ -504,64 +496,37 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
     commit,
     process: (batch, unit, { outputs }) =>
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
+        const backend = yield* currentBackend;
+
         // Unit params are decoded. Re-encode through the declaration to obtain the
-        // exact checkpoint identity, including transformed parameter codecs.
-        const boundParams: Record<string, string> = {};
+        // exact checkpoint identity, including transformed parameter codecs. Source
+        // validation still runs before encoding or reading/writing the plan hash.
+        const prepareNamespace = Effect.gen(function* () {
+          const boundParams: Record<string, string> = {};
 
-        for (const [name, codec] of Record.toEntries(definition.params))
-          boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
+          for (const [name, codec] of Record.toEntries(definition.params))
+            boundParams[name] = yield* Schema.encodeEffect(codec)(unit.params[name]);
 
-        const namespace = yield* guard(
-          sql,
-          {
-            id: unit.projectionId,
-            generation: unit.generation,
-            params: boundParams,
-          },
-          hash,
-        );
-
-        const changes: StateChange[] = [];
-        const store = storeFor(sql, namespace);
-
-        const active = Array.flatMap([...sources], ([sourceId, input]) => {
-          const slice = batch[input.state.key];
-
-          return slice === undefined
-            ? []
-            : [{ sourceId, input, slice, markerKey: encodeRowKey(sourceId) }];
+          return yield* guard(
+            backend,
+            {
+              id: unit.projectionId,
+              generation: unit.generation,
+              params: boundParams,
+            },
+            hash,
+          );
         });
 
-        const snapshots = yield* store.getMany(
-          "@snapshots",
-          Array.map(active, ({ markerKey }) => markerKey),
+        const { namespace, changes } = yield* normalizeUnit(
+          engine,
+          backend,
+          prepareNamespace,
+          sources,
+          batch,
         );
 
-        for (const { sourceId, input, slice, markerKey } of active) {
-          const source = Array.findFirst(
-            engine.program.nodes,
-            (node) => node.kind === "source" && node.sourceId === sourceId,
-          );
-
-          if (Option.isNone(source)) throw new TypeError(`Missing compiled source ${sourceId}`);
-          const location = engine.program.locations.get(source.value.id);
-
-          if (location === undefined) throw new Error(`Missing source location ${sourceId}`);
-          changes.push(
-            ...(yield* normalize(
-              store,
-              sourceId,
-              source.value.id,
-              input.collection,
-              dataFault(location),
-              slice.items,
-              snapshots.has(markerKey),
-            )),
-          );
-        }
-
-        const changesOut = yield* engine.process(namespace, changes, unit.params);
+        const changesOut = yield* engine.process(backend, namespace, changes, unit.params);
 
         type HandlerOutput = (typeof outputs)[string];
 
@@ -681,18 +646,6 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
         }
 
         return definition.wakeAt?.(unit);
-      }).pipe(
-        Effect.catchTags({
-          SqlError: (cause) =>
-            new ProjectionFault({
-              phase: "process",
-              reason: "storage-failure",
-              message: "Cannot update circuit state",
-              cause,
-            }),
-          SchemaError: (cause) => new ViewFault({ message: cause.message }),
-          SqlEngineFault: (cause) => new ViewFault({ message: "Circuit operator failed", cause }),
-        }),
-      ),
+      }).pipe(circuitErrors),
   });
 }

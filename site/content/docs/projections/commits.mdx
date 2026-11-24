@@ -24,15 +24,15 @@ What the next pass reads depends on the Commit:
 
 The result type of the handler decides which Commit fits a constructor.
 
-| Commit               | Constructors                                           | Guarantee                           | Host services                    |
-| -------------------- | ------------------------------------------------------ | ----------------------------------- | -------------------------------- |
-| `Commit.checkpoint`  | `fold`, as its default                                 | Exactly once for the saved value    | `CheckpointStore`                |
-| `Commit.transaction` | `fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch` | Exactly once in the SQL transaction | `CheckpointStore`, `Transaction` |
-| `Commit.producer`    | `emit`, `mapAccum`, `mapAccumBatch`                    | Effectively once for the outputs    | `CheckpointStore`                |
-| `Commit.atLeastOnce` | `process`                                              | At least once                       | `CheckpointStore`                |
-| `Commit.make`        | By the result type of its `apply`                      | The `guarantee` that it declares    | What its `load` and `apply` need |
+| Commit               | Constructors                                           | Guarantee                             | Host services                    |
+| -------------------- | ------------------------------------------------------ | ------------------------------------- | -------------------------------- |
+| `Commit.checkpoint`  | `fold`, as its default                                 | Exactly once for the saved value      | `CheckpointStore`                |
+| `Commit.transaction` | `fold`, `process`, `emit`, `mapAccum`, `mapAccumBatch` | Exactly once in the owner transaction | `CheckpointStore`, `Transaction` |
+| `Commit.producer`    | `emit`, `mapAccum`, `mapAccumBatch`                    | Effectively once for the outputs      | `CheckpointStore`                |
+| `Commit.atLeastOnce` | `process`                                              | At least once                         | `CheckpointStore`                |
+| `Commit.make`        | By the result type of its `apply`                      | The `guarantee` that it declares      | What its `load` and `apply` need |
 
-`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `process`, `emit`, `mapAccum` and `mapAccumBatch` require `commit`. `wake` always uses `Commit.producer` and accepts no `commit`. Timer handlers fit `Commit.atLeastOnce` and `Commit.transaction`, including compensation wrappers. Custom timer Commits are not supported in this release; a typed wake request does not fit a custom `Commit<void>`. A Commit whose result type does not fit the constructor is a type error at the `commit` field. Every Commit names its guarantee in its `guarantee` field: `"exactly-once"`, `"effectively-once"` or `"at-least-once"`.
+`fold` uses `Commit.checkpoint` when the declaration has no `commit`. `process`, `emit`, `mapAccum` and `mapAccumBatch` require `commit`. `wake` always uses `Commit.producer` and accepts no `commit`. Timer handlers fit `Commit.atLeastOnce` and `Commit.transaction`, including compensation wrappers. Custom timer Commits are outside the supported set. A typed wake request does not fit a custom `Commit<void>`. A Commit whose result type does not fit the constructor is a type error at the `commit` field. Every Commit sets `guarantee` to `"exactly-once"`, `"effectively-once"`, or `"at-least-once"`.
 
 ## `checkpoint`
 
@@ -40,21 +40,23 @@ The result type of the handler decides which Commit fits a constructor.
 
 ## `transaction`
 
-`Commit.transaction` opens one SQL transaction on the storage owner of the checkpoint. In that transaction it checks that the record token has not moved, runs the handler, appends the items of the declared outputs, and saves the checkpoint. The handler gets the `SqlClient` of the transaction, so its SQL and any returned `wakeAt` commit or roll back with the checkpoint. See [SQL tables](/docs/projections/process#sql-tables).
+`Commit.transaction` opens a transaction on the checkpoint’s memory or SQL storage owner. Inside it, the commit checks the checkpoint token, runs the handler, appends the items of the declared outputs, and saves the checkpoint with any returned `wakeAt`. SQL handlers read the storage owner’s `SqlClient` from context so their writes join the transaction. See [SQL tables](/docs/projections/process#sql-tables).
 
-Every stream write of the unit must be on the storage owner of the transaction. The writes on that owner commit or roll back with the checkpoint. The rule covers the declared outputs, and the `append`, `create`, `fork` and `remove` calls of the handler, through a stream service or through its `wire`.
+The checkpoint store must share the transaction owner on every unit. Use the `load` function supplied by `CheckpointStore.layer`. Wrapping it drops the owner metadata and the transaction rejects the store. Every stream write of the unit must also be on the transaction owner. The writes on that owner commit or roll back with the checkpoint. The rule covers the declared outputs, and the `append`, `create`, `fork` and `remove` calls of the handler, through a stream service or through its `wire`.
 
-| Case                                                            | Phase        | Reason                                                         |
-| --------------------------------------------------------------- | ------------ | -------------------------------------------------------------- |
-| A declared output is on another owner. The handler does not run | `load`       | `unsupported-composition`                                      |
-| The handler writes to a stream on another owner                 | `process`    | `unsupported-composition`                                      |
-| An output append fails                                          | `process`    | `storage-failure`, `output-busy` or `invalid-output`, by cause |
-| Another writer saved the record after the runner loaded it      | `checkpoint` | `token-conflict`                                               |
-| The SQL transaction fails                                       | `checkpoint` | `storage-failure`                                              |
+| Case                                                             | Phase        | Reason                                                         |
+| ---------------------------------------------------------------- | ------------ | -------------------------------------------------------------- |
+| A declared output is on another owner. The handler does not run  | `load`       | `unsupported-composition`                                      |
+| The handler writes to a stream on another owner                  | `process`    | `unsupported-composition`                                      |
+| Forget or retire cleanup writes to a stream on another owner     | `checkpoint` | `unsupported-composition`                                      |
+| An output append fails                                           | `process`    | `storage-failure`, `output-busy` or `invalid-output`, by cause |
+| The checkpoint store’s load function lacks the transaction owner | `checkpoint` | `unsupported-composition`                                      |
+| Another writer saved the record after the runner loaded it       | `checkpoint` | `token-conflict`                                               |
+| The SQL transaction fails                                        | `checkpoint` | `storage-failure`                                              |
 
 In each case the transaction rolls back, with the earlier writes of the unit. External calls in the handler, such as HTTP requests, are outside the transaction and run at least once.
 
-`Commit.transaction` requires the `Transaction` service. `Transaction.layer` builds it on a SQL host. A memory host has no `SqlClient`, so it cannot run `Commit.transaction`. On a memory host, use `Commit.checkpoint` for a fold, `Commit.producer` for outputs, and `Commit.atLeastOnce` for `process`. See [Layers](/docs/projections/checkpoints#layers).
+Build `Transaction.layer` and `CheckpointStore.layer` over the same storage layer on either host. For a SQL handler, compose with `Layer.provideMerge` so the storage client is available to the runner. See [Layers](/docs/projections/checkpoints#layers).
 
 ### Prepare
 
@@ -62,7 +64,7 @@ In each case the transaction rolls back, with the earlier writes of the unit. Ex
 
 When the transaction fails, the next pass runs `prepare` again on a new read of the inputs. With the same range, `unit.key` is the same. When new items arrived, the range is longer and `unit.key` changes. Do not use `unit.key` as an idempotency key that must hold across every retry.
 
-Only `Commit.transaction` accepts `prepare`, alone or wrapped by `Commit.withCompensation`. With any other Commit, the constructor throws a `RangeError` with the message `prepare requires Commit.transaction`.
+`Commit.transaction` accepts `prepare`, including inside a compensation wrapper. An unsupported commit throws `RangeError` with `prepare requires Commit.transaction`.
 
 ## `producer`
 
@@ -106,7 +108,7 @@ export const notify = Projection.process({
 });
 ```
 
-The wrapped Commit keeps its name, its guarantee, its pinning and its `prepare` support. The pipe form is `commit.pipe(Commit.withCompensation(f))`. Compensation does not make an external effect atomic with the save. Use it to undo or report an effect after a failed save.
+The wrapped Commit keeps its name, its guarantee, its pinning and its `prepare` support. The pipe form is `commit.pipe(Commit.withCompensation(f))`. A compensated transaction commit with `outputs` is a type error. Compensation does not make an external effect atomic with the save. Use it to undo or report an effect after a failed save.
 
 ## Custom Commits
 
@@ -213,7 +215,7 @@ const declaration = Projection.fold({
 });
 ```
 
-`Commit.make` infers the result and the required services from `apply` and `load`. The bucket Commit requires `Bucket`, not `CheckpointStore`. When a Commit provides services to the handler, as `Commit.transaction` provides `SqlClient`, write the `Result`, `Provides` and `Requires` type arguments.
+`Commit.make` infers the result and the required services from `apply` and `load`. The bucket Commit requires `Bucket`, not `CheckpointStore`. When a Commit provides services to the handler, write the `Result`, `Provides` and `Requires` type arguments.
 
 The subpath `@streamsy/projection/checkpoint` exports the parts for storage authors. `recordKey(key)` gives the storage key of a record, as the bucket Commit uses it. To build a `CheckpointStore` Layer for another store, implement an [`EncodedStore`](/docs/reference/projection/checkpoint-store#encodedstore) and pass it to [`fromStore`](/docs/reference/projection/checkpoint-store#fromstore). Both shipped Layers use `fromStore`.
 

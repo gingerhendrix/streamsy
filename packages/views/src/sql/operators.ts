@@ -20,7 +20,7 @@ import {
 import { checkData, type DataFault } from "./data-fault.ts";
 import { findArrangement, joinKeys, type Program } from "./planner.ts";
 import { difference, type Delta, type Deltas, type Runtime } from "./runtime.ts";
-import type { Accumulator, Entry, Store } from "./store.ts";
+import type { Accumulator, Entry, Store } from "../store.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-known-value-widening -- Mutable aggregate fields and sums use the IR's open dictionary contract; Expression results are checked at the operator boundary. */
 
