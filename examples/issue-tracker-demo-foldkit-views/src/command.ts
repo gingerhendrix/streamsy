@@ -1,3 +1,4 @@
+import { ZERO_OFFSET } from "@streamsy/core";
 import { SecureRandom } from "effect/crypto";
 import { Clipboard } from "@effect/platform-browser";
 import { DateTime, Duration, Effect, Option, Schema } from "effect";
@@ -112,7 +113,10 @@ export const SendWrite = Command.define("SendWrite", {
       const response = yield* client.execute(writeRequest(workspaceId, pending));
 
       if (response.status < 300) {
-        const { awaitOffset } = yield* HttpClientResponse.schemaBodyJson(Written)(response);
+        // The server accepted the write. Without a readable offset, stop waiting for it.
+        const { awaitOffset } = yield* HttpClientResponse.schemaBodyJson(Written)(response).pipe(
+          Effect.orElseSucceed(() => ({ awaitOffset: ZERO_OFFSET })),
+        );
 
         return Message.SucceededSendWrite({ txid: pending.txid, awaitOffset });
       }
