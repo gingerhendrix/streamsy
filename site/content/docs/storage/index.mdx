@@ -160,7 +160,7 @@ const provided: Effect.Effect<unknown, unknown, never> = program.pipe(Effect.pro
 - One mutation or transaction writes to one owner only.
 - A group checks that its stream templates do not overlap only among its own streams. Put every stream that one server serves in one group.
 
-For projections, the owner decides where outputs and checkpoints can live. `Commit.transaction` and `Commit.ownerTransaction` require every output on their transaction owner. `Commit.producer` can write to an existing output on another owner. See [Several backends](/docs/projections/checkpoints#several-backends).
+For projections, the owner decides where outputs and checkpoints can live. `Commit.transaction` requires every output on its transaction owner. `Commit.producer` can write to an existing output on another owner. See [Several backends](/docs/projections/checkpoints#several-backends).
 
 ## Already have a server
 

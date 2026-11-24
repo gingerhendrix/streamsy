@@ -149,7 +149,7 @@ Declaration-time checks:
 
 | Member          | Result                                    | Behavior                                                                                                                                   |
 | --------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `at(params)`    | Effect of the reader, with `CircuitError` | Opens a binding in `Scope`. Requires `ViewBackend`, `OwnerTransaction`, `CheckpointStore`, and the input State services                    |
+| `at(params)`    | Effect of the reader, with `CircuitError` | Opens a binding in `Scope`. Requires `ViewBackend`, `Transaction`, `CheckpointStore`, and the input State services                         |
 | `rows(name)`    | `Effect<LiveSnapshot<Row>>`               | Reads the latest committed snapshot                                                                                                        |
 | `changes(name)` | `Stream<LiveSnapshot<Row>, CircuitError>` | Emits snapshots on subscription, on committed output changes, and when catch-up succeeds. Slow subscribers can skip intermediate snapshots |
 | `caughtUp`      | `Effect<void, CircuitError>`              | Waits for the initial input tails. A failed startup check can fail this Effect while the follower continues                                |
@@ -312,11 +312,11 @@ Methods available on `TypedExpression<T>` depend on `T`:
 
 `ViewBackend` is an opaque Effect service. Supply it through a layer.
 
-| Layer                         | Provides                                             | Requires              | Layer error                            |
-| ----------------------------- | ---------------------------------------------------- | --------------------- | -------------------------------------- |
-| `ViewBackend.layerSql`        | `ViewBackend`                                        | `SqlClient.SqlClient` | `ViewFault` for an unsupported dialect |
-| `ViewBackend.layerMemory`     | `ViewBackend`                                        | `CommitBoundary`      | `never`                                |
-| `ViewBackend.layerMemoryHost` | `ViewBackend`, `CheckpointStore`, `OwnerTransaction` | `never`               | `never`                                |
+| Layer                         | Provides                                        | Requires              | Layer error                            |
+| ----------------------------- | ----------------------------------------------- | --------------------- | -------------------------------------- |
+| `ViewBackend.layerSql`        | `ViewBackend`                                   | `SqlClient.SqlClient` | `ViewFault` for an unsupported dialect |
+| `ViewBackend.layerMemory`     | `ViewBackend`                                   | `CommitBoundary`      | `never`                                |
+| `ViewBackend.layerMemoryHost` | `ViewBackend`, `CheckpointStore`, `Transaction` | `never`               | `never`                                |
 
 `layerSql` uses the storage owner's `SqlClient`. Run `View.migrate` with that client before running the circuit. If the transaction for that client is absent, the fault message is `The Views SQL client is outside the storage owner's transaction`.
 
@@ -421,4 +421,4 @@ type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
 
 ### `CircuitBinding` and `CircuitDeclaration`
 
-`CircuitDeclaration<C, V, O, HE, HR>` extends `@streamsy/projection`'s `Declaration<C, CircuitBinding<V, O>, HE, HR>`. Calling `declaration.at(params)` returns a `CircuitBinding<V, O>` that `Projection.pass`, `Projection.run`, `Projection.follow`, and `Projection.forget` accept. `Projection.attach`, `ProjectionWakeup.attach`, and `Projection.retire` accept the `CircuitDeclaration`. The binding uses `Commit.OwnerCommit<void | WakeAt, CheckpointStore | OwnerTransaction | ViewBackend>`. Its handler requires `ViewBackend` and the output State services.
+`CircuitDeclaration<C, V, O, HE, HR>` extends `@streamsy/projection`'s `Declaration<C, CircuitBinding<V, O>, HE, HR>`. Calling `declaration.at(params)` returns a `CircuitBinding<V, O>` that `Projection.pass`, `Projection.run`, `Projection.follow`, and `Projection.forget` accept. `Projection.attach`, `ProjectionWakeup.attach`, and `Projection.retire` accept the `CircuitDeclaration`. The binding uses `Commit.TransactionCommit<void | WakeAt, CheckpointStore | Transaction | ViewBackend>`. Its handler requires `ViewBackend` and the output State services.

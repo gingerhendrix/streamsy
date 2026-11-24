@@ -515,8 +515,8 @@ units within that binding run in order.
 
 Keep `concurrency` below the pool size: each `Commit.transaction` unit holds one
 pooled connection for its whole handler. Both server drivers default to 10 connections;
-leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the
-provided `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
+leave a connection for reads, appends and runner storage operations. Inside the handler, run all SQL on the storage
+owner’s `SqlClient` in the handler's fiber. `sql.reserve` or a fiber without the
 handler's transaction context waits forever on SQLite, and on a pool once every
 connection holds a transaction. Appending to a shared output last keeps its row
 lock short: units serialize from that append until commit. Units that lock streams

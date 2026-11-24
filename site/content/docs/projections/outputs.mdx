@@ -69,13 +69,12 @@ export const tripled = Projection.emit({
 | `Streamsy.json`  | Items of the stream's schema                                                      |
 | `Streamsy.state` | Durable State row changes and State controls. See [State outputs](#state-outputs) |
 
-An output projection has no default Commit. Set `commit` to `Commit.producer`, `Commit.transaction`, `Commit.ownerTransaction`, or a custom Commit. See [Commits](/docs/projections/commits).
+An output projection has no default Commit. Set `commit` to `Commit.producer`, `Commit.transaction` or a custom Commit. See [Commits](/docs/projections/commits).
 
-| Commit                    | Outputs                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Commit.producer`         | Appends each output with a producer position, so a retry writes nothing twice. Works on any host |
-| `Commit.transaction`      | Appends the outputs in the SQL transaction of the checkpoint. Needs a SQL host                   |
-| `Commit.ownerTransaction` | Appends the outputs in the checkpoint owner’s transaction. Works on memory and SQL hosts         |
+| Commit               | Outputs                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
+| `Commit.producer`    | Appends each output with a producer position, so a retry writes nothing twice. Works on any host |
+| `Commit.transaction` | Appends the outputs in the checkpoint owner’s transaction on a memory or SQL host                |
 
 ## Generation-addressed outputs
 
@@ -112,7 +111,7 @@ const pinned = Doubled.at({ user: "u1", rev: 2 });
 
 Both addresses for `doubled` in the example are `doubled/u1/g/2`. Choose a deterministic route codec that encodes each generation you use to a distinct segment and decodes it back to the same value. A codec that encodes two numbers identically, or a custom route that ignores the parameter, can send two generations to one address. A value the route cannot encode fails when you bind it.
 
-- `Commit.transaction` and `Commit.ownerTransaction` create wrapped outputs with fixed addresses, including wrapped `accepted`, inside the first unit's transaction before the handler. An existing stream must have compatible create options and start empty and open. Creation rolls back if the unit fails. Later units use the existing streams.
+- `Commit.transaction` creates wrapped outputs with fixed addresses, including wrapped `accepted`, inside the first unit's transaction before the handler. An existing stream must have compatible create options and start empty and open. Creation rolls back if the unit fails. Later units use the existing streams.
 - `Commit.producer` creates a missing wrapped stream on the checkpoint owner when an unpinned unit has items for that stream. Before the first pin for an output, an open head at the initial offset passes the check. The head exposes no fork metadata, so an empty fork can pass that check. A pinned retry uses its saved producer position.
 - These built-in output commits report a failed first-write check as non-retryable `invalid-output`. Use one writer per derived stream by default. An empty stream can pass the check for multiple writers, and producer writers can race between checking and appending. Use `{ shared: true }` only when you intend to share a stream and coordinate which data each writer owns. This option skips the empty-stream check. A replay can append duplicate items or fold over existing rows. Ordinary stream write and create rules still apply.
 - These commits need a unit before they can create an output. Call `Projection.createOutputs(bound)` when a pinned reader needs to see an empty stream early or when a producer output lives on another owner. It creates each wrapped stream through its own service, including wrapped `accepted`. Repeating the call succeeds for compatible existing streams. Creation across owners can succeed for some streams before another fails.
@@ -120,7 +119,7 @@ Both addresses for `doubled` in the example are `doubled/u1/g/2`. Choose a deter
 
 After the final unit for a gone input commits, the runner forgets the checkpoint and marks any route records forgotten. On replay, the empty-and-open check rejects populated exclusive outputs and wrapped accepted streams with non-retryable `invalid-output`. A routed stream is checked when the handler first opens it. Raise `generation` to replay into fresh streams. See [Forget](/docs/projections/checkpoints#forget).
 
-On Cloudflare, use `Placement.byRoute` and choose the same Durable Object as the checkpoint for each wrapped route written by `Commit.transaction` or `Commit.ownerTransaction`. For example, a placement rule for `Doubled` can use `owner: ({ user }) => user` when that is the checkpoint owner. Leave the generation out of the placement key so each generation reaches that object. The default `Placement.byStream()` uses the entire path, so it sends different generations to different objects.
+On Cloudflare, use `Placement.byRoute` and choose the same Durable Object as the checkpoint for each wrapped route written by `Commit.transaction`. For example, a placement rule for `Doubled` can use `owner: ({ user }) => user` when that is the checkpoint owner. Leave the generation out of the placement key so each generation reaches that object. The default `Placement.byStream()` uses the entire path, so it sends different generations to different objects.
 
 A `StateTable` over a wrapped State output indexes each stream independently. Bind the table with the same generation parameter as the pinned reader. A `FoldByKey` handler uses the bound output's address to choose its table rows.
 
@@ -253,13 +252,13 @@ These rules apply to `Commit.producer`:
 - It can write to outputs on other storage than its checkpoint. It creates a missing output only on its checkpoint's storage. A missing output elsewhere fails with phase `pin` and reason `invalid-output`.
 - A closed or gone output fails with phase `pin` and reason `invalid-output`.
 - An output whose producer state has a higher epoch fails with phase `pin` and reason `stale-epoch`. A newer generation wrote to it.
-- The outputs do not commit atomically with each other or with the checkpoint. A reader can see the items of one output before the items of another. To commit same-owner writes and outputs together, use `Commit.transaction` or `Commit.ownerTransaction`.
+- The outputs do not commit atomically with each other or with the checkpoint. A reader can see the items of one output before the items of another. To commit same-owner writes and outputs together, use `Commit.transaction`.
 
 A Commit controls one projection. To combine SQL writes with outputs that commit on their own, chain two projections through a stream. A producer projection can declare several outputs.
 
 ## Transaction outputs
 
-With `Commit.transaction` or `Commit.ownerTransaction`, output appends commit with the checkpoint and its value in the owner’s transaction. The appends carry no producer position. `Commit.transaction` supplies the SQL host’s `SqlClient`. On a SQL host using `Commit.ownerTransaction`, a handler that uses SQL must use the storage owner’s client for its statements to join the transaction.
+With `Commit.transaction`, output appends commit with the checkpoint and its value in the owner’s transaction. The appends carry no producer position. SQL handlers read the storage owner’s `SqlClient` from context so their statements join the transaction.
 
 - Every output must use the transaction owner’s storage. Before it runs the handler, the Commit checks each output and fails with phase `load` and reason `unsupported-composition` for an output on other storage.
 - Create ordinary outputs before the first write. The Commit creates [generation-addressed outputs](#generation-addressed-outputs) in the first unit. A write to a missing or closed output fails with phase `process` and reason `invalid-output`. A busy output uses `output-busy`, and storage or transport faults use `storage-failure`. Each failure rolls back the transaction.

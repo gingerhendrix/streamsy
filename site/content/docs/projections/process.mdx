@@ -34,8 +34,7 @@ convert to a non-negative safe integer; fractional, negative or unsafe times thr
 `RangeError`. Returning nothing clears the timer. Ordinary return values are
 discarded as before.
 
-Timers support `Commit.atLeastOnce`, `Commit.transaction`, and
-`Commit.ownerTransaction`, including compensation wrappers. The compiler rejects a typed wake request
+Timers support `Commit.atLeastOnce` and `Commit.transaction`, including compensation wrappers. The compiler rejects a typed wake request
 paired with a custom `Commit<void>`. Custom timer Commits are not supported in this
 release. The context has no timer member.
 
@@ -75,7 +74,7 @@ still run after every input has closed. A due unit contributes no `accepted` row
 Use the recorded `unit.due` to decide what is due. Reading `Clock` is useful for a
 late policy, but must not change which effects a pinned retry repeats. The unit
 key includes the recorded due time, and `Commit.atLeastOnce` pins that time with
-the ranges. `Commit.transaction` and `Commit.ownerTransaction` save the next timer
+the ranges. `Commit.transaction` saves the next timer
 with the handler's same-owner writes and checkpoint. A failed transaction rolls them all back.
 
 `Projection.run`, `pass` and `follow` make a due unit only when they run at or after
@@ -100,7 +99,7 @@ time leaves the mark due immediately and can run the handler at pass speed.
 
 ## SQL tables
 
-With `Commit.transaction`, the handler runs inside the SQL transaction that saves the checkpoint. The Commit provides the transaction's `SqlClient`, so the rows and the new offsets commit together or roll back together.
+With `Commit.transaction`, the handler runs inside the SQL transaction that saves the checkpoint. Read `SqlClient` from the handler context. Use `Layer.provideMerge` at the host so the storage owner’s client is available to the runner. With that client, the rows and the new offsets commit or roll back together.
 
 ```ts
 // @filename: streams.ts
@@ -165,7 +164,7 @@ An append that the handler makes to a stream on the same storage commits with th
 
 ## Declared outputs
 
-With `Commit.transaction` or `Commit.ownerTransaction`, a `process` declaration can list `outputs`. Each output is a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each declaration takes a subset of `params` after Projection supplies the generation and any routed parameters. The handler writes the outputs through the addresses or routed handles in `context.outputs`.
+With `Commit.transaction`, a `process` declaration can list `outputs`. Each output is a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each declaration takes a subset of `params` after Projection supplies the generation and any routed parameters. The handler writes the outputs through the addresses or routed handles in `context.outputs`.
 
 ```ts
 // @filename: streams.ts
@@ -200,7 +199,7 @@ const copyTotals = Projection.process({
 - The appends commit with the checkpoint, or roll back with it.
 - The Commit does not create the outputs. Create each output first, or create it in the handler.
 - `prepare` gets the same addresses in its `context.outputs`.
-- `outputs` with `Commit.atLeastOnce` or a compensated owner commit is a type error.
+- `outputs` with `Commit.atLeastOnce` or a compensated transaction commit is a type error.
 
 [`FoldByKey.process`](/docs/projections/fold-by-key) builds a handler of this shape, which folds rows of a State stream.
 
@@ -208,7 +207,7 @@ const copyTotals = Projection.process({
 
 `prepare(batch, unit)` runs before the transaction opens. Use it for work that must not hold the transaction open, such as a slow read from another system. Its result reaches `process` as `context.prepared`. When the declaration lists `outputs`, `prepare` also gets `{ outputs }` as its third argument.
 
-- `prepare` supports either transaction commit, including a compensation wrapper. With an unsupported commit, `Projection.process` throws `RangeError` with `prepare requires Commit.transaction or Commit.ownerTransaction`.
+- `prepare` supports `Commit.transaction`, including a compensation wrapper. With an unsupported commit, `Projection.process` throws `RangeError` with `prepare requires Commit.transaction`.
 - `prepare` runs at least once for each unit. A retry runs it again. It must not make effects that a second run would repeat.
 - When `prepare` fails, the run fails with its error and the transaction does not open.
 - The runner's caller provides the services that `prepare` needs.

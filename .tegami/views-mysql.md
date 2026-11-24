@@ -6,7 +6,7 @@ packages:
 ## Views runs on MySQL
 
 Set up a MySQL `SqlClient` with `SqlStorage`. Provide `CheckpointStore.layer`,
-`OwnerTransaction.layer`, and `ViewBackend.layerSql` over that storage layer.
+`Transaction.layer`, and `ViewBackend.layerSql` over that storage layer.
 Install `@streamsy/storage` at the same version as
 `@streamsy/views` for the MySQL transaction isolation used by Views.
 Run `View.migrate(sql)` at host startup before running Views circuits.

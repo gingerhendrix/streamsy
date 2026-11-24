@@ -140,7 +140,7 @@ Two details matter here:
 
 ### Worker
 
-The worker is a `Projection.process` declaration with `accepted: Accepted` and `commit: Commit.transaction`. Inside `process`, yielding `SqlClient.SqlClient` gives you the SQLite connection already open for the checkpoint transaction:
+The worker is a `Projection.process` declaration with `accepted: Accepted` and `commit: Commit.transaction`. Inside `process`, yield `SqlClient.SqlClient` to read the storage owner’s client from context. Its statements use the same transaction as the checkpoint.
 
 ```ts title="src/app.ts"
 export const perform = Projection.process({
@@ -232,7 +232,7 @@ const flow = Effect.gen(function* () {
 
 - **Bound the deduplication state.** The `requested` fold stores every caller key in one JSON array. That is fine for a small demo, but a long-lived service needs a retention policy (or a lookup table) so the fold state does not grow unboundedly. Also note that caller keys identify the _original_ request: reusing a key with different `text` keeps the first request.
 - **Receipts track input progress, not business outcomes.** An `Accepted` row only confirms that the worker has processed `Commands` through a given offset. Several commands processed in one batch produce a single accepted row, and a command that the worker explicitly rejected still advances the accepted offset. Store per-command business results in a result table or a dedicated output stream.
-- **External side effects need destination idempotency.** `Commit.transaction` makes local SQL writes atomic with the checkpoint and accepted receipt, in this worker. The supported commits for `accepted` are `Commit.transaction`, `Commit.ownerTransaction`, and `Commit.producer`. If your worker calls an external API, pass the caller key as an idempotency key to the destination and record an explicit result fact. See the [Effects guide](/docs/projections/effects).
+- **External side effects need destination idempotency.** `Commit.transaction` makes local SQL writes atomic with the checkpoint and accepted receipt, in this worker. The supported commits for `accepted` are `Commit.transaction` and `Commit.producer`. If your worker calls an external API, pass the caller key as an idempotency key to the destination and record an explicit result fact. See the [Effects guide](/docs/projections/effects).
 - **Avoid re-scanning old receipts on long-lived callers.** By default, `Streamsy.awaitWake` reads `Accepted` from the beginning of the stream (`-1`). In a busy system, pass a saved wake cursor as the fourth argument (`{ from: savedCursor }`) so callers only inspect newly arrived receipts.
 - **Keep persistent storage and initialize tables up front.** Replace the temporary directory in `src/host.ts` with a persistent SQLite path, and create your application tables and streams before attaching background runners.
 

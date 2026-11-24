@@ -134,7 +134,7 @@ For a long-lived process, attach with `Projection.attach(shopViews, { durable: t
 
 ## Durable Object host
 
-Use `DurableObjectStorage.layer` with the object's full `storage`. Provide `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql`, and call `View.migrate(sql)` at startup. If the host also runs a `StateTable`, use `Transaction.layer` in place of `OwnerTransaction.layer` and call `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
+Use `DurableObjectStorage.layer` with the object's full `storage`. Provide `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql`, and call `View.migrate(sql)` at startup. If the host runs a `StateTable`, also call `StateTable.migrate(sql)`. Run the bound circuit with `Projection.run`, or attach it through `ProjectionWakeup.attach` in the normal Durable Object alarm host. No alternate view runtime or SQL dialect is needed.
 
 The local workerd proof is `test/circuit/workerd.test.ts`, with its worker in `test/circuit/support/worker.ts`. It uses miniflare and never deploys. It runs the same proof as Bun, through real State appends, projection checkpoints and output StateTables. The proof compares gold orders, customer totals, per-customer top 3 and order lineage against the full-recompute oracle after each unit. It also checks a no-op unit, a shared `txid` on every emitted change and a generation-2 lineage replay.
 
@@ -145,7 +145,7 @@ bun run --cwd packages/views test:workerd
 
 ## MySQL host
 
-Build `SqlStorage.layer` over a MySQL `SqlClient` from `@effect/sql-mysql2`. Use `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql` over storage. Run `View.migrate(sql)` with the storage client before starting any circuits. Concurrent hosts can migrate the same database. Assign one writer to each binding.
+Build `SqlStorage.layer` over a MySQL `SqlClient` from `@effect/sql-mysql2`. Use `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over storage. Run `View.migrate(sql)` with the storage client before starting any circuits. Concurrent hosts can migrate the same database. Assign one writer to each binding.
 
 Install `@streamsy/storage` at the same version as `@streamsy/views` and keep the storage boundary's default `READ COMMITTED` isolation. Tests covered MySQL 8.4.11 only. See [Run on MySQL](https://streamsy.dev/docs/views/mysql) for the host configuration and database limits.
 

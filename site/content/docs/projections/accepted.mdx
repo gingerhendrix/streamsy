@@ -36,7 +36,7 @@ export const totals = Projection.fold({
 });
 ```
 
-`accepted` supports `Commit.transaction`, `Commit.ownerTransaction`, and `Commit.producer`, including compensation wrappers. The declaration still throws `accepted requires Commit.transaction or Commit.producer` for an unsupported commit. A fold that publishes accepted offsets must set a supported commit explicitly. Adding `accepted` leaves the default commit in place.
+`accepted` supports `Commit.transaction` and `Commit.producer`, including compensation wrappers. The declaration still throws `accepted requires Commit.transaction or Commit.producer` for an unsupported commit. A fold that publishes accepted offsets must set a supported commit explicitly. Adding `accepted` leaves the default commit in place.
 
 With `Commit.transaction`, the row, checkpoint, and transactional state commit together on one owner. Create the accepted stream before running the projection. With `Commit.producer`, the append is effectively once: it can precede checkpoint settlement, and retrying a failed settlement does not duplicate the row. A missing accepted stream on the checkpoint's owner is created by the producer; an accepted stream on another owner must already exist.
 

@@ -6,7 +6,7 @@ packages:
 ## Views runs on Postgres
 
 Set up a Postgres `SqlClient` with `SqlStorage`. Provide `CheckpointStore.layer`,
-`OwnerTransaction.layer`, and `ViewBackend.layerSql` over that storage layer.
+`Transaction.layer`, and `ViewBackend.layerSql` over that storage layer.
 Run `View.migrate(sql)` at host
 startup before running Views circuits. Concurrent hosts can run the migration
 against the same database.

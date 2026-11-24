@@ -11,14 +11,14 @@ The storage schema requires MySQL 8.0.17 or later for the `utf8mb4_0900_bin` col
 
 If you are opening an existing database, check the [SQL storage migration instructions](/docs/reference/storage/sql-storage#sqlstoragelayer) before you start the host.
 
-Build `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerSql` over storage. Pass the storage layer's `SqlClient` to `View.migrate(sql)` at startup, before running or attaching a circuit.
+Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over storage. Pass the storage layer's `SqlClient` to `View.migrate(sql)` at startup, before running or attaching a circuit.
 
 ```ts no-twoslash
 import { Effect, Layer, Redacted } from "effect";
 import { SqlClient } from "effect/sql";
 import { MysqlClient } from "@effect/sql-mysql2";
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, OwnerTransaction, Projection } from "@streamsy/projection";
+import { CheckpointStore, Transaction, Projection } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { View, ViewBackend } from "@streamsy/views";
 import { Orders, ShopViews, shopCircuit } from "./streams.ts";
@@ -28,11 +28,9 @@ export const runShop = (databaseUrl: string, shopId: string) => {
   const storage = SqlStorage.layer(Streamsy.group(Orders, ShopViews)).pipe(
     Layer.provideMerge(client),
   );
-  const host = Layer.mergeAll(
-    CheckpointStore.layer,
-    OwnerTransaction.layer,
-    ViewBackend.layerSql,
-  ).pipe(Layer.provideMerge(storage));
+  const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
+    Layer.provideMerge(storage),
+  );
 
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

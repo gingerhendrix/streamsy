@@ -15,7 +15,7 @@ The worker is a `Projection.process` declaration with `commit: Commit.transactio
 
 An accepted row is a receipt for **input progress**. It is keyed by source stream id and holds the accepted offset; it is not a separate business result for every command. One unit can accept several commands with one row. Put business outcomes in a result table or result stream. A worker that records a rejection and returns successfully has also accepted that request.
 
-`accepted` requires `Commit.transaction`, `Commit.ownerTransaction`, or `Commit.producer`. For an external effect, use the [effects pattern](/docs/projections/effects) with destination idempotency, then record an explicit result fact. An input receipt alone cannot make an external call atomic with a checkpoint.
+`accepted` requires `Commit.transaction` or `Commit.producer`. For an external effect, use the [effects pattern](/docs/projections/effects) with destination idempotency, then record an explicit result fact. An input receipt alone cannot make an external call atomic with a checkpoint.
 
 ## Wake the worker
 

@@ -7,7 +7,7 @@ Use `ViewBackend.layerMemory` when your application already owns streams with `M
 
 ## Use an existing memory owner
 
-Build `CheckpointStore.layer`, `OwnerTransaction.layer`, and `ViewBackend.layerMemory` over one `MemoryStorage.layer`. The circuit's operator state, checkpoints, and outputs share that owner's transaction.
+Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over one `MemoryStorage.layer`. The circuit's operator state, checkpoints, and outputs share that owner's transaction.
 
 ```ts
 // @filename: streams.ts
@@ -16,13 +16,13 @@ export * from "./views-shop-streams.ts";
 // ---cut---
 import { Layer } from "effect";
 import { MemoryStorage, Streamsy } from "@streamsy/core";
-import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { ViewBackend } from "@streamsy/views";
 import { Orders, ShopViews } from "./streams.ts";
 
 export const host = Layer.mergeAll(
   CheckpointStore.layer,
-  OwnerTransaction.layer,
+  Transaction.layer,
   ViewBackend.layerMemory,
 ).pipe(Layer.provideMerge(MemoryStorage.layer(Streamsy.group(Orders, ShopViews))));
 ```

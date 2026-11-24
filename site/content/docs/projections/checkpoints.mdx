@@ -19,17 +19,15 @@ The runner does not detect a codec change that keeps the content type. Declare a
 
 `CheckpointStore` holds the records. `Transaction` gives `Commit.transaction` its SQL client and its transaction. Three Layers build them:
 
-| Layer                         | Provides                          | Requires                                           |
-| ----------------------------- | --------------------------------- | -------------------------------------------------- |
-| `CheckpointStore.layer`       | `CheckpointStore`                 | The `CommitBoundary` of a local storage host       |
-| `Transaction.layer`           | `Transaction`, `OwnerTransaction` | The `CommitBoundary` and `SqlClient` of a SQL host |
-| `CheckpointStore.layerMemory` | `CheckpointStore`                 | Nothing                                            |
+| Layer                         | Provides          | Requires                                     |
+| ----------------------------- | ----------------- | -------------------------------------------- |
+| `CheckpointStore.layer`       | `CheckpointStore` | The `CommitBoundary` of a local storage host |
+| `Transaction.layer`           | `Transaction`     | The `CommitBoundary` of a memory or SQL host |
+| `CheckpointStore.layerMemory` | `CheckpointStore` | Nothing                                      |
 
 `CheckpointStore.layer` stores the records on the storage owner of the streams. Every local storage host provides that owner: `MemoryStorage.layer`, `BunStorage.layer`, `DurableObjectStorage.layer` and `SqlStorage.layer`. A record write then commits in the same transaction as the stream writes of that owner. With this Layer, `Commit.producer` creates a missing output on the owner.
 
-For `Commit.ownerTransaction`, provide `OwnerTransaction.layer` and `CheckpointStore.layer` over the same memory or SQL storage layer. See [OwnerTransaction](/docs/reference/projection/commit#ownertransaction).
-
-On a SQL host, `Transaction.layer` supplies both transaction services for `Commit.transaction` and `Commit.ownerTransaction`.
+For `Commit.transaction`, provide `Transaction.layer` and `CheckpointStore.layer` over the same memory or SQL storage layer. The checkpoint store's `load` function must carry the storage owner's identity on every unit. Keep the storage owner's `SqlClient` available on SQL hosts that run SQL handlers. See [Transaction](/docs/reference/projection/commit#transaction).
 
 ```ts
 // @filename: streams.ts
@@ -111,7 +109,7 @@ Use `Projection.perGeneration(route, param)` on each derived output and on `acce
 
 Raise `generation` in the same deployment that adds the wrapper or otherwise changes the output addresses. A checkpoint tracks the input addresses but does not store the output addresses. A transaction with an existing checkpoint skips first-unit creation. A producer can start writing to a new address from the current checkpoint instead of replaying the input from the start.
 
-An unwrapped output keeps the same address when you raise `generation`. `Commit.producer`, `Commit.transaction`, and `Commit.ownerTransaction` append the replay after the existing items. For `Commit.producer`, the first append starts a higher epoch for the same producer id. A later append from an older epoch for that id fails with `stale-epoch`. Transaction appends carry no producer position. To rebuild an unwrapped output from empty, move its address or delete the stream before you start the upgraded process. Attach can start replay at startup.
+An unwrapped output keeps the same address when you raise `generation`. `Commit.producer` and `Commit.transaction` append the replay after the existing items. For `Commit.producer`, the first append starts a higher epoch for the same producer id. A later append from an older epoch for that id fails with `stale-epoch`. Transaction appends carry no producer position. To rebuild an unwrapped output from empty, move its address or delete the stream before you start the upgraded process. Attach can start replay at startup.
 
 ### Migrate a declaration that set `version`
 
@@ -148,15 +146,15 @@ After forgetting a live checkpoint, the next run starts at zero offsets. Handler
 
 MySQL supports listing. A legacy hashed route key in the listing range makes listing unsupported for that binding. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 
-| Projection kind                                                         | Next run at the same generation                                                                                                                                                 |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fold with no outputs                                                    | Rebuilds from its initial state.                                                                                                                                                |
-| `FoldByKey` into an existing State stream                               | Folds the input history over the existing rows. A counter that adds each input again doubles.                                                                                   |
-| Unwrapped output with `Commit.producer`                                 | Restarts at producer sequence `0` in the same epoch. A stream that retains the producer position answers `Duplicate` for sequences it already accepted and drops those appends. |
-| Unwrapped output with `Commit.transaction` or `Commit.ownerTransaction` | Appends the replayed items after the existing items.                                                                                                                            |
-| Exclusive fixed `perGeneration` output                                  | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
-| Routed output                                                           | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
-| Views circuit                                                           | Starts with an empty operator namespace. An output fault rolls back the unit.                                                                                                   |
+| Projection kind                            | Next run at the same generation                                                                                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fold with no outputs                       | Rebuilds from its initial state.                                                                                                                                                |
+| `FoldByKey` into an existing State stream  | Folds the input history over the existing rows. A counter that adds each input again doubles.                                                                                   |
+| Unwrapped output with `Commit.producer`    | Restarts at producer sequence `0` in the same epoch. A stream that retains the producer position answers `Duplicate` for sequences it already accepted and drops those appends. |
+| Unwrapped output with `Commit.transaction` | Appends the replayed items after the existing items.                                                                                                                            |
+| Exclusive fixed `perGeneration` output     | The first-write check fails with non-retryable `invalid-output` if the stream is populated or closed.                                                                           |
+| Routed output                              | Checks each forgotten stream again on first open. A populated or closed stream fails with non-retryable `invalid-output`.                                                       |
+| Views circuit                              | Starts with an empty operator namespace. An output fault rolls back the unit.                                                                                                   |
 
 ## Retire a generation
 
@@ -202,7 +200,7 @@ Routed retirement also fails with `unsupported-composition` if the MySQL listing
 
 For a binding forgotten under 0.13.0, the old `forget` deleted its route records. To locate those streams, use the storage owner's stream inventory and match ids with the output route's `parse` and the binding's params and generation.
 
-With `Commit.transaction` or `Commit.ownerTransaction`, the tombstone and cleanup commit together on the checkpoint owner. With `Commit.producer`, the tombstone commits first, and a cleanup failure can leave some streams in place. Retry the same call to finish cleanup, including after a retryable `output-busy` fault. A Commit or checkpoint store without a retirement hook fails with `unsupported-composition`.
+With `Commit.transaction`, the tombstone and cleanup commit together on the checkpoint owner. With `Commit.producer`, the tombstone commits first, and a cleanup failure can leave some streams in place. Retry the same call to finish cleanup, including after a retryable `output-busy` fault. A Commit or checkpoint store without a retirement hook fails with `unsupported-composition`.
 
 An unpinned producer unit can finish its handler, but its pin cannot commit after the tombstone. If retirement lands between the checkpoint recheck and creation of a missing wrapped stream, the unit can leave an empty stream. Run retirement again to remove it. A unit pinned before retirement can append to a stream that is still open, including a shared or unwrapped stream. The tombstone rejects its final checkpoint write.
 
@@ -214,7 +212,7 @@ Registry marks are keyed by projection id and params. A stale runner can stop th
 
 A projection can read its inputs from any storage, including a remote Layer. Where its outputs can live depends on the Commit:
 
-- `Commit.transaction` and `Commit.ownerTransaction` require every declared output on the transaction owner.
+- `Commit.transaction` requires every declared output on the transaction owner.
 - `Commit.producer` accepts an output on another owner when that stream already exists.
 
 To write to sinks with different guarantees, use one projection for each sink.

@@ -116,13 +116,7 @@ A runner, `Projection.attach` and `ProjectionWakeup.attach` take the declaration
 import type { Effect, Schema } from "effect";
 import type { SqlClient, SqlError } from "effect/sql";
 import type { StreamAddress, Streamsy } from "@streamsy/core";
-import type {
-  Commit,
-  ProjectionFault,
-  Slices,
-  StateTable,
-  Transaction,
-} from "@streamsy/projection";
+import type { Commit, ProjectionFault, Slices, StateTable } from "@streamsy/projection";
 import { Workspace } from "./notes-streams.ts";
 import { same } from "./reference-check.ts";
 // ---cut-end---
@@ -162,14 +156,14 @@ interface Bound<C extends StreamAddress.Collections, R> {
     SqlClient.SqlClient | C[K]["schema"]["DecodingServices"]
   >;
   readonly offset: () => Effect.Effect<string, SqlError.SqlError, SqlClient.SqlClient>;
-  readonly sync: () => Effect.Effect<void, ProjectionFault, Transaction | R>;
+  readonly sync: () => Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R>;
   // The members that make it a bound projection.
   readonly inputs: { readonly state: Streamsy.Address<string, R> };
   readonly accepted?: Streamsy.Address<Streamsy.WakeEvent, R>;
   readonly commit: typeof Commit.transaction;
   readonly process: (
     batch: Slices<{ readonly state: Streamsy.Address<string, R> }>,
-  ) => Effect.Effect<void, ProjectionFault, Transaction | R>;
+  ) => Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R>;
 }
 // ---cut-after---
 type C0 = typeof Workspace.collections;
@@ -188,7 +182,7 @@ same<Bound<C0, Workspace>, StateTable.Bound<C0, Workspace>>(true);
 
 Each read takes `offset` first and then the rows, so the rows reflect at least `offset`. Each read decodes the stored values with the collection schema and fails with a `SchemaError` when a value does not decode. `list` fails with a `ProjectionFault` with phase `load` and reason `invalid-options` when `limit` is not a positive safe integer.
 
-`sync` deletes the rows of the stream when the head is past the tail. The reads need `SqlClient`. `sync` needs `Transaction` and the service of the State stream. `sync` fails only with a `ProjectionFault`:
+`sync` deletes the rows of the stream when the head is past the tail. The reads need `SqlClient`. `sync` needs the storage owner’s `SqlClient` and the service of the State stream. `sync` fails only with a `ProjectionFault`:
 
 | Cause                                                            | `phase`   | `reason`              |
 | ---------------------------------------------------------------- | --------- | --------------------- |
@@ -223,13 +217,14 @@ same<typeof migrate, typeof StateTable.migrate>(true);
 ```ts
 // ---cut-start---
 import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
 import type { StreamAddress } from "@streamsy/core";
 import { StateTable, type ProjectionFault, type Transaction } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function rebuild<C extends StreamAddress.Collections, R>(
   table: StateTable.Bound<C, R>,
-): Effect.Effect<void, ProjectionFault, R | Transaction>;
+): Effect.Effect<void, ProjectionFault, R | Transaction | SqlClient.SqlClient>;
 // ---cut-after---
 same<typeof rebuild, typeof StateTable.rebuild>(true);
 ```
@@ -241,13 +236,14 @@ same<typeof rebuild, typeof StateTable.rebuild>(true);
 ```ts
 // ---cut-start---
 import type { Effect } from "effect";
+import type { SqlClient } from "effect/sql";
 import type { StreamAddress } from "@streamsy/core";
 import { StateTable, type ProjectionFault, type Transaction } from "@streamsy/projection";
 import { same } from "./reference-check.ts";
 // ---cut-end---
 declare function clear<C extends StreamAddress.Collections, R>(
   table: StateTable.Bound<C, R>,
-): Effect.Effect<void, ProjectionFault, Transaction>;
+): Effect.Effect<void, ProjectionFault, Transaction | SqlClient.SqlClient>;
 // ---cut-after---
 same<typeof clear, typeof StateTable.clear>(true);
 ```
@@ -414,7 +410,7 @@ same<Flat<Parameters<WithoutRecords>[1]>, Flat<Parameters<RealWithoutRecords>[1]
 same<ReturnType<WithoutRecords>, ReturnType<RealWithoutRecords>>(true);
 ```
 
-`process` builds the `process` handler of a `Projection.process` declaration on a SQL host. Use `Commit.transaction` to supply the handler’s `SqlClient`, or `Commit.ownerTransaction` with the same client supplied by the host. Both need `Transaction` for the State table’s `sync`. The declaration must list the State stream of `table` in `outputs`, under the key `spec.output`. The handler writes one collection, `spec.collection`.
+`process` builds the `process` handler of a `Projection.process` declaration on a SQL host. Use `Commit.transaction` with the storage owner’s `SqlClient` available in context. The handler and the State table’s `sync` both read the client from context. The declaration must list the State stream of `table` in `outputs`, under the key `spec.output`. The handler writes one collection, `spec.collection`.
 
 | Field        | Meaning                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -439,7 +435,6 @@ import type {
   InputMap,
   ProjectionFault,
   Slices,
-  Transaction,
   Unit,
 } from "@streamsy/projection";
 import { Notes, Workspace } from "./notes-streams.ts";
@@ -472,7 +467,6 @@ type Handler<
   | R
   | TR
   | SqlClient.SqlClient
-  | Transaction
   | StreamAddress.CollectionsDecodingServices<C>
   | StreamAddress.CollectionsEncodingServices<C>
 >;

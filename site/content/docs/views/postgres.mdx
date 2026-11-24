@@ -12,7 +12,7 @@ import { Effect, Layer, Redacted } from "effect";
 import { SqlClient } from "effect/sql";
 import { PgClient } from "@effect/sql-pg";
 import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, OwnerTransaction, Projection } from "@streamsy/projection";
+import { CheckpointStore, Transaction, Projection } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { View, ViewBackend } from "@streamsy/views";
 import { Orders, ShopViews, shopCircuit } from "./streams.ts";
@@ -22,11 +22,9 @@ export const runShop = (databaseUrl: string, shopId: string) => {
   const storage = SqlStorage.layer(Streamsy.group(Orders, ShopViews)).pipe(
     Layer.provideMerge(client),
   );
-  const host = Layer.mergeAll(
-    CheckpointStore.layer,
-    OwnerTransaction.layer,
-    ViewBackend.layerSql,
-  ).pipe(Layer.provideMerge(storage));
+  const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
+    Layer.provideMerge(storage),
+  );
 
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

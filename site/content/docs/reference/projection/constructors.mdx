@@ -29,13 +29,13 @@ The signatures use types that have no exported name, such as `Common`, `Addresse
 
 Every constructor takes the fields of `Common`:
 
-| Field        | Meaning                                                                                                                                                                                                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`         | The projection name. It is part of the checkpoint key                                                                                                                                                                          |
-| `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                                                                                                       |
-| `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                                                                                            |
-| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                                                                                                      |
-| `accepted`   | Optional wake class, with or without `Projection.perGeneration`, for accepted input offsets. Requires `Commit.transaction`, `Commit.ownerTransaction`, or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
+| Field        | Meaning                                                                                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | The projection name. It is part of the checkpoint key                                                                                                                                              |
+| `generation` | The checkpoint generation. The default is `1`. A new generation has no checkpoint, so it reads each input from the start                                                                           |
+| `params`     | The param codecs, by name. Use `{}` for a projection with no params                                                                                                                                |
+| `inputs`     | The input streams, by name: stream declarations, fixed addresses, or both                                                                                                                          |
+| `accepted`   | Optional wake class, with or without `Projection.perGeneration`, for accepted input offsets. Requires `Commit.transaction` or `Commit.producer`. See [Accepted stream](/docs/projections/accepted) |
 
 A defined `version` option throws `RangeError` at declaration time. [Migrate a declaration that set `version`](/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
@@ -45,7 +45,7 @@ Each stream declaration in `inputs`, `outputs`, or `accepted` must declare a sub
 
 Use `Projection.perGeneration(route, generationParam, { routeBy: ["workspace", "date"] })` when a single binding writes to several routes. Each name in `routeBy` must be a distinct route parameter supplied by the handler. The generation parameter comes from the declaration and the remaining route parameters come from the binding with matching decoded types.
 
-Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction` or `Commit.ownerTransaction`. Both commits have cleanup variants that also support routed outputs. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
+Routed outputs are exclusively owned by their generation. Declare them in `Projection.process` with `Commit.transaction`. Its cleanup variant also supports routed outputs. In the handler, `outputs[name].open(routeParams)` returns the stream address and creates the stream on first use. The first open requires an empty, open stream. Opening the stream, registering ownership, appending changes and saving the checkpoint can all commit in the same transaction. Open handles inside `process`, since `prepare` runs before the transaction.
 
 A live route record is the ownership proof. On later opens, Projection trusts the record and returns the address without checking the stream again. Removing or recreating a routed stream outside Projection is unsupported. To recover, raise `generation`, rebuild, and retire the old generation.
 
@@ -344,7 +344,7 @@ same<
 `fold` declares a projection that folds each entry of a unit into one state value. Each local input entry has `entry.offset`, the storage cursor just after that item; reading from it resumes after the entry. HTTP input entries omit it. The runner calls the `fold` handler once for each entry, in [`Projection.items`](/docs/reference/projection/runners#projectionitems) order, with the value that the previous call returned. The handler returns the next value, or an Effect of it.
 
 - `state` sets the schema and the initial value. See [`StateDefinition`](/docs/reference/projection/declarations#statedefinition).
-- `commit` is required when `accepted` is set. Use `Commit.transaction`, `Commit.ownerTransaction`, or `Commit.producer`. Otherwise `commit` defaults to `Commit.checkpoint`, which saves the encoded value and input offsets in one compare-and-set write.
+- `commit` is required when `accepted` is set. Use `Commit.transaction` or `Commit.producer`. Otherwise `commit` defaults to `Commit.checkpoint`, which saves the encoded value and input offsets in one compare-and-set write.
 - After each unit, the runner encodes the value with `state.schema`. When the value does not encode, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 - When the runner retries a unit, it calls the handler again for each entry. Keep the handler free of external effects. With `Commit.transaction`, the SQL of the handler commits with the checkpoint.
 
@@ -662,7 +662,17 @@ declare function process<
   HE,
   HR
 >;
-// With `outputs` and an owner commit.
+// A bound transaction commit retains its brand.
+type TransactionBrand = Omit<Commit.TransactionCommit<never, never>, keyof Commit.Commit<never>>;
+type WithTransactionCommit<D extends { readonly at: (...args: never[]) => object }> = Omit<
+  D,
+  "at"
+> & {
+  readonly at: (...args: Parameters<D["at"]>) => ReturnType<D["at"]> & {
+    readonly commit: TransactionBrand;
+  };
+};
+// With `outputs`.
 declare function process<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -679,7 +689,7 @@ declare function process<
   A = void,
 >(
   definition: Common<C, I, W, HE, HR> & {
-    readonly commit: Commit.OwnerCommit<AcceptedResult<TimerResult<A>, W>, Q>;
+    readonly commit: Commit.Commit<AcceptedResult<TimerResult<A>, W>, never, Q> & TransactionBrand;
     readonly outputs: O & OutputsWithin<C, O>;
     readonly prepare?: (
       batch: Slices<Addresses<I>>,
@@ -692,72 +702,29 @@ declare function process<
       context: ProcessContext<Prepared> & OutputsContext<O>,
     ) => Effect.Effect<A, E, R>;
   },
-): OutputDeclaration<
-  C,
-  I,
-  O,
-  E | PE,
-  R,
-  TimerResult<A>,
-  never,
-  Q | PR,
-  never,
-  AcceptedServices<W>,
-  HE,
-  HR
->;
-// With `outputs` and a SQL transaction commit.
-declare function process<
-  C extends StreamRoute.ParamCodecs,
-  I extends Inputs,
-  const O extends RoutedMap,
-  E = never,
-  R = never,
-  Q = never,
-  Prepared = void,
-  PE = never,
-  PR = never,
-  W extends AcceptedOutput | undefined = undefined,
-  HE = never,
-  HR = never,
-  A = void,
->(
-  definition: Common<C, I, W, HE, HR> & {
-    readonly commit: Commit.Commit<AcceptedResult<TimerResult<A>, W>, SqlClient.SqlClient, Q>;
-    readonly outputs: O & OutputsWithin<C, O>;
-    readonly prepare?: (
-      batch: Slices<Addresses<I>>,
-      unit: Unit<StreamRoute.Params<C>>,
-      context: OutputsContext<O>,
-    ) => Effect.Effect<Prepared, PE, PR>;
-    readonly process: (
-      batch: Slices<Addresses<I>>,
-      unit: Unit<StreamRoute.Params<C>>,
-      context: ProcessContext<Prepared> & OutputsContext<O>,
-    ) => Effect.Effect<A, E, R>;
-  },
-): OutputDeclaration<
-  C,
-  I,
-  O,
-  E | PE,
-  R,
-  TimerResult<A>,
-  SqlClient.SqlClient,
-  Q | PR,
-  never,
-  AcceptedServices<W>,
-  HE,
-  HR
+): WithTransactionCommit<
+  OutputDeclaration<
+    C,
+    I,
+    O,
+    E | PE,
+    R,
+    TimerResult<A>,
+    never,
+    Q | PR,
+    never,
+    AcceptedServices<W>,
+    HE,
+    HR
+  >
 >;
 // ---cut-after---
-// Instantiate all three overloads with the same arguments.
+// Instantiate both overloads with the same arguments.
 type Overloads<T> = T extends {
   (definition: infer A1): infer R1;
   (definition: infer A2): infer R2;
-  (definition: infer A3): infer R3;
 }
-  ? readonly [A1, R1, A2, R2, A3, R3]
+  ? readonly [A1, R1, A2, R2]
   : never;
 type Shown = Overloads<typeof process<C0, I0, O0, Oops, Notes, Drafts, number, Error, Workspace>>;
 type Real = Overloads<
@@ -767,16 +734,14 @@ same<Flat<Shown[0]>, Flat<Real[0]>>(true);
 same<Flat<Shown[1]>, Flat<Real[1]>>(true);
 same<Flat<Shown[2]>, Flat<Real[2]>>(true);
 same<Flat<Shown[3]>, Flat<Real[3]>>(true);
-same<Flat<Shown[4]>, Flat<Real[4]>>(true);
-same<Flat<Shown[5]>, Flat<Real[5]>>(true);
 ```
 
 `process` declares a projection that runs an effect for each unit. Local slices carry one storage offset per item in `offsets`, with the last equal to `nextOffset` when non-empty. Non-empty HTTP slices have `offsets` undefined. Every empty slice has `offsets: []`, including skipped inputs and timer-only units. The runner calls the `process` handler once for each unit, with one [`Slice`](/docs/reference/projection/units#slice) for each input. The projection keeps no state. To handle one entry at a time, wrap the handler with [`Projection.each`](/docs/reference/projection/runners#projectioneach).
 
-- `commit` is required. `Commit.transaction` and `Commit.ownerTransaction` run `process` in the checkpoint owner’s transaction. `Commit.atLeastOnce` runs it at least once.
-- `prepare` is optional with either transaction commit, including a compensation wrapper. An unsupported commit throws `RangeError` with `prepare requires Commit.transaction or Commit.ownerTransaction`.
+- `commit` is required. `Commit.transaction` runs `process` in the checkpoint owner’s transaction. `Commit.atLeastOnce` runs it at least once.
+- `prepare` is optional with `Commit.transaction`, including a compensation wrapper. An unsupported commit throws `RangeError` with `prepare requires Commit.transaction`.
 - The commit runs `prepare` before it opens the transaction, and passes its result to `process` as `context.prepared`. A retry of the unit runs `prepare` again.
-- `outputs` is optional. It names the streams that the handler appends to, by name, with the same param rule as `inputs`. `Commit.transaction` and `Commit.ownerTransaction` accept it. An owner commit wrapped with `Commit.withCompensation` is a type error with `outputs`. The Commit checks every output before the handler runs. `prepare` and `process` get the bound addresses as `context.outputs`. The handler writes the outputs. A routed output requires one of the transaction commits. The runtime message is `Routed outputs require Commit.transaction or Commit.ownerTransaction`. See [Declared outputs](/docs/projections/process#declared-outputs).
+- `outputs` is optional. It names the streams that the handler appends to, by name, with the same param rule as `inputs`. `Commit.transaction` accepts it. A transaction commit wrapped with `Commit.withCompensation` is a type error with `outputs`. The Commit checks every output before the handler runs. `prepare` and `process` get the bound addresses as `context.outputs`. The handler writes the outputs. A routed output requires a transaction commit. The runtime message is `Routed outputs require Commit.transaction`. See [Declared outputs](/docs/projections/process#declared-outputs).
 
 ### `Projection.wakeAt`
 
@@ -798,8 +763,7 @@ same<typeof wakeAt, typeof Projection.wakeAt>(true);
 
 Return this request from `process` to replace its recorded wake; returning void
 clears it. The time must convert to non-negative safe integer epoch milliseconds,
-otherwise `wakeAt` throws `RangeError`. Timers support `Commit.atLeastOnce`, `Commit.transaction`, and
-`Commit.ownerTransaction`, including compensation wrappers. A typed wake request does
+otherwise `wakeAt` throws `RangeError`. Timers support `Commit.atLeastOnce` and `Commit.transaction`, including compensation wrappers. A typed wake request does
 not fit a custom `Commit<void>`. Other handler results are discarded. See
 [Timers](/docs/projections/process#timers) for due units and runner timing.
 
@@ -1093,7 +1057,7 @@ same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 
 - `outputs` names the output streams. Each entry can be a stream declaration, a fixed address, or a declaration wrapped with `Projection.perGeneration`. Each output must be a JSON or State stream.
 - The `Emits` object holds an array of items for each output name. A missing name emits nothing. For a name that `outputs` does not declare, the compiler reports an error on `undeclaredOutput`.
-- `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` and `Commit.ownerTransaction` append in the checkpoint owner’s transaction.
+- `commit` is required. `Commit.producer` appends each output with its own producer position. `Commit.transaction` appends in the checkpoint owner’s transaction.
 - `at` throws a `RangeError` when two outputs name the same stream, when an output names an input stream, or when an output is not a JSON or State stream.
 - When the value of an output name is not an array, or a change does not fit its collection, the unit fails with a `ProjectionFault` with phase `process` and reason `invalid-output`.
 
@@ -1414,7 +1378,7 @@ same<Flat<ReturnType<Shown>>, Flat<ReturnType<Real>>>(true);
 
 `mapAccum` declares a projection that keeps a state value and emits output items for each entry. The runner calls the `mapAccum` handler once for each entry, with the state that the previous call returned. The handler returns `[state, emits]`, or an Effect of it.
 
-`state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required. Use `Commit.producer`, `Commit.transaction`, `Commit.ownerTransaction`, or a custom commit that accepts the handler result.
+`state` follows the rules of [`Projection.fold`](#projectionfold), and `outputs` and `emits` follow the rules of [`Projection.emit`](#projectionemit). `commit` is required. Use `Commit.producer`, `Commit.transaction` or a custom commit that accepts the handler result.
 
 ### `Projection.mapAccumBatch`
 
