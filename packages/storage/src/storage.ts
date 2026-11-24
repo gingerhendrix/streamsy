@@ -985,8 +985,12 @@ const makeOwnerRecords = (sql: SqlClient.SqlClient) => {
             "records.list",
             sql<OwnerRecordRow>`SELECT owner_key, owner_value FROM streamsy_owner_records WHERE ${range(prefix)}`,
           ).pipe(
-            Effect.map(
-              Array.map(({ owner_key, owner_value }) => [owner_key, owner_value] as const),
+            // A column with another collation can put other keys in the range.
+            Effect.map((rows) =>
+              Array.map(
+                Array.filter(rows, ({ owner_key }) => owner_key.startsWith(prefix)),
+                ({ owner_key, owner_value }) => [owner_key, owner_value] as const,
+              ),
             ),
           ),
       });

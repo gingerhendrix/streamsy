@@ -115,6 +115,53 @@ for (const server of [sqlDialects.pg, sqlDialects.mysql]) {
   });
 }
 
+const pgUrl = sqlDialects.pg.url;
+
+describe.skipIf(pgUrl === undefined)("pg owner record collations", () => {
+  const icu = "TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US'";
+
+  const list = <A, E>(
+    use: Effect.Effect<A, E, OwnerRecords | SqlClient.SqlClient>,
+    baseUrl: string,
+  ) =>
+    freshDatabase(sqlDialects.pg, baseUrl, icu).pipe(
+      Effect.flatMap((fresh) =>
+        use.pipe(
+          Effect.provide(
+            storageLayer().pipe(Layer.provideMerge(dialectClient(sqlDialects.pg, fresh))),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+  test("lists exact prefixes when the database default is a linguistic collation", async () => {
+    if (pgUrl === undefined) return;
+
+    await Effect.runPromise(list(checkOwnerRecordPrefixes, pgUrl));
+  }, 15_000);
+
+  test("never lists a key outside the prefix on a column with a linguistic collation", async () => {
+    if (pgUrl === undefined) return;
+
+    await Effect.runPromise(
+      list(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const records = yield* OwnerRecords;
+          yield* sql`ALTER TABLE streamsy_owner_records
+ ALTER COLUMN owner_key TYPE TEXT COLLATE "en-US-x-icu"`;
+
+          for (const key of ["a1", "A1", "b1"]) yield* records.write(key, key);
+
+          expect(yield* records.list("a")).toEqual([["a1", "a1"]]);
+        }),
+        pgUrl,
+      ),
+    );
+  }, 15_000);
+});
+
 const unsupported = (count: number) => ({
   operation: OWNER_RECORDS_LIST_UNSUPPORTED,
   retryable: false,

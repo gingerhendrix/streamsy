@@ -131,6 +131,7 @@ const databaseName = () => `streamsy_${crypto.randomUUID().replaceAll("-", "").s
 export const freshDatabase = (
   dialect: SqlDialect,
   baseUrl: string,
+  options = "",
 ): Effect.Effect<string, SqlError.SqlError, Scope.Scope> =>
   Effect.gen(function* () {
     const name = yield* Effect.sync(databaseName);
@@ -140,7 +141,7 @@ export const freshDatabase = (
       SqlClient.SqlClient,
     );
 
-    yield* Effect.acquireRelease(admin.unsafe(`CREATE DATABASE ${name}`), () =>
+    yield* Effect.acquireRelease(admin.unsafe(`CREATE DATABASE ${name} ${options}`), () =>
       admin.unsafe(dialect.dropDatabase(name)).pipe(Effect.ignore),
     );
     const url = new URL(baseUrl);
