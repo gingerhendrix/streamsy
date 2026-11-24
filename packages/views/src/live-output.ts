@@ -65,8 +65,10 @@ export const makeLiveOutputs = <V extends Views>(
     const signal = () => {
       current = undefined;
 
-      // A buffered wake already tells the subscriber to read the latest snapshot.
-      PubSub.publishUnsafe(signals, [undefined]);
+      // publishUnsafe drops the wake when one subscriber holds a full buffer. This slides
+      // instead, and a sliding publish never suspends, so it can run in the commit callback.
+      // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- The commit callback is synchronous, and the publish needs no services.
+      Effect.runSync(PubSub.publish(signals, [undefined]));
     };
 
     const read = () =>

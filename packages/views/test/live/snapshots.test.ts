@@ -2,7 +2,8 @@
 import { expect, it } from "@effect/vitest";
 import { DurableState, MemoryStorage, StorageFault, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { Array, Deferred, Effect, Exit, Fiber, Schedule, Schema, Scope, Stream } from "effect";
-import { View } from "../../src/index.ts";
+import { View, type LiveReader } from "../../src/index.ts";
+import type { Views } from "../../src/live.ts";
 import { customerTotals, customers, orders, Shop } from "../circuit/support/shop.ts";
 import {
   append,
@@ -300,6 +301,105 @@ it.live("retries a read and keeps an unchanged view's row array when the offset 
     const latest = yield* awaitMatch(live.snapshot, ({ offsets }) => offsets[Shop.key] === offset);
     expect(latest.rows.orders).toHaveLength(2);
     expect(latest.rows.filtered).toBe(before.rows.filtered);
+  }).pipe(Effect.provide(liveHost)),
+);
+
+/** A subscriber that holds its first snapshot until `resume`. */
+const stalledSubscriber = <V extends Views>(live: LiveReader<V>) =>
+  Effect.gen(function* () {
+    const stalled = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+
+    const fiber = yield* live.snapshots.pipe(
+      Stream.tap(() =>
+        Deferred.succeed(stalled, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+      ),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+
+    yield* Deferred.await(stalled);
+
+    return { fiber, resume };
+  });
+
+it.live("keeps an active subscriber current and ends both beside a stalled subscriber", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(0);
+    const shop = yield* Shop;
+    const live = yield* liveOrders.at(params);
+    yield* live.caughtUp;
+    const first = yield* live.snapshot;
+    const stalled = yield* stalledSubscriber(live);
+    const received: (typeof first)[] = [];
+
+    const active = yield* live.snapshots.pipe(
+      Stream.runForEach((snapshot) => Effect.sync(() => received.push(snapshot))),
+      Effect.forkScoped,
+    );
+
+    yield* awaitMatch(
+      Effect.sync(() => received.length),
+      (count) => count === 1,
+    );
+
+    for (const total of [1, 2, 3, 4]) {
+      yield* putOrder(total);
+      yield* awaitMatch(
+        Effect.sync(() => received.at(-1)),
+        (snapshot) => snapshot?.rows.orders[0]?.total === total,
+      );
+    }
+
+    yield* shop.append(
+      params,
+      DurableState.changes(Shop.at(params), {}, [
+        DurableState.upsert("order", { orderId: "o1", customerId: "c1", total: 5 }),
+      ]),
+      { close: true },
+    );
+    yield* Fiber.join(active).pipe(Effect.timeout("3 seconds"));
+    const last = yield* live.snapshot;
+    expect(last.rows.orders[0]?.total).toBe(5);
+    expect(received.at(-1)).toBe(last);
+
+    yield* Deferred.succeed(stalled.resume, undefined);
+    expect(yield* Fiber.join(stalled.fiber).pipe(Effect.timeout("3 seconds"))).toEqual([
+      first,
+      last,
+    ]);
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("completes caughtUp beside a stalled subscriber", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const shop = yield* Shop;
+    const letHeadRun = yield* Deferred.make<void>();
+
+    const live = yield* liveOrders.at(params).pipe(
+      Effect.provideService(Shop, {
+        ...shop,
+        wire: {
+          ...shop.wire,
+          head: (id) => Deferred.await(letHeadRun).pipe(Effect.andThen(shop.wire.head(id))),
+        },
+      }),
+    );
+
+    const stalled = yield* stalledSubscriber(live);
+    const ready = yield* live.caughtUp.pipe(Effect.forkScoped({ startImmediately: true }));
+
+    for (const total of [1, 2, 3]) {
+      yield* putOrder(total);
+      yield* awaitMatch(live.snapshot, ({ rows }) => rows.orders[0]?.total === total);
+    }
+
+    yield* Deferred.succeed(letHeadRun, undefined);
+    yield* Fiber.join(ready).pipe(Effect.timeout("3 seconds"));
+    expect((yield* live.snapshot).caughtUp).toBe(true);
+    yield* Deferred.succeed(stalled.resume, undefined);
   }).pipe(Effect.provide(liveHost)),
 );
 
