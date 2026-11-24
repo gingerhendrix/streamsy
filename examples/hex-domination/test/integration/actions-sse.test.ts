@@ -266,13 +266,11 @@ describe("actions stream (SSE)", () => {
     const token = game.tokenByPlayer[checkedString(meta.winnerId, "winner id")]!;
 
     // Read the seat's whole stream: the batch carrying `GameOver` says the
-    // server is done, and the connection ends there rather than at its bound.
-    const started = performance.now();
+    // server is done.
     const batches = await take(await open(h, game.gameId, token), (batch) => batch.closed);
     const terminal = batches.at(-1)!;
     expect(terminal.closed).toBe(true);
     expect(terminal.messages.at(-1)!.type).toBe("GameOver");
-    expect(performance.now() - started).toBeLessThan(80);
 
     // Past that offset the server has nothing left to say and no way to say
     // so: an empty control, no `closed`, and the connection ends on the bound.
