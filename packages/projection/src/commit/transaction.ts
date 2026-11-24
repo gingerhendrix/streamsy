@@ -129,12 +129,15 @@ const removeInTransaction = <R>(
 
       yield* cleanup.pipe(withOwner(tx, "checkpoint"));
 
-      // The cleanup may have deleted rows of a unit that committed since the load.
-      if (checkpoint === "absent" && (yield* checkpointState(loadLatest(store, key))) !== "absent")
+      // The cleanup may have deleted rows of a unit that committed since the load, or have
+      // swallowed an error that aborted the transaction.
+      const latest = yield* checkpointState(loadLatest(store, key));
+
+      if (latest !== (checkpoint === "retired" ? "retired" : "absent"))
         return yield* new ProjectionFault({
           phase: "checkpoint",
           reason: "token-conflict",
-          message: `Record of ${key.id} was created while it was being forgotten. A second writer on the same key is the likely cause. Stop its runners, then forget again.`,
+          message: `Record of ${key.id} changed while it was being forgotten. A second writer on the same key is the likely cause. Stop its runners, then forget again.`,
         });
 
       return yield* Effect.void;

@@ -4,6 +4,7 @@ import {
   Array,
   Cause,
   Context,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -183,6 +184,137 @@ const fixture = (level: (typeof levels)[number], baseUrl: string) =>
       routeState: store.routes!.state(routed.at(tenant), "out", Output.at(route).id),
     };
   });
+
+const swallowing = Commit.transactionWithCleanup(() =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM unit_rows`;
+    yield* sql`DELETE FROM missing_table`;
+  }).pipe(Effect.ignore),
+);
+
+/** A swallowed statement error aborts a Postgres transaction, and its COMMIT then rolls back. */
+export const registerSwallowedCleanup = () => {
+  const { url } = sqlDialects.pg;
+
+  describe.skipIf(url === undefined)("a cleanup that swallows a Postgres error", () => {
+    for (const kind of ["plain", "routed"] as const)
+      for (const state of ["present", "absent", "retired"] as const)
+        test(
+          `${kind}: forget of a binding that is ${state} fails and keeps its rows`,
+          async () => {
+            if (url === undefined) return;
+
+            await Effect.runPromise(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const f = yield* fixture(levels[0], url);
+                  const binding = { ...kinds[kind].at(tenant), commit: swallowing };
+
+                  if (state === "retired")
+                    yield* Projection.retire(kinds[kind], tenant, { generation: 1 }).pipe(
+                      f.on(f.left),
+                    );
+                  else if (state === "present") yield* Projection.run(binding).pipe(f.on(f.left));
+
+                  if (state !== "present") yield* f.sql`INSERT INTO unit_rows (id) VALUES (1)`;
+
+                  const stored = f.store.load(binding).pipe(
+                    Effect.match({
+                      onFailure: ({ reason }) => reason,
+                      onSuccess: (loaded) => loaded,
+                    }),
+                  );
+
+                  const before = yield* stored;
+
+                  expect(
+                    yield* Projection.forget(binding).pipe(f.on(f.left), Effect.flip),
+                  ).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
+                  expect(yield* stored).toEqual(before);
+                  expect(yield* f.rows).toBe(1);
+
+                  if (state === "present" && kind === "routed")
+                    expect(yield* f.routeState).toBe("live");
+                }),
+              ),
+            );
+          },
+          TIMEOUT_MS,
+        );
+  });
+};
+
+/** MySQL rolls back a deadlocked transaction. Its COMMIT still succeeds. */
+export const registerSwallowedDeadlock = () => {
+  const { url } = sqlDialects.mysql;
+
+  describe.skipIf(url === undefined)("a cleanup that swallows a MySQL deadlock", () => {
+    for (const kind of ["plain", "routed"] as const)
+      test(
+        `${kind}: forget of a present binding fails and keeps its checkpoint`,
+        async () => {
+          if (url === undefined) return;
+
+          await Effect.runPromise(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const f = yield* fixture(levels[1], url);
+                const ours = yield* Deferred.make<void>();
+                const theirs = yield* Deferred.make<void>();
+                const right = Context.get(f.right, SqlClient.SqlClient);
+
+                const binding = {
+                  ...kinds[kind].at(tenant),
+                  commit: Commit.transactionWithCleanup(() =>
+                    Effect.gen(function* () {
+                      const sql = yield* SqlClient.SqlClient;
+                      yield* sql`UPDATE unit_locks SET n = 1 WHERE id = 1`;
+                      yield* Deferred.succeed(ours, undefined);
+                      yield* Deferred.await(theirs);
+                      // The other transaction now waits for row 1, and it changed more rows.
+                      yield* Effect.sleep("300 millis");
+                      yield* sql`UPDATE unit_locks SET n = 1 WHERE id = 2`;
+                    }).pipe(Effect.ignore),
+                  ),
+                };
+
+                yield* f.sql`CREATE TABLE unit_locks (id INTEGER NOT NULL PRIMARY KEY, n INTEGER)`;
+
+                for (let id = 1; id <= 50; id++)
+                  yield* f.sql`INSERT INTO unit_locks VALUES (${id}, 0)`;
+
+                yield* Projection.run(binding).pipe(f.on(f.left));
+                const before = yield* f.store.load(binding);
+
+                const other = yield* right
+                  .withTransaction(
+                    Effect.gen(function* () {
+                      yield* right`UPDATE unit_locks SET n = 2 WHERE id > 1`;
+                      yield* Deferred.await(ours);
+                      yield* Deferred.succeed(theirs, undefined);
+                      yield* right`UPDATE unit_locks SET n = 2 WHERE id = 1`;
+                    }),
+                  )
+                  .pipe(Effect.forkScoped);
+
+                const forgotten = yield* Projection.forget(binding).pipe(f.on(f.left), Effect.exit);
+
+                yield* Fiber.join(other);
+                expect(yield* f.store.load(binding)).toEqual(before);
+                expect(Exit.isFailure(forgotten) && Cause.squash(forgotten.cause)).toMatchObject(
+                  tokenConflict,
+                );
+
+                if (kind === "routed") expect(yield* f.routeState).toBe("live");
+              }),
+            ),
+          );
+        },
+        TIMEOUT_MS,
+      );
+  });
+};
 
 /** `forget` and `retire` beside the first unit of a binding on another host. */
 export const registerFirstUnitRaces = () => {

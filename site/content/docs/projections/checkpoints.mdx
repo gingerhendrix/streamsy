@@ -143,7 +143,11 @@ An attached or durable runner stops the binding on such a fault until you call `
 
 Use `Projection.forget(bound)` to discard a binding's progress at its current generation. Stop and drain its runners first, including direct `Projection.pass` calls. The built-in Commits delete the checkpoint, including its offsets and any state in the record. The streams and any retirement tombstone stay in place. A Commit with no `remove` fails with phase `checkpoint` and reason `unsupported-composition`.
 
-With `Commit.transaction` and `Commit.transactionWithCleanup`, a forget that finds no checkpoint checks for one again after its cleanup. If another host has committed the binding's first unit or retired it in between, the forget rolls back and fails with phase `checkpoint` and retryable reason `token-conflict`. Stop that host's runners and forget again. The check also covers a runner's own forget after the final unit for a gone input.
+With `Commit.transaction` and `Commit.transactionWithCleanup`, forget checks the checkpoint again after its cleanup. If another host has committed the binding's first unit or retired it in between, the forget rolls back and fails with phase `checkpoint` and retryable reason `token-conflict`. Stop that host's runners and forget again. The check also covers a runner's own forget after the final unit for a gone input, and the runner runs the binding again after its backoff.
+
+When you call forget inside your own owner transaction, let a fault from it fail that transaction. A nested forget has no savepoint, so a caught fault leaves its deletes in place and your transaction commits them.
+
+A cleanup must also let its SQL errors fail. A caught error can abort the whole transaction. Forget then fails with `storage-failure` on Postgres. After a deadlock on MySQL, which rolls back on the server, it fails with `token-conflict` if it found a checkpoint. Statements that the cleanup runs after the caught deadlock can still take effect.
 
 The check works at the default isolation levels and at MySQL `REPEATABLE READ`. At `REPEATABLE READ` the overlap can instead end in a deadlock. MySQL then rolls back one of the two transactions, and a forget that loses fails with retryable `storage-failure`. At that level the check misses the checkpoint if a legacy hashed key makes its range unlistable. See [MySQL owner record listing](/docs/reference/storage/sql-storage#mysql-owner-record-listing).
 

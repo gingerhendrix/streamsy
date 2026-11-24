@@ -393,6 +393,37 @@ for (const [name, host] of [
         );
       }
 
+      it.effect(`${kind} forget rolls back when its cleanup writes the checkpoint again`, () =>
+        Effect.gen(function* () {
+          yield* seed;
+          const store = yield* CheckpointStore;
+          const records = yield* OwnerRecords;
+          const id = `rewritten-${kind}`;
+          const key = { id, generation, params: {} };
+
+          const bound = declare(
+            id,
+            Effect.gen(function* () {
+              yield* records.write("cleanup", id).pipe(Effect.orDie);
+              yield* store.compareAndSet(key, "0", {
+                identity: { inputs: {} },
+                inputs: {},
+                adapters: {},
+              });
+            }),
+          ).at({});
+
+          yield* Projection.run(bound);
+          const before = yield* store.load(bound);
+          expect(yield* Projection.forget(bound).pipe(Effect.flip)).toMatchObject({
+            phase: "checkpoint",
+            reason: "token-conflict",
+          });
+          expect(yield* store.load(bound)).toEqual(before);
+          expect(yield* records.read("cleanup")).toEqual(Option.none());
+        }),
+      );
+
       it.effect(`${kind} forget and a first unit run one after the other`, () =>
         Effect.gen(function* () {
           yield* seed;
