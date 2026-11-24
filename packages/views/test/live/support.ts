@@ -14,8 +14,6 @@ export const liveOrders = View.live({
   views: { orders },
 });
 
-export const checkpointKey = { id: "live-orders", params, generation: 1 };
-
 export const createShop = Effect.flatMap(Shop, (shop) => shop.create(params));
 
 export const append = (

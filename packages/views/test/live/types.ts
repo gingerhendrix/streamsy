@@ -1,6 +1,5 @@
-import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Effect, Schema, type Scope, type Stream } from "effect";
-import { View, ViewBackend, type CircuitError, type LiveSnapshot } from "../../src/index.ts";
+import { View, type CircuitError, type LiveReader, type LiveSnapshot } from "../../src/index.ts";
 import { customerTotals, orders, Shop, type Order } from "../circuit/support/shop.ts";
 
 const declaration = View.live({
@@ -18,33 +17,34 @@ type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 type Assert<T extends true> = T;
 
-type Reader = Effect.Success<typeof open>;
+type Views = { orders: typeof orders; totals: typeof customerTotals };
+
+type Snapshot = LiveSnapshot<Views>;
 
 export type LiveTypeChecks = [
+  Assert<Same<Effect.Services<typeof open>, Scope.Scope | Shop>>,
+  Assert<Same<Effect.Error<typeof open>, CircuitError>>,
+  Assert<Same<Effect.Success<typeof open>, LiveReader<Views>>>,
+  Assert<Same<LiveReader<Views>["snapshot"], Effect.Effect<Snapshot>>>,
+  Assert<Same<LiveReader<Views>["snapshots"], Stream.Stream<Snapshot, CircuitError>>>,
+  Assert<Same<LiveReader<Views>["caughtUp"], Effect.Effect<void, CircuitError>>>,
+  Assert<Same<Snapshot["rows"]["orders"], ReadonlyArray<typeof Order.Type>>>,
   Assert<
     Same<
-      Effect.Services<typeof open>,
-      Scope.Scope | CheckpointStore | Transaction | ViewBackend | Shop
+      Snapshot["rows"]["totals"],
+      ReadonlyArray<{
+        customerId: string;
+        orders: number;
+        revenue: number;
+        largest: number;
+      }>
     >
   >,
-  Assert<Same<Effect.Error<typeof open>, CircuitError>>,
-  Assert<Same<Reader["caughtUp"], Effect.Effect<void, CircuitError>>>,
 ];
 
-export function read(handle: Reader) {
-  const rows: Effect.Effect<LiveSnapshot<typeof Order.Type>> = handle.rows("orders");
-
-  const totals: Stream.Stream<
-    LiveSnapshot<{ customerId: string; orders: number; revenue: number; largest: number }>,
-    CircuitError
-  > = handle.changes("totals");
-
+export function read({ rows }: Snapshot) {
   // @ts-expect-error names are inferred from the views
-  void handle.rows("missing");
-  // @ts-expect-error each view has its own row type
-  const wrong: Stream.Stream<LiveSnapshot<typeof Order.Type>, CircuitError> = totals;
-
-  return { rows, totals, wrong };
+  return rows.missing;
 }
 
 // @ts-expect-error the Scope and page services are mandatory

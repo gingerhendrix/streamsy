@@ -1,30 +1,28 @@
-import type { StreamAddress, Streamsy } from "@streamsy/core";
-import { enlist, ownerOf } from "@streamsy/core/internal";
+import { MemoryStorage, Offset, Streamsy, type StreamAddress } from "@streamsy/core";
+import { enlist } from "@streamsy/core/internal";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
-  Transaction,
   Projection,
-  ProjectionFault,
   ProjectionRetry,
-  type ProjectionKey,
-  type Slices,
-  type Unit,
+  Transaction,
 } from "@streamsy/projection";
 import {
   Array,
+  Cause,
   Context,
   Effect,
   Exit,
+  Layer,
+  Option,
   Order,
   Predicate,
   Record,
-  Schedule,
-  Scope,
+  type Schedule,
+  type Scope,
   Stream,
 } from "effect";
-import type { Backend } from "./backend.ts";
 import {
   namespaceOf,
   type CircuitError,
@@ -34,20 +32,19 @@ import {
 } from "./circuit.ts";
 import { circuitErrors, normalizeUnit } from "./circuit-engine.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Each scoped reader owns these private output relations.
-import { makeLiveOutputs, type LiveSnapshot } from "./live-output.ts";
+import { makeLiveOutputs } from "./live-output.ts";
 import { compilePlan } from "./relation.ts";
 import { parameterReference } from "./expression.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- makeEngine compiles an inert plan.
-import { makeEngine, type OutputChange } from "./sql/engine.ts";
-import { memoryBackendOf, ViewBackend } from "./view-backend.ts";
-import { ViewFault } from "./view-fault.ts";
+import { makeEngine } from "./sql/engine.ts";
+import { currentBackend, ViewBackend } from "./view-backend.ts";
 import type { Input, Relation } from "./view.ts";
 
 type LiveView = Pick<Relation<unknown>, "expression" | "inputs" | "rowType"> & {
   readonly routing?: never;
 };
 
-type Views = Readonly<Record<string, LiveView>>;
+export type Views = Readonly<Record<string, LiveView>>;
 
 type InputServices<V extends Views> = ReturnType<InputOf<V[keyof V]>["at"]>["stream"]["Identifier"];
 
@@ -57,17 +54,21 @@ type LiveInput<V extends Views> = Omit<Input, "at"> & {
   ) => Streamsy.Address<StreamAddress.CollectionsEvent<Input["collections"]>, InputServices<V>>;
 };
 
-type Name<V> = Extract<keyof V, string>;
+/** The rows of every view and the input offsets committed with them. */
+export interface LiveSnapshot<V extends Views> {
+  readonly rows: {
+    readonly [K in keyof V]: ReadonlyArray<V[K] extends { readonly rowType?: infer A } ? A : never>;
+  };
+  /** Committed offsets indexed by the declared State input's key. */
+  readonly offsets: Readonly<Record<string, Offset>>;
+  /** Whether the reader has reached the input tails captured at startup. */
+  readonly caughtUp: boolean;
+}
 
-type Row<V extends Views, K extends Name<V>> = V[K] extends { readonly rowType?: infer A }
-  ? A
-  : never;
-
-interface LiveReader<V extends Views> {
-  readonly rows: <K extends Name<V>>(name: K) => Effect.Effect<LiveSnapshot<Row<V, K>>>;
-  readonly changes: <K extends Name<V>>(
-    name: K,
-  ) => Stream.Stream<LiveSnapshot<Row<V, K>>, CircuitError>;
+/** A scoped reader's current snapshot and its stream of committed snapshots. */
+export interface LiveReader<V extends Views> {
+  readonly snapshot: Effect.Effect<LiveSnapshot<V>>;
+  readonly snapshots: Stream.Stream<LiveSnapshot<V>, CircuitError>;
   readonly caughtUp: Effect.Effect<void, CircuitError>;
 }
 
@@ -81,86 +82,14 @@ type LiveDefinition<C extends StreamRoute.ParamCodecs, V extends Views> = {
   readonly retry?: Schedule.Schedule<unknown>;
 };
 
-class LiveUnit extends Context.Service<LiveUnit, (changes: readonly OutputChange[]) => void>()(
-  "@streamsy/views/LiveUnit",
-) {}
+const memoryHost = Layer.mergeAll(
+  ViewBackend.layerMemory,
+  CheckpointStore.layer,
+  Transaction.layer,
+).pipe(Layer.provide(MemoryStorage.layer(Streamsy.group())));
 
-type LiveAddresses<V extends Views> = Record<string, ReturnType<LiveInput<V>["at"]>>;
-
-interface PreparedBinding<V extends Views> {
-  readonly binding: LiveBinding<V>;
-  readonly namespace: string;
-}
-
-interface LiveBinding<V extends Views> extends ProjectionKey {
-  readonly inputs: LiveAddresses<V>;
-  readonly state: undefined;
-  readonly commit: Commit.Commit<void, LiveUnit, CheckpointStore | Transaction>;
-  readonly process: (
-    batch: Slices<LiveAddresses<V>>,
-    unit: Unit,
-  ) => Effect.Effect<void, CircuitError, LiveUnit>;
-}
-
-/** Drop heap writes and staged output even if an enclosing owner catches this unit's failure. */
-function liveCommit(
-  backend: Backend,
-  tx: typeof Transaction.Service,
-  stage: (changes: readonly OutputChange[]) => () => void,
-) {
-  return Commit.make<void, LiveUnit, CheckpointStore | Transaction>({
-    ...Commit.transaction,
-    apply: (pending) =>
-      tx
-        .withTransaction(
-          backend.atomic(
-            Effect.gen(function* () {
-              let publish: (() => void) | undefined;
-
-              const discard = () => {
-                publish = undefined;
-              };
-
-              yield* enlist(tx.owner, {
-                onCommit: () => publish?.(),
-                onRollback: discard,
-              }).pipe(Effect.orDie);
-
-              // This declaration has no prepare, accepted stream or outputs.
-              const run = pending.run.pipe(
-                Effect.provideService(LiveUnit, (changes) => {
-                  publish = stage(changes);
-                }),
-              );
-
-              yield* Commit.transaction
-                .apply({ ...pending, run })
-                .pipe(
-                  Effect.onExit((exit) =>
-                    Exit.isFailure(exit) ? Effect.sync(discard) : Effect.void,
-                  ),
-                );
-            }),
-          ),
-        )
-        .pipe(
-          Effect.catchTags({
-            MemoryEnlistFault: Effect.die,
-            SqlError: (cause) =>
-              Effect.fail(
-                new ProjectionFault({
-                  phase: "process",
-                  reason: "storage-failure",
-                  message: "Cannot update live circuit state",
-                  cause,
-                }),
-              ),
-          }),
-        ),
-  });
-}
-
-export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends Views>(
+/** Run views in a scoped follower. Open the reader outside any transaction. */
+export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
   definition: LiveDefinition<C, V>,
 ) {
   const { views, params, id, maxAffectedKeys, retry } = definition;
@@ -196,178 +125,92 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
 
   const engine = Effect.runSync(makeEngine(plans, false, maxAffectedKeys));
 
-  const bind = (
-    values: StreamRoute.Params<C>,
-    backend: Backend,
-    tx: typeof Transaction.Service,
-    stage: (changes: readonly OutputChange[]) => () => void,
-  ): PreparedBinding<V> => {
-    type ProjectionInputs = Parameters<
-      typeof Projection.process<C, Record<string, LiveInput<V>>>
-    >[0]["inputs"];
+  type ProjectionInputs = Parameters<
+    typeof Projection.process<C, Record<string, LiveInput<V>>>
+  >[0]["inputs"];
 
-    // SAFETY: the declaration checks input parameter types and the runtime walk checks their names.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked input map at the Projection boundary.
-    const checkedInputs = inputs as ProjectionInputs;
-
-    const binding = Projection.process<
-      C,
-      Record<string, LiveInput<V>>,
-      CircuitError,
-      LiveUnit,
-      LiveUnit,
-      CheckpointStore | Transaction
-    >({
-      id,
-      params,
-      inputs: checkedInputs,
-      commit: liveCommit(backend, tx, stage),
-      process: (batch, unit) =>
-        Effect.gen(function* () {
-          const publish = yield* LiveUnit;
-
-          const { changes } = yield* normalizeUnit(
-            engine,
-            backend,
-            Effect.succeed(namespace),
-            sources,
-            batch,
-          );
-
-          publish(yield* engine.process(backend, namespace, changes, unit.params));
-        }).pipe(circuitErrors),
-    }).at(values);
-
-    const namespace = namespaceOf(binding);
-
-    return { binding, namespace };
-  };
-
-  return { bind, names, id, retry };
-}
-
-const retryable = (fault: ProjectionFault) => fault.retryable;
-
-/**
- * Run views in a scoped follower and read committed heap snapshots.
- *
- * Close the reader's scope outside a caller-owned owner transaction. Closing
- * inside one stops the follower, but rolling that transaction back retains the
- * checkpoint, heap state and reservation. The same binding cannot be reopened
- * on that owner. Build a fresh memory host to replay it.
- */
-export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
-  definition: LiveDefinition<C, V>,
-) {
-  const plan = prepareLive(definition);
+  // SAFETY: the declaration checks input parameter types and the runtime walk checks their names.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked input map at the Projection boundary.
+  const checkedInputs = inputs as ProjectionInputs;
 
   const at = (
-    params: StreamRoute.Params<C>,
-  ): Effect.Effect<
-    LiveReader<V>,
-    CircuitError,
-    Scope.Scope | CheckpointStore | Transaction | ViewBackend | InputServices<V>
-  > =>
-    Effect.suspend(() => {
-      let lifetime: Scope.Closeable | undefined;
+    values: StreamRoute.Params<C>,
+  ): Effect.Effect<LiveReader<V>, CircuitError, Scope.Scope | InputServices<V>> =>
+    Effect.gen(function* () {
+      const host = yield* Layer.build(Layer.fresh(memoryHost));
+      const backend = yield* currentBackend.pipe(Effect.provideContext(host));
+      const { owner } = Context.get(host, Transaction);
+      const outputs = yield* makeLiveOutputs<V>(names, Record.keys(inputs));
 
-      return Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const memory = memoryBackendOf(yield* ViewBackend);
-
-          if (memory === undefined)
-            return yield* new ViewFault({ message: "View.live requires a memory ViewBackend" });
-
-          const tx = yield* Transaction;
-          const store = yield* CheckpointStore;
-
-          if (memory.owner !== tx.owner || ownerOf(store.load) !== tx.owner)
-            return yield* new ViewFault({
-              message:
-                "View.live requires the memory backend and checkpoint store to share the transaction owner",
-            });
-
-          const outputs = yield* makeLiveOutputs(plan.names);
-          const { binding, namespace } = plan.bind(params, memory.backend, tx, outputs.stage);
-
-          const duplicate = () =>
-            new ViewFault({
-              message: `View.live ${plan.id} is already active for these parameters`,
-            });
-
-          if (memory.live.has(namespace)) return yield* duplicate();
-
-          const checkpoint = yield* restore(store.load(binding));
-
-          if (memory.live.has(namespace)) return yield* duplicate();
-
-          if (checkpoint.token !== "0")
-            return yield* new ViewFault({
-              message: `View.live ${plan.id} requires an unused checkpoint for these parameters`,
-            });
-
-          const scope = yield* Scope.fork(yield* Effect.scope);
-          lifetime = scope;
-          memory.live.add(namespace);
-
-          yield* Scope.addFinalizer(
-            scope,
-            tx
-              .withTransaction(
-                store.remove(binding).pipe(
-                  Effect.andThen(memory.backend.clear(namespace)),
-                  Effect.andThen(
-                    enlist(tx.owner, {
-                      onCommit: () => {
-                        memory.live.delete(namespace);
-                        outputs.close();
-                      },
-                      onRollback: () => {},
-                    }).pipe(Effect.orDie),
-                  ),
-                ),
-              )
-              .pipe(Effect.orDie),
-          );
-
-          const follow = Effect.gen(function* () {
-            const schedule = plan.retry ?? (yield* ProjectionRetry);
-
-            const retryCheck = <A, R>(check: Effect.Effect<A, ProjectionFault, R>) =>
-              check.pipe(
-                Effect.retry({ while: retryable, schedule }),
-                // A finite policy can run out while the follower is still live.
-                // Start another check at the normal catch-up polling cadence.
-                Effect.retry({ while: retryable, schedule: Schedule.spaced("250 millis") }),
-              );
-
-            const catchUp = retryCheck(Projection.tails(binding)).pipe(
-              Effect.flatMap((tails) => retryCheck(Projection.caughtUp(binding, tails))),
-              Effect.matchEffect({
-                onSuccess: () => outputs.finishCatchUp(Exit.void),
-                onFailure: (fault) => outputs.finishCatchUp(Exit.fail(fault)),
-              }),
+      const binding = Projection.process<
+        C,
+        Record<string, LiveInput<V>>,
+        CircuitError,
+        never,
+        never,
+        CheckpointStore | Transaction
+      >({
+        id,
+        params,
+        inputs: checkedInputs,
+        commit: Commit.transaction,
+        process: (batch, unit) =>
+          Effect.gen(function* () {
+            const { changes } = yield* normalizeUnit(
+              engine,
+              backend,
+              Effect.succeed(namespace),
+              sources,
+              batch,
             );
 
-            yield* Effect.all(
-              [Projection.follow(binding, { retry: schedule }).pipe(Stream.runDrain), catchUp],
-              { concurrency: "unbounded", discard: true },
-            );
-          }).pipe(Effect.exit, Effect.flatMap(outputs.finishFollow));
+            const updated = yield* engine.process(backend, namespace, changes, unit.params);
+            const offsets = Record.map(batch, (slice) => Offset.make(slice.nextOffset));
 
-          yield* follow.pipe(Effect.forkIn(scope));
+            yield* enlist(owner, {
+              onCommit: outputs.stage(updated, offsets),
+              onRollback: () => {},
+            });
+          }).pipe(circuitErrors),
+      }).at(values);
 
-          return {
-            rows: <K extends Name<V>>(name: K) => outputs.rows<Row<V, K>>(name),
-            changes: <K extends Name<V>>(name: K) => outputs.changes<Row<V, K>>(name),
-            caughtUp: outputs.caughtUp,
-          } satisfies LiveReader<V>;
-        }),
-      ).pipe(
-        Effect.onInterrupt(() =>
-          lifetime === undefined ? Effect.void : Scope.close(lifetime, Exit.void),
+      const namespace = namespaceOf(binding);
+
+      const follow = Effect.gen(function* () {
+        const schedule = retry ?? (yield* ProjectionRetry);
+
+        const captureTails = Projection.tails(binding).pipe(
+          Effect.retry({ while: (fault) => fault.retryable, schedule }),
+          Effect.flatMap(outputs.captureTails),
+        );
+
+        yield* Effect.all(
+          [Projection.follow(binding, { retry: schedule }).pipe(Stream.runDrain), captureTails],
+          { concurrency: "unbounded", discard: true },
+        );
+      }).pipe(Effect.provideContext(host));
+
+      yield* follow.pipe(
+        Effect.onExit((exit) =>
+          outputs.end(
+            Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause) ? Exit.void : exit,
+          ),
         ),
+        Effect.exit,
+        Effect.forkScoped({ startImmediately: true }),
       );
+
+      const { snapshot, snapshots } = outputs;
+
+      return {
+        snapshot,
+        snapshots,
+        caughtUp: snapshots.pipe(
+          Stream.filter((value) => value.caughtUp),
+          Stream.runHead,
+          Effect.flatMap((value) => (Option.isSome(value) ? Effect.void : Effect.interrupt)),
+        ),
+      };
     });
 
   return { at };

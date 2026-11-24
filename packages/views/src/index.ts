@@ -24,4 +24,4 @@ export type {
   TypedExpression,
 } from "./expression.ts";
 
-export type { LiveSnapshot } from "./live-output.ts";
+export type { LiveReader, LiveSnapshot } from "./live.ts";

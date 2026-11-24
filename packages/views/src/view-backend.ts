@@ -1,6 +1,5 @@
-import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Backend } from "./backend.ts";
@@ -17,34 +16,17 @@ interface Opaque {
 
 const BackendState = Symbol("@streamsy/views/ViewBackend/state");
 
-interface MemoryBackend {
-  readonly backend: Backend;
-  readonly owner: object;
-  readonly live: Set<string>;
-}
-
-interface BackendState {
-  readonly backend: Effect.Effect<Backend, ViewFault>;
-  readonly memory?: MemoryBackend;
-}
-
 class BackendService implements Opaque {
   readonly [BackendTypeId] = true;
-  readonly [BackendState]: BackendState;
+  readonly [BackendState]: Effect.Effect<Backend, ViewFault>;
 
-  constructor(state: BackendState) {
-    this[BackendState] = state;
+  constructor(backend: Effect.Effect<Backend, ViewFault>) {
+    this[BackendState] = backend;
   }
 }
 
-// Different backend layers can still share the owner's checkpoint key space.
-const ownerSlots = new WeakMap<object, Set<string>>();
-
-export const memoryBackendOf = (service: Opaque) =>
-  service instanceof BackendService ? service[BackendState].memory : undefined;
-
 export const makeViewBackend = (backend: Effect.Effect<Backend, ViewFault>): Opaque =>
-  new BackendService({ backend });
+  new BackendService(backend);
 
 export const memoryEnlistFault = (): ViewFault =>
   nonRetryableViewFault(
@@ -80,33 +62,14 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
   /** Store operator state in the heap and join the memory owner's transaction. */
   static readonly layerMemory: Layer.Layer<ViewBackend, never, CommitBoundary> = Layer.effect(
     this,
-    Effect.map(CommitBoundary, (boundary) => {
-      const owner = ownerOf(boundary);
-      const backend = makeMemoryBackend(owner);
-
-      let live = ownerSlots.get(owner);
-
-      if (live === undefined) {
-        live = new Set();
-        ownerSlots.set(owner, live);
-      }
-
-      return new BackendService({
-        backend: Effect.succeed(backend),
-        memory: { backend, owner, live },
-      });
-    }),
+    Effect.map(CommitBoundary, (boundary) =>
+      makeViewBackend(Effect.succeed(makeMemoryBackend(ownerOf(boundary)))),
+    ),
   );
-
-  /** Provide heap operator state and transactions for a host with external inputs. */
-  static readonly layerMemoryHost: Layer.Layer<ViewBackend | CheckpointStore | Transaction> =
-    Layer.mergeAll(ViewBackend.layerMemory, CheckpointStore.layer, Transaction.layer).pipe(
-      Layer.provide(MemoryStorage.layer(Streamsy.group())),
-    );
 }
 
 export const currentBackend = Effect.flatMap(ViewBackend, (service) =>
   service instanceof BackendService
-    ? service[BackendState].backend
+    ? service[BackendState]
     : Effect.die(new TypeError("Expected a Views backend service")),
 );

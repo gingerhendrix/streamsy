@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each page builds its own services at the test entry point. */
 import { it } from "@effect/vitest";
-import { DurableState, Streamsy } from "@streamsy/core";
+import { DurableState, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { RemoteStreams } from "@streamsy/core/remote";
-import { Commit, Projection, ProjectionFault } from "@streamsy/projection";
+import { ProjectionFault } from "@streamsy/projection";
 import {
   Context,
   Deferred,
@@ -18,8 +18,8 @@ import {
 } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { expect } from "vitest";
-import { View, ViewBackend, type LiveSnapshot } from "../../src/index.ts";
-import { orders, Shop, type Order } from "../circuit/support/shop.ts";
+import { View, type LiveSnapshot } from "../../src/index.ts";
+import { orders, Shop } from "../circuit/support/shop.ts";
 import { awaitMatch } from "./support.ts";
 
 const child = Effect.acquireRelease(
@@ -39,11 +39,8 @@ const page = Effect.gen(function* () {
   const { value } = yield* Effect.promise(() => reader.read());
   const baseUrl = new TextDecoder().decode(value).trim();
 
-  return Layer.merge(
-    RemoteStreams.layer(Streamsy.group(Shop), { baseUrl }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-    ),
-    ViewBackend.layerMemoryHost,
+  return RemoteStreams.layer(Streamsy.group(Shop), { baseUrl }).pipe(
+    Layer.provide(FetchHttpClient.layer),
   );
 });
 
@@ -61,21 +58,36 @@ it.live("follows and catches up with a State stream on a real HTTP server", () =
         DurableState.upsert("order", order),
       ]);
 
-      yield* shop.append(params, change);
+      const initial = yield* shop.append(params, change);
 
-      const seen = yield* Deferred.make();
-
-      const binding = Projection.process({
+      const live = yield* View.live({
         id: "remote-state-probe",
         params: Shop.paramCodecs,
-        inputs: { shop: Shop },
-        commit: Commit.transaction,
-        process: ({ shop: slice }) => Deferred.succeed(seen, slice.items).pipe(Effect.asVoid),
+        views: { orders },
       }).at(params);
 
-      yield* Projection.follow(binding).pipe(Stream.runDrain, Effect.forkScoped);
-      yield* Projection.caughtUp(binding).pipe(Effect.timeout("3 seconds"));
-      expect(yield* Deferred.await(seen)).toEqual(change);
+      yield* live.caughtUp;
+      expect(yield* live.snapshot).toEqual({
+        rows: { orders: [order] },
+        offsets: { [Shop.key]: initial.offset },
+        caughtUp: true,
+      });
+
+      const nextOrder = { ...order, total: 11 };
+
+      const next = yield* shop.append(
+        params,
+        DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", nextOrder)]),
+      );
+
+      const snapshots = yield* live.snapshots.pipe(
+        Stream.filter(({ offsets }) => offsets[Shop.key] === next.offset),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout("3 seconds"),
+      );
+
+      expect(snapshots[0]?.rows.orders).toEqual([nextOrder]);
     }).pipe(Effect.provide(host));
   }).pipe(Effect.scoped),
 );
@@ -84,7 +96,7 @@ it.live("replays and follows the same remote State from two independent page lay
   Effect.gen(function* () {
     const host = yield* page;
     const firstPage = yield* Layer.build(host);
-    const secondPage = yield* Layer.build(host);
+    const secondPage = yield* Layer.build(Layer.fresh(host));
     const params = { shop: "two-pages" };
     const order = { orderId: "o1", customerId: "c1", total: 3 };
 
@@ -137,12 +149,12 @@ it.live("replays and follows the same remote State from two independent page lay
     const second = yield* declaration.at(params).pipe(Effect.provideContext(secondPage));
 
     yield* Effect.all([first.caughtUp, second.caughtUp], { concurrency: "unbounded" });
-    expect(yield* first.rows("orders")).toEqual({ rows: [order], caughtUp: true });
-    expect(yield* second.rows("orders")).toEqual({ rows: [order], caughtUp: true });
+    expect((yield* first.snapshot).rows.orders).toEqual([order]);
+    expect((yield* second.snapshot).rows.orders).toEqual([order]);
 
     yield* append(4);
-    yield* awaitMatch(first.rows("orders"), ({ rows }) => rows[0]?.total === 4);
-    yield* awaitMatch(second.rows("orders"), ({ rows }) => rows[0]?.total === 4);
+    yield* awaitMatch(first.snapshot, ({ rows }) => rows.orders[0]?.total === 4);
+    yield* awaitMatch(second.snapshot, ({ rows }) => rows.orders[0]?.total === 4);
 
     yield* awaitMatch(
       Effect.sync(() => waiting),
@@ -152,7 +164,7 @@ it.live("replays and follows the same remote State from two independent page lay
     expect(waiting).toBe(0);
     yield* append(5);
     expect(
-      (yield* awaitMatch(second.rows("orders"), ({ rows }) => rows[0]?.total === 5)).caughtUp,
+      (yield* awaitMatch(second.snapshot, ({ rows }) => rows.orders[0]?.total === 5)).caughtUp,
     ).toBe(true);
   }).pipe(Effect.scoped),
 );
@@ -167,7 +179,8 @@ it.live("recovers from refused HTTP heads and reads, and signals caughtUp once",
       const order = { orderId: "o1", customerId: "c1", total: 10 };
 
       yield* shop.create(params);
-      yield* shop.append(
+
+      const { offset } = yield* shop.append(
         params,
         DurableState.changes(Shop.at(params), {}, [DurableState.upsert("order", order)]),
       );
@@ -202,28 +215,36 @@ it.live("recovers from refused HTTP heads and reads, and signals caughtUp once",
         .at(params)
         .pipe(Scope.provide(scope));
 
-      const updates = yield* Queue.unbounded<LiveSnapshot<typeof Order.Type>>();
+      const updates = yield* Queue.unbounded<LiveSnapshot<{ orders: typeof orders }>>();
 
-      const subscriber = yield* reader.changes("orders").pipe(
+      const subscriber = yield* reader.snapshots.pipe(
         Stream.tap((snapshot) => Queue.offer(updates, snapshot)),
         Stream.runCollect,
         Effect.forkScoped,
       );
 
       const initial = yield* Queue.take(updates);
-      expect(initial).toEqual({ rows: [], caughtUp: false });
+      expect(initial).toEqual({
+        rows: { orders: [] },
+        offsets: { [Shop.key]: ZERO_OFFSET },
+        caughtUp: false,
+      });
       yield* Deferred.succeed(retryRead, undefined);
       const replayed = yield* Queue.take(updates);
-      expect(replayed).toEqual({ rows: [order], caughtUp: false });
-      expect(yield* reader.rows("orders")).toBe(replayed);
+      expect(replayed).toEqual({
+        rows: { orders: [order] },
+        offsets: { [Shop.key]: offset },
+        caughtUp: false,
+      });
+      expect(yield* reader.snapshot).toBe(replayed);
 
       yield* Deferred.succeed(retryHead, undefined);
       yield* reader.caughtUp;
       expect(yield* Deferred.isDone(refusedHead)).toBe(true);
       expect(yield* Deferred.isDone(refusedRead)).toBe(true);
       const ready = yield* Queue.take(updates);
-      expect(ready).toEqual({ rows: [order], caughtUp: true });
-      expect(ready.rows).toBe(replayed.rows);
+      expect(ready).toEqual({ ...replayed, caughtUp: true });
+      expect(ready.rows.orders).toBe(replayed.rows.orders);
 
       yield* Scope.close(scope, Exit.void);
       expect(yield* Fiber.join(subscriber)).toEqual([initial, replayed, ready]);

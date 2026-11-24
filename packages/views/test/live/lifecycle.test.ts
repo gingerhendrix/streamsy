@@ -1,36 +1,26 @@
-/* oxlint-disable effecttsgo/strict-effect-provide -- Each test owns the backend and may instrument one service. */
+/* oxlint-disable effecttsgo/strict-effect-provide -- Each test owns the input and can instrument its wire service. */
 import { expect, it } from "@effect/vitest";
-import { StorageFault, Streamsy } from "@streamsy/core";
-import { attachOwner, ownerOf } from "@streamsy/core/internal";
-import {
-  CheckpointStore,
-  Transaction,
-  ProjectionFault,
-  ProjectionRetry,
-} from "@streamsy/projection";
+import { DurableState, MemoryStorage, StorageFault, Streamsy, ZERO_OFFSET } from "@streamsy/core";
+import { CheckpointStore, ProjectionRetry } from "@streamsy/projection";
 import {
   Cause,
-  Context,
   Clock,
   Deferred,
   Duration,
   Effect,
   Exit,
   Fiber,
-  Layer,
   Schedule,
   Scope,
   Stream,
 } from "effect";
-import { View, ViewBackend, ViewFault } from "../../src/index.ts";
-import { memoryStateOf } from "../../src/memory/backend.ts";
-import { currentBackend } from "../../src/view-backend.ts";
-import { orders, Shop } from "../circuit/support/shop.ts";
+import { View } from "../../src/index.ts";
+import { goldOrders, orders, Shop } from "../circuit/support/shop.ts";
 import { hostFor, sqlite } from "../support/backends.ts";
 import { memoryDump } from "../support/memory.ts";
 import {
+  append,
   awaitMatch,
-  checkpointKey,
   createShop,
   liveHost,
   liveOrders,
@@ -38,187 +28,150 @@ import {
   putOrder,
 } from "./support.ts";
 
-const assertClean = Effect.gen(function* () {
-  const checkpoints = yield* CheckpointStore;
-  const backend = yield* currentBackend;
-  expect(memoryStateOf(backend)?.size).toBe(0);
-  expect((yield* checkpoints.load(checkpointKey)).token).toBe("0");
-});
+const inputHost = MemoryStorage.layer(Streamsy.group(Shop));
 
-it.live("rejects SQL and duplicate readers while allowing different circuits on one backend", () =>
+it.live("replays independently for two readers with the same parameters", () =>
   Effect.gen(function* () {
-    const sqliteHost = hostFor(sqlite, Streamsy.group(Shop));
+    yield* createShop;
+    const { offset } = yield* putOrder(2);
+    const firstScope = yield* Scope.fork(yield* Effect.scope);
+    const first = yield* liveOrders.at(params).pipe(Scope.provide(firstScope));
+    const second = yield* liveOrders.at(params);
 
-    expect(
-      yield* liveOrders.at(params).pipe(Effect.provide(sqliteHost), Effect.flip),
-    ).toBeInstanceOf(ViewFault);
+    yield* first.caughtUp;
+    yield* second.caughtUp;
+    const initial = yield* first.snapshot;
+    expect(initial.offsets[Shop.key]).toBe(offset);
+    expect(yield* second.snapshot).toEqual(initial);
+    expect((yield* second.snapshot).rows.orders).not.toBe(initial.rows.orders);
 
+    yield* Scope.close(firstScope, Exit.void);
+    const next = yield* putOrder(3);
+    yield* awaitMatch(second.snapshot, ({ offsets }) => offsets[Shop.key] === next.offset);
+    expect(yield* first.snapshot).toBe(initial);
+    expect((yield* second.snapshot).rows.orders[0]?.total).toBe(3);
+  }).pipe(Effect.provide(inputHost)),
+);
+
+it.live("builds a fresh memory host even under an ambient memory Views host", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(2);
+    const first = yield* liveOrders.at(params);
+    yield* first.caughtUp;
+    const second = yield* liveOrders.at(params);
+    yield* second.caughtUp;
+
+    expect(yield* second.snapshot).toEqual(yield* first.snapshot);
+    const checkpoints = yield* CheckpointStore;
+    expect((yield* checkpoints.load({ id: "live-orders", params, generation: 1 })).token).toBe("0");
+    expect((yield* memoryDump).integrals).toEqual([]);
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("reads State from an ambient SQL host using private heap state", () =>
+  Effect.gen(function* () {
     yield* createShop;
     yield* putOrder(2);
 
-    const another = View.live({
-      id: "live-filtered",
-      params: Shop.paramCodecs,
-      views: { orders: orders.where((row) => row.total.lt(0)) },
-    });
-
-    const firstScope = yield* Scope.fork(yield* Effect.scope);
-    const first = yield* liveOrders.at(params).pipe(Scope.provide(firstScope));
-    const second = yield* another.at(params);
-
-    expect(yield* liveOrders.at(params).pipe(Effect.flip)).toBeInstanceOf(ViewFault);
-    yield* first.caughtUp;
-    yield* second.caughtUp;
-    expect((yield* first.rows("orders")).rows).toHaveLength(1);
-    expect((yield* second.rows("orders")).rows).toHaveLength(0);
-
-    yield* Scope.close(firstScope, Exit.void);
-    const third = yield* liveOrders.at(params);
-    yield* third.caughtUp;
-    expect((yield* third.rows("orders")).rows).toHaveLength(1);
-    expect((yield* second.rows("orders")).rows).toHaveLength(0);
-  }).pipe(Effect.provide(liveHost)),
+    const reader = yield* liveOrders.at(params);
+    yield* reader.caughtUp;
+    expect((yield* reader.snapshot).rows.orders[0]?.total).toBe(2);
+  }).pipe(Effect.provide(hostFor(sqlite, Streamsy.group(Shop)))),
 );
 
-it.live("shares reader reservations across separate memory backends for the same owner", () =>
+it.live("keeps the last committed rows and offsets when an operator rejects a unit", () =>
   Effect.gen(function* () {
     yield* createShop;
-    const first = yield* ViewBackend;
+    yield* append([
+      DurableState.upsert("customer", { customerId: "c1", name: "Name", tier: "gold" }),
+    ]);
+    yield* putOrder(1);
 
-    const second = Context.get(
-      yield* Layer.build(Layer.fresh(ViewBackend.layerMemory)),
-      ViewBackend,
-    );
+    const definition = {
+      id: "live-operator-fault",
+      params: Shop.paramCodecs,
+      views: { orders, goldOrders },
+    };
 
-    expect(first).not.toBe(second);
+    const live = yield* View.live({ ...definition, maxAffectedKeys: 12 }).at(params);
+    yield* live.caughtUp;
 
-    const scope = yield* Scope.fork(yield* Effect.scope);
-    yield* liveOrders.at(params).pipe(Scope.provide(scope));
+    for (const key of ["o2", "o3", "o4"]) {
+      const { offset } = yield* putOrder(1, key);
+      yield* awaitMatch(live.snapshot, ({ offsets }) => offsets[Shop.key] === offset);
+    }
 
-    // No checkpoint yet, so the second backend must reject using the shared reservation.
-    const store = yield* CheckpointStore;
-    expect((yield* store.load(checkpointKey)).token).toBe("0");
-    expect(
-      yield* liveOrders.at(params).pipe(Effect.provideService(ViewBackend, second), Effect.flip),
-    ).toMatchObject({
-      _tag: "ViewFault",
-      message: "View.live live-orders is already active for these parameters",
+    const initial = yield* live.snapshot;
+    expect(initial.rows.goldOrders).toHaveLength(4);
+
+    const rejected = yield* append([
+      DurableState.upsert("customer", { customerId: "c1", name: "Renamed", tier: "gold" }),
+      DurableState.upsert("order", { orderId: "o1", customerId: "c1", total: 2 }),
+    ]);
+
+    expect(yield* live.snapshots.pipe(Stream.runDrain, Effect.flip)).toMatchObject({
+      _tag: "ViewDataFault",
+      reason: expect.stringContaining("maxAffectedKeys (12) exceeded"),
     });
+    expect(yield* live.snapshot).toBe(initial);
 
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* liveOrders.at(params).pipe(Effect.provideService(ViewBackend, second));
-    yield* reopened.caughtUp;
-  }).pipe(Effect.provide(liveHost)),
+    const replay = yield* View.live(definition).at(params);
+    yield* replay.caughtUp;
+    const latest = yield* replay.snapshot;
+    expect(latest.offsets[Shop.key]).toBe(rejected.offset);
+    expect(latest.rows.orders[0]?.total).toBe(2);
+    expect(latest.rows.goldOrders[0]?.customerName).toBe("Renamed");
+  }).pipe(Effect.provide(inputHost)),
 );
 
 it.live(
-  "returns committed rows while settlement is open, then fails readers with the follower",
+  "interrupts the input read and ends an outside subscription when its reader scope closes",
   () =>
     Effect.gen(function* () {
       yield* createShop;
       yield* putOrder(1);
-      const store = yield* CheckpointStore;
+      const shop = yield* Shop;
       const entered = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-
-      const reject = new ProjectionFault({
-        phase: "checkpoint",
-        reason: "invalid-record",
-        message: "reject staged output",
-      });
-
-      let armed = false;
+      const exited = yield* Deferred.make<void>();
       const scope = yield* Scope.fork(yield* Effect.scope);
 
       const live = yield* liveOrders.at(params).pipe(
         Scope.provide(scope),
-        Effect.provideService(CheckpointStore, {
-          ...store,
-          compareAndSet: (...args) =>
-            armed
-              ? Deferred.succeed(entered, undefined).pipe(
-                  Effect.andThen(Deferred.await(release)),
-                  Effect.andThen(reject),
-                )
-              : store.compareAndSet(...args),
+        Effect.provideService(Shop, {
+          ...shop,
+          wire: {
+            ...shop.wire,
+            read: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(Deferred.succeed(exited, undefined)),
+              ),
+          },
         }),
       );
 
-      yield* live.caughtUp;
-      const before = yield* live.rows("orders");
+      yield* Deferred.await(entered);
       const subscribed = yield* Deferred.make<void>();
 
-      const changes = yield* live.changes("orders").pipe(
-        Stream.runForEach((snapshot) =>
-          Effect.sync(() => expect(snapshot).toBe(before)).pipe(
-            Effect.andThen(Deferred.succeed(subscribed, undefined)),
-          ),
-        ),
-        Effect.flip,
+      const subscription = yield* live.snapshots.pipe(
+        Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+        Stream.runCollect,
         Effect.forkScoped,
       );
 
       yield* Deferred.await(subscribed);
-      armed = true;
-      yield* putOrder(2);
-      yield* Deferred.await(entered);
-      expect(yield* live.rows("orders")).toBe(before);
-      yield* Deferred.succeed(release, undefined);
-      expect(yield* Fiber.join(changes)).toBe(reject);
-      expect(yield* live.caughtUp.pipe(Effect.flip)).toBe(reject);
-      expect(yield* live.changes("orders").pipe(Stream.runHead, Effect.flip)).toBe(reject);
-      expect(yield* live.rows("orders")).toBe(before);
-
+      const initial = yield* live.snapshot;
+      expect(initial.rows.orders).toEqual([]);
       yield* Scope.close(scope, Exit.void);
-      yield* assertClean;
+      expect(yield* Deferred.isDone(exited)).toBe(true);
+      expect(yield* Fiber.join(subscription)).toEqual([initial]);
+      expect(yield* live.snapshots.pipe(Stream.runCollect)).toEqual([initial]);
 
       const replay = yield* liveOrders.at(params);
       yield* replay.caughtUp;
-      expect((yield* replay.rows("orders")).rows[0]?.total).toBe(2);
-    }).pipe(Effect.provide(liveHost)),
-);
-
-it.live("interrupts a unit and ends an outside subscription when its reader scope closes", () =>
-  Effect.gen(function* () {
-    yield* createShop;
-    yield* putOrder(1);
-    const store = yield* CheckpointStore;
-    const entered = yield* Deferred.make<void>();
-    const exited = yield* Deferred.make<void>();
-    const scope = yield* Scope.fork(yield* Effect.scope);
-
-    const live = yield* liveOrders.at(params).pipe(
-      Scope.provide(scope),
-      Effect.provideService(CheckpointStore, {
-        ...store,
-        compareAndSet: () =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(Deferred.succeed(exited, undefined)),
-          ),
-      }),
-    );
-
-    yield* Deferred.await(entered);
-    const subscribed = yield* Deferred.make<void>();
-
-    const subscription = yield* live.changes("orders").pipe(
-      Stream.tap(() => Deferred.succeed(subscribed, undefined)),
-      Stream.runCollect,
-      Effect.forkScoped,
-    );
-
-    yield* Deferred.await(subscribed);
-    expect((yield* live.rows("orders")).rows).toEqual([]);
-    yield* Scope.close(scope, Exit.void);
-    expect(yield* Deferred.isDone(exited)).toBe(true);
-    expect(yield* Fiber.join(subscription)).toEqual([{ rows: [], caughtUp: false }]);
-    yield* assertClean;
-
-    const replay = yield* liveOrders.at(params);
-    yield* replay.caughtUp;
-    expect((yield* replay.rows("orders")).rows).toHaveLength(1);
-  }).pipe(Effect.provide(liveHost)),
+      expect((yield* replay.snapshot).rows.orders).toHaveLength(1);
+    }).pipe(Effect.provide(inputHost)),
 );
 
 it.live("interrupts the input head read when the reader closes before its first unit", () =>
@@ -247,42 +200,11 @@ it.live("interrupts the input head read when the reader closes before its first 
     yield* Deferred.await(entered);
     yield* Scope.close(scope, Exit.void);
     expect(yield* Deferred.isDone(exited)).toBe(true);
-    yield* assertClean;
 
     const replay = yield* liveOrders.at(params);
     yield* replay.caughtUp;
-    expect((yield* replay.rows("orders")).rows).toEqual([]);
-  }).pipe(Effect.provide(liveHost)),
-);
-
-it.live("leaves the caller scope reusable when acquisition itself is interrupted", () =>
-  Effect.gen(function* () {
-    yield* createShop;
-    const scope = yield* Scope.fork(yield* Effect.scope);
-    const store = yield* CheckpointStore;
-    const started = yield* Deferred.make<void>();
-
-    const load: typeof store.load = () =>
-      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
-
-    const acquire = yield* liveOrders.at(params).pipe(
-      Scope.provide(scope),
-      Effect.provideService(CheckpointStore, {
-        ...store,
-        load: attachOwner(load, ownerOf(store.load)),
-      }),
-      Effect.forkScoped,
-    );
-
-    yield* Deferred.await(started);
-    yield* Fiber.interrupt(acquire);
-    yield* assertClean;
-
-    const live = yield* liveOrders.at(params).pipe(Scope.provide(scope));
-    yield* awaitMatch(live.rows("orders"), ({ caughtUp }) => caughtUp);
-    yield* Scope.close(scope, Exit.void);
-    yield* assertClean;
-  }).pipe(Effect.provide(liveHost)),
+    expect((yield* replay.snapshot).rows.orders).toEqual([]);
+  }).pipe(Effect.provide(inputHost)),
 );
 
 const catchUpBackoff = Effect.gen(function* () {
@@ -313,14 +235,15 @@ const catchUpBackoff = Effect.gen(function* () {
           ),
   };
 
-  const open = liveOrders.at(params).pipe(
-    Effect.provideService(Shop, {
-      ...shop,
-      wire: { ...shop.wire, head: () => Effect.fail(offline) },
-    }),
-    Effect.provideService(Clock.Clock, clock),
-    Effect.provideService(ProjectionRetry, Schedule.spaced("1 hour")),
-  );
+  const open = (wire = shop.wire) =>
+    liveOrders.at(params).pipe(
+      Effect.provideService(Shop, {
+        ...shop,
+        wire: { ...wire, head: () => Effect.fail(offline) },
+      }),
+      Effect.provideService(Clock.Clock, clock),
+      Effect.provideService(ProjectionRetry, Schedule.spaced("1 hour")),
+    );
 
   return { open, sleeping, stopped };
 });
@@ -329,22 +252,15 @@ it.live("a fatal follower fault interrupts the catch-up backoff and fails its wa
   Effect.gen(function* () {
     yield* createShop;
     yield* putOrder(1);
-    const store = yield* CheckpointStore;
+    const shop = yield* Shop;
     const { open, sleeping, stopped } = yield* catchUpBackoff;
-    const failUnit = yield* Deferred.make<void>();
+    const failRead = yield* Deferred.make<void>();
+    const fault = new StorageFault({ operation: "read", message: "fatal read", retryable: false });
 
-    const fault = new ProjectionFault({
-      phase: "checkpoint",
-      reason: "invalid-record",
-      message: "the follower cannot settle this unit",
+    const live = yield* open({
+      ...shop.wire,
+      read: () => Deferred.await(failRead).pipe(Effect.andThen(fault)),
     });
-
-    const live = yield* open.pipe(
-      Effect.provideService(CheckpointStore, {
-        ...store,
-        compareAndSet: () => Deferred.await(failUnit).pipe(Effect.andThen(fault)),
-      }),
-    );
 
     yield* Deferred.await(sleeping);
 
@@ -353,12 +269,13 @@ it.live("a fatal follower fault interrupts the catch-up backoff and fails its wa
       Effect.forkScoped({ startImmediately: true }),
     );
 
-    yield* Deferred.succeed(failUnit, undefined);
-    expect(yield* Fiber.join(ready)).toBe(fault);
-    expect(yield* live.changes("orders").pipe(Stream.runDrain, Effect.flip)).toBe(fault);
+    yield* Deferred.succeed(failRead, undefined);
+    const error = yield* Fiber.join(ready);
+    expect(error).toMatchObject({ reason: "storage-failure", cause: fault });
+    expect(yield* live.snapshots.pipe(Stream.runDrain, Effect.flip)).toBe(error);
     expect(yield* Deferred.isDone(stopped)).toBe(true);
-    expect(yield* live.rows("orders")).toEqual({ rows: [], caughtUp: false });
-  }).pipe(Effect.provide(liveHost)),
+    expect((yield* live.snapshot).rows.orders).toEqual([]);
+  }).pipe(Effect.provide(inputHost)),
 );
 
 it.live("scope close interrupts and joins the catch-up backoff", () =>
@@ -366,7 +283,7 @@ it.live("scope close interrupts and joins the catch-up backoff", () =>
     yield* createShop;
     const { open, sleeping, stopped } = yield* catchUpBackoff;
     const scope = yield* Scope.fork(yield* Effect.scope);
-    const live = yield* open.pipe(Scope.provide(scope));
+    const live = yield* open().pipe(Scope.provide(scope));
 
     yield* Deferred.await(sleeping);
     const ready = yield* live.caughtUp.pipe(Effect.forkScoped({ startImmediately: true }));
@@ -375,144 +292,90 @@ it.live("scope close interrupts and joins the catch-up backoff", () =>
     expect(yield* Deferred.isDone(stopped)).toBe(true);
     const exit = yield* Fiber.await(ready);
     expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-    yield* assertClean;
 
     const reopened = yield* liveOrders.at(params);
     yield* reopened.caughtUp;
-  }).pipe(Effect.provide(liveHost)),
+  }).pipe(Effect.provide(inputHost)),
 );
 
-it.live(
-  "rolling back a scope close keeps the checkpoint, heap state and reservation together",
-  () =>
-    Effect.gen(function* () {
-      yield* createShop;
-      yield* putOrder(1);
-      const scope = yield* Scope.fork(yield* Effect.scope);
-      const live = yield* liveOrders.at(params).pipe(Scope.provide(scope));
-      yield* live.caughtUp;
-
-      const owner = yield* Transaction;
-      const store = yield* CheckpointStore;
-      const saved = yield* store.load(checkpointKey);
-      const state = yield* memoryDump;
-      const snapshot = yield* live.rows("orders");
-
-      expect(saved.token).not.toBe("0");
-      expect(state.integrals.length).toBeGreaterThan(0);
-      expect(snapshot.rows).toHaveLength(1);
-      const abort = "rollback the scope close";
-
-      const result = yield* owner
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* Scope.close(scope, Exit.void);
-            yield* assertClean;
-            expect(yield* live.rows("orders")).toBe(snapshot);
-
-            return yield* Effect.fail(abort);
-          }),
-        )
-        .pipe(Effect.flip);
-
-      expect(result).toBe(abort);
-      expect(yield* store.load(checkpointKey)).toEqual(saved);
-      expect(yield* memoryDump).toEqual(state);
-      expect(yield* live.rows("orders")).toBe(snapshot);
-      expect(yield* liveOrders.at(params).pipe(Effect.flip)).toMatchObject({
-        _tag: "ViewFault",
-        message: "View.live live-orders is already active for these parameters",
-      });
-
-      yield* owner.withTransaction(putOrder(2));
-
-      const other = yield* View.live({
-        id: "after-rollback",
-        params: Shop.paramCodecs,
-        views: { orders },
-      }).at(params);
-
-      yield* other.caughtUp;
-      expect((yield* other.rows("orders")).rows[0]?.total).toBe(2);
-      expect(yield* live.rows("orders")).toBe(snapshot);
-      expect(yield* store.load(checkpointKey)).toEqual(saved);
-    }).pipe(Effect.provide(liveHost)),
-);
-
-it.live("a transient poll fault leaves the captured startup tail fixed", () =>
+it.live("captures the startup tail once and catches up before a later write is read", () =>
   Effect.gen(function* () {
     yield* createShop;
-    yield* putOrder(1);
+    const initial = yield* putOrder(1);
     const shop = yield* Shop;
-    const store = yield* CheckpointStore;
-    const pollingFailed = yield* Deferred.make<void>();
-    const retryPoll = yield* Deferred.make<void>();
-    const settlingLaterWrite = yield* Deferred.make<void>();
+    const captured = yield* Deferred.make<void>();
+    const readFirst = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
     let heads = 0;
-    let holdSettlement = false;
 
-    const offline = new StorageFault({
-      operation: "head",
-      message: "the catch-up poll could not verify the tail",
-      retryable: true,
-    });
+    const live = yield* liveOrders.at(params).pipe(
+      Effect.provideService(Shop, {
+        ...shop,
+        wire: {
+          ...shop.wire,
+          head: (id) =>
+            shop.wire.head(id).pipe(
+              Effect.tap(() => Effect.sync(() => heads++)),
+              Effect.tap(() => Deferred.succeed(captured, undefined)),
+            ),
+          read: (id, options) =>
+            options?.offset === ZERO_OFFSET
+              ? shop.wire.read(id, options).pipe(
+                  Effect.tap(() => Deferred.succeed(readFirst, undefined)),
+                  Effect.tap(() => Deferred.await(release)),
+                )
+              : Effect.never,
+        },
+      }),
+    );
 
-    const live = yield* View.live({
-      id: "fixed-start",
-      params: Shop.paramCodecs,
-      views: { orders },
-      retry: Schedule.spaced("10 millis").pipe(
-        Schedule.tap(() =>
-          Deferred.succeed(pollingFailed, undefined).pipe(
-            Effect.andThen(Deferred.await(retryPoll)),
-          ),
-        ),
-      ),
-    })
-      .at(params)
-      .pipe(
-        Effect.provideService(Shop, {
-          ...shop,
-          wire: {
-            ...shop.wire,
-            head: (id) =>
-              Effect.suspend(() => (++heads === 2 ? Effect.fail(offline) : shop.wire.head(id))),
-          },
-        }),
-        Effect.provideService(CheckpointStore, {
-          ...store,
-          compareAndSet: (...args) =>
-            holdSettlement
-              ? Deferred.succeed(settlingLaterWrite, undefined).pipe(Effect.andThen(Effect.never))
-              : store.compareAndSet(...args),
-        }),
-      );
-
-    yield* Deferred.await(pollingFailed);
-    yield* awaitMatch(live.rows("orders"), ({ rows }) => rows[0]?.total === 1);
-    holdSettlement = true;
+    yield* Deferred.await(captured);
+    yield* Deferred.await(readFirst);
     yield* putOrder(2);
-    yield* Deferred.await(settlingLaterWrite);
-
-    yield* Deferred.succeed(retryPoll, undefined);
+    yield* Deferred.succeed(release, undefined);
     yield* live.caughtUp;
-    const snapshot = yield* live.rows("orders");
-    expect(snapshot).toEqual({
-      rows: [{ orderId: "o1", customerId: "c1", total: 1 }],
-      caughtUp: true,
-    });
-  }).pipe(Effect.provide(liveHost)),
+    const snapshot = yield* live.snapshot;
+    expect(snapshot.offsets[Shop.key]).toBe(initial.offset);
+    expect(snapshot.rows.orders[0]?.total).toBe(1);
+    expect(heads).toBe(1);
+  }).pipe(Effect.provide(inputHost)),
 );
 
-it.live("exhausting a finite retry schedule for a head leaves catch-up pending", () =>
+it.live("fails snapshots with a terminal startup HEAD fault", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    yield* putOrder(7);
+    const shop = yield* Shop;
+    const failHead = yield* Deferred.make<void>();
+    const fault = new StorageFault({ operation: "head", message: "fatal head", retryable: false });
+
+    const live = yield* liveOrders.at(params).pipe(
+      Effect.provideService(Shop, {
+        ...shop,
+        wire: { ...shop.wire, head: () => Deferred.await(failHead).pipe(Effect.andThen(fault)) },
+      }),
+    );
+
+    const replayed = yield* awaitMatch(live.snapshot, ({ rows }) => rows.orders.length > 0);
+    expect(replayed.caughtUp).toBe(false);
+    yield* Deferred.succeed(failHead, undefined);
+
+    const error = yield* live.snapshots.pipe(Stream.runDrain, Effect.flip);
+    expect(error).toMatchObject({ reason: "storage-failure", input: Shop.key, cause: fault });
+    expect(yield* live.caughtUp.pipe(Effect.flip)).toBe(error);
+    expect(yield* live.snapshot).toBe(replayed);
+  }).pipe(Effect.provide(inputHost)),
+);
+
+it.live("fails snapshots when a finite retry schedule for HEAD runs out", () =>
   Effect.gen(function* () {
     yield* createShop;
     const shop = yield* Shop;
-    let first = true;
+    let heads = 0;
 
     const offline = new StorageFault({
       operation: "head",
-      message: "one head failed with no scheduled retries",
+      message: "head unavailable",
       retryable: true,
     });
 
@@ -520,7 +383,7 @@ it.live("exhausting a finite retry schedule for a head leaves catch-up pending",
       id: "finite-retry",
       params: Shop.paramCodecs,
       views: { orders },
-      retry: Schedule.recurs(0),
+      retry: Schedule.recurs(1),
     })
       .at(params)
       .pipe(
@@ -528,18 +391,19 @@ it.live("exhausting a finite retry schedule for a head leaves catch-up pending",
           ...shop,
           wire: {
             ...shop.wire,
-            head: (id) =>
+            head: () =>
               Effect.suspend(() => {
-                if (!first) return shop.wire.head(id);
-                first = false;
+                heads++;
 
-                return Effect.fail(offline);
+                return offline;
               }),
           },
         }),
       );
 
-    yield* live.caughtUp.pipe(Effect.timeout("3 seconds"));
-    expect(yield* live.rows("orders")).toEqual({ rows: [], caughtUp: true });
-  }).pipe(Effect.provide(liveHost)),
+    const error = yield* live.snapshots.pipe(Stream.runDrain, Effect.flip);
+    expect(error).toMatchObject({ reason: "storage-failure", cause: offline, retryable: true });
+    expect(yield* live.caughtUp.pipe(Effect.flip)).toBe(error);
+    expect(heads).toBe(2);
+  }).pipe(Effect.provide(inputHost)),
 );

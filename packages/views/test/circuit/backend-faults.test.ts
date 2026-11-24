@@ -7,6 +7,7 @@ import { View, ViewBackend, ViewFault } from "../../src/index.ts";
 import { currentBackend } from "../../src/view-backend.ts";
 import { backendFor, client, hostFor, sqlite } from "../support/backends.ts";
 import { sqlDump } from "../support/layout-dump.ts";
+import { memoryHost } from "../support/memory.ts";
 import {
   editLayout,
   layoutBinding,
@@ -117,7 +118,7 @@ for (const backend of ["second SQL client", "memory on a SQL owner"] as const) {
   );
 }
 
-it.live("layerMemoryHost supplies a shared owner for operator state and checkpoints", () =>
+it.live("a memory circuit host shares an owner for operator state and checkpoints", () =>
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
     const owner = yield* Transaction;
@@ -135,5 +136,5 @@ it.live("layerMemoryHost supplies a shared owner for operator state and checkpoi
     expect(yield* owner.withTransaction(state.load)).toBeUndefined();
     yield* owner.withTransaction(state.save("plan"));
     expect(yield* owner.withTransaction(state.load)).toBe("plan");
-  }).pipe(Effect.provide(ViewBackend.layerMemoryHost)),
+  }).pipe(Effect.provide(memoryHost(layoutGroup))),
 );
