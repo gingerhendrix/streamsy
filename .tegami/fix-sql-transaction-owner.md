@@ -4,8 +4,10 @@ packages:
   "@streamsy/projection": patch
 ---
 
-## Reject nested transactions across SQL owners
+## Give nested SQL clients their own transactions
 
-`CommitBoundary.withTransaction` now raises a defect when nested across different SQL clients. This includes running or retiring a projection on another owner or forgetting it through that owner’s transaction. Previously, those calls could leave writes behind after a rollback. Run the second owner’s transaction after the first finishes.
+`CommitBoundary.withTransaction` now opens a transaction when called inside a boundary on another SQL client. Running, retiring, or forgetting a projection through that client's transaction uses the same rule. An inner failure rolls back the inner transaction. It also rolls back the outer one if the failure escapes the outer body. The inner client commits first, and that commit survives an outer rollback. There is no atomic commit across the two clients. Non-transactional projections can also save their checkpoints inside an outer boundary on another client.
 
-Calls that share a `SqlClient` still join the outer transaction. A lone `Storage.mutate` on another client with no ambient transaction still opens and commits its own transaction. A raw ambient transaction needs a matching `CommitBoundary` on its own client before a storage mutation can write. See [Commit with your own tables](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables).
+Calls on the same client join without a savepoint. With two boundaries on one client, only the outer boundary's hooks and `committed` subscribers see the commit. Use one client per database for nested work. With two clients on one database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wait for a row lock held by the outer transaction.
+
+Durable Object clients share the driver's transaction, so a second client joins the first. Using a second object's storage on one fiber is unsupported. `MemoryStorage` dies when work enters another owner. Keep the transaction body on its calling fiber. A boundary call or mutation inside raw `sql.withTransaction` needs a matching boundary on that client. See [Commit with your own tables](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables).

@@ -180,8 +180,11 @@ same<CommitBoundaryApi, Core.CommitBoundaryApi>(true);
 
 `CommitBoundaryApi` is the service of `CommitBoundary`. Its only member, `withTransaction`, runs `body` in the transaction of the storage owner. Same-owner stream writes commit together. On SQL hosts they commit with application SQL on that owner's client. A failure that escapes `body` rolls back that transaction.
 
-- A nested `withTransaction` on the same owner joins the outer transaction without a savepoint. On SQL hosts, boundaries over a shared `SqlClient` can join. A nested boundary on a different `SqlClient` dies before its body runs. This also applies when a `Commit.transaction` projection unit enters that boundary.
-- A lone `Storage.mutate` on another SQL client with no ambient transaction opens and commits its own transaction. A mutation inside raw `sql.withTransaction` needs a matching boundary on that client.
+- A nested `withTransaction` on the same owner joins the outer transaction without a savepoint. With two boundaries over one SQL client, only the outer boundary's hooks and `committed` subscribers see the commit.
+- On another SQL client, a nested boundary or a lone `Storage.mutate` opens its own transaction. It commits first and survives an outer rollback. This also applies to units run by `Commit.transaction`.
+- Use one client per database for nested work. With two clients on one database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wait for a row lock that the outer transaction holds.
+- Durable Object clients share the driver's transaction, so a second client joins the first. Using a second object's storage on one fiber is unsupported. `MemoryStorage` dies when work enters another owner.
+- A boundary call or mutation inside raw `sql.withTransaction` needs a matching boundary on that client.
 - Keep `body` on the calling fiber. The memory host dies when another fiber writes in the transaction.
 - Do not wait in `body` for a wake that only its own commit publishes. The wake comes after the commit, so the wait never ends.
 

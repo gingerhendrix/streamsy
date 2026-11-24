@@ -92,7 +92,7 @@ The data belongs to that object only. A fork, a mutation, and a `CommitBoundary`
 
 ## Commit with your own tables
 
-Each SQLite Layer provides `CommitBoundary`. `CommitBoundary.withTransaction` runs its body in one SQL transaction. Your SQL statements and every stream mutation in the body commit together, or roll back together.
+Each SQLite Layer provides `CommitBoundary`. `CommitBoundary.withTransaction` runs its body in one SQL transaction. Your SQL statements and stream mutations on that client commit or roll back together.
 
 ```ts
 // @filename: streams.ts
@@ -126,12 +126,14 @@ When another writer appends first, the append fails with `OffsetMismatch`. The f
 These rules apply to the transaction:
 
 - Readers see the owner's changes after its transaction commits. Wakes and attached projections start after that commit. A rollback publishes nothing for that transaction.
-- A nested `withTransaction` on the same `SqlClient` joins the outer transaction without a savepoint. A failure in the inner body rolls back the whole transaction when it leaves the outer body. Entering a boundary on a different `SqlClient` dies before its body runs, including when a projection unit enters that boundary through `Commit.transaction`.
+- A nested `withTransaction` on the same `SqlClient` joins the outer transaction without a savepoint. A failure that escapes the outer body rolls back the transaction. With two boundaries over one client, only the outer boundary's hooks and `committed` subscribers see the commit.
+- On another SQL client, a nested boundary or a lone storage mutation opens its own transaction. It commits first and survives an outer rollback. This also applies to units run by `Commit.transaction`.
+- Use one client per database for nested work. With two clients on one database, SQLite can wait until it reports a busy lock. Postgres or MySQL can wait for a row lock that the outer transaction holds.
+- Durable Object clients share the driver's transaction, so a second client joins the first. Using a second object's storage on one fiber is unsupported.
 - Open the transaction with `withTransaction`, not with `sql.withTransaction`. A stream mutation inside a transaction that `sql.withTransaction` opened dies, and so does a `withTransaction` call inside it.
 - The store retries a busy transaction that it opens for one mutation. It does not retry `withTransaction`. A busy lock fails the call with a `SqlError`, and you decide whether to retry the whole body.
-- One transaction has one owner. A lone storage mutation on a second `SqlClient` with no ambient transaction on that client opens its own transaction. Its commit survives a rollback on the first client.
 
-`MemoryStorage` also provides `CommitBoundary`, so the same program runs in tests without the SQL statements. See [`CommitBoundary`](/docs/reference/core/storage#commitboundary).
+`MemoryStorage` also provides `CommitBoundary`, so the same program runs in tests without the SQL statements. It dies when work enters another owner. See [`CommitBoundary`](/docs/reference/core/storage#commitboundary).
 
 ## Several processes
 
