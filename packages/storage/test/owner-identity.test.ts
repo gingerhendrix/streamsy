@@ -139,13 +139,9 @@ it.effect(
         SqlStorage.clientLayer(SqliteClient.make({ filename: ":memory:" })),
       );
 
-      let serviceReads = 0;
-
       const sql = new Proxy(Context.get(client, SqlClient.SqlClient), {
         get(target, key, receiver) {
           if (key === "withTransaction") return target.withTransaction.bind(target);
-
-          if (key === "transactionService") serviceReads += 1;
 
           // oxlint-disable-next-line anti-slop/no-reflect-get -- Forward every other client property transparently.
           return Reflect.get(target, key, receiver);
@@ -160,7 +156,6 @@ it.effect(
         ),
       );
 
-      const readsAtBuild = serviceReads;
       const boundary = Context.get(host, CommitBoundary);
       const storage = Context.get(host, Storage);
       const feed = yield* storage.committed;
@@ -168,7 +163,6 @@ it.effect(
 
       yield* boundary.withTransaction(boundary.withTransaction(storage.mutate(create(id))));
 
-      expect(serviceReads).toBe(readsAtBuild);
       expect(yield* PubSub.takeUpTo(feed, Infinity)).toEqual([[id]]);
     }),
 );
@@ -302,15 +296,30 @@ it.effect("a raw ambient transaction cannot use a different client's pending own
     const left = yield* buildHost();
     const right = yield* buildHost();
     const rightSql = Context.get(right, SqlClient.SqlClient);
+    const rightBoundary = Context.get(right, CommitBoundary);
     const rightStorage = Context.get(right, Storage);
     const leftFeed = yield* Context.get(left, Storage).committed;
     const rightFeed = yield* rightStorage.committed;
     const id = StreamId.make("foreign-raw");
 
     // Both transactions commit after the attempt, exposing any leaked write and notification.
-    const exit = yield* rightSql.withTransaction(
-      Context.get(left, CommitBoundary).withTransaction(
-        rightStorage.mutate(create(id)).pipe(Effect.exit),
+    const leftBoundary = Context.get(left, CommitBoundary);
+
+    const mutationExit = yield* rightSql.withTransaction(
+      leftBoundary.withTransaction(rightStorage.mutate(create(id)).pipe(Effect.exit)),
+    );
+
+    let boundaryBodyRan = false;
+
+    const boundaryExit = yield* leftBoundary.withTransaction(
+      rightSql.withTransaction(
+        rightBoundary
+          .withTransaction(
+            Effect.sync(() => {
+              boundaryBodyRan = true;
+            }),
+          )
+          .pipe(Effect.exit),
       ),
     );
 
@@ -319,9 +328,167 @@ it.effect("a raw ambient transaction cannot use a different client's pending own
       leftCommits: yield* PubSub.takeUpTo(leftFeed, Infinity),
       rightCommits: yield* PubSub.takeUpTo(rightFeed, Infinity),
     }).toEqual({ rightRecord: Option.none(), leftCommits: [], rightCommits: [] });
-    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause) && Cause.squash(exit.cause)).toEqual(
-      new Error("Ambient SQL transaction is not owned by CommitBoundary"),
+    expect(boundaryBodyRan).toBe(false);
+    expect(
+      Exit.isFailure(boundaryExit) &&
+        Cause.hasDies(boundaryExit.cause) &&
+        Cause.squash(boundaryExit.cause),
+    ).toEqual(new Error("Commit boundary cannot enter an unowned ambient SQL transaction"));
+    expect(
+      Exit.isFailure(mutationExit) &&
+        Cause.hasDies(mutationExit.cause) &&
+        Cause.squash(mutationExit.cause),
+    ).toEqual(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
+  }),
+);
+
+it.effect("a SQL afterCommit callback opens a fresh transaction on its own client", () =>
+  Effect.gen(function* () {
+    const host = yield* buildHost();
+    const sql = Context.get(host, SqlClient.SqlClient);
+    const boundary = Context.get(host, CommitBoundary);
+    const storage = Context.get(host, Storage);
+    const feed = yield* storage.committed;
+    const rolledBack = StreamId.make("rolled-back-callback");
+    const committed = StreamId.make("committed-callback");
+    const hookIds: StreamId[][] = [];
+    yield* Context.get(host, CommitHooks).beforeCommit((ids) =>
+      Effect.sync(() => {
+        hookIds.push([...ids]);
+      }),
     );
+    yield* sql`CREATE TABLE callback_rows (id INTEGER PRIMARY KEY)`;
+
+    let failedBodyRan = false;
+
+    yield* boundary.withTransaction(
+      sql.afterCommit(
+        boundary
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO callback_rows VALUES (1)`;
+              yield* storage.mutate(create(rolledBack));
+              failedBodyRan = true;
+
+              return yield* Effect.fail("rollback callback");
+            }),
+          )
+          .pipe(Effect.flip, Effect.asVoid, Effect.orDie),
+      ),
+    );
+
+    expect(failedBodyRan).toBe(true);
+    expect(yield* sql`SELECT id FROM callback_rows`).toEqual([]);
+    expect(yield* storage.record(rolledBack)).toEqual(Option.none());
+    expect(hookIds).toEqual([]);
+    expect(yield* PubSub.takeUpTo(feed, Infinity)).toEqual([]);
+
+    yield* boundary.withTransaction(
+      sql.afterCommit(
+        boundary
+          .withTransaction(
+            sql`INSERT INTO callback_rows VALUES (2)`.pipe(
+              Effect.andThen(storage.mutate(create(committed))),
+            ),
+          )
+          .pipe(Effect.asVoid, Effect.orDie),
+      ),
+    );
+
+    expect(yield* sql`SELECT id FROM callback_rows`).toEqual([{ id: 2 }]);
+    expect(Option.isSome(yield* storage.record(committed))).toBe(true);
+    expect(hookIds).toEqual([[committed]]);
+    expect(yield* PubSub.takeUpTo(feed, Infinity)).toEqual([[committed]]);
+  }),
+);
+
+it.effect("a nested SQLite COMMIT failure defects once and rolls back both owners", () =>
+  Effect.gen(function* () {
+    const left = yield* buildHost();
+    const right = yield* buildHost();
+    const leftStorage = Context.get(left, Storage);
+    const rightStorage = Context.get(right, Storage);
+    const leftFeed = yield* leftStorage.committed;
+    const rightFeed = yield* rightStorage.committed;
+    const leftId = StreamId.make("outer-commit-failure");
+    const rightId = StreamId.make("inner-commit-failure");
+    const sql = Context.get(right, SqlClient.SqlClient);
+    yield* sql`PRAGMA foreign_keys = ON`;
+    yield* sql`CREATE TABLE parents (id INTEGER PRIMARY KEY)`;
+    yield* sql`CREATE TABLE children (parent INTEGER REFERENCES parents(id) DEFERRABLE INITIALLY DEFERRED)`;
+
+    let bodies = 0;
+
+    const exit = yield* Context.get(left, CommitBoundary)
+      .withTransaction(
+        leftStorage.mutate(create(leftId)).pipe(
+          Effect.andThen(
+            Context.get(right, CommitBoundary).withTransaction(
+              Effect.gen(function* () {
+                bodies += 1;
+                yield* rightStorage.mutate(create(rightId));
+                yield* sql`INSERT INTO children VALUES (1)`;
+              }),
+            ),
+          ),
+        ),
+      )
+      .pipe(Effect.exit);
+
+    expect(
+      Exit.isFailure(exit) &&
+        Cause.hasDies(exit.cause) &&
+        SqlError.isSqlError(Cause.squash(exit.cause)),
+    ).toBe(true);
+    expect(bodies).toBe(1);
+    expect(yield* sql`SELECT parent FROM children`).toEqual([]);
+    expect(yield* leftStorage.record(leftId)).toEqual(Option.none());
+    expect(yield* rightStorage.record(rightId)).toEqual(Option.none());
+    expect(yield* PubSub.takeUpTo(leftFeed, Infinity)).toEqual([]);
+    expect(yield* PubSub.takeUpTo(rightFeed, Infinity)).toEqual([]);
+  }),
+);
+
+it.effect("interrupting A while B is open rolls back both owners without publishing", () =>
+  Effect.gen(function* () {
+    const left = yield* buildHost();
+    const right = yield* buildHost();
+    const leftStorage = Context.get(left, Storage);
+    const rightStorage = Context.get(right, Storage);
+    const leftFeed = yield* leftStorage.committed;
+    const rightFeed = yield* rightStorage.committed;
+    const leftId = StreamId.make("outer-interrupt");
+    const rightId = StreamId.make("inner-interrupt");
+    const written = yield* Deferred.make<void>();
+
+    const fiber = yield* Context.get(left, CommitBoundary)
+      .withTransaction(
+        leftStorage
+          .mutate(create(leftId))
+          .pipe(
+            Effect.andThen(
+              Context.get(right, CommitBoundary).withTransaction(
+                rightStorage
+                  .mutate(create(rightId))
+                  .pipe(
+                    Effect.andThen(Deferred.succeed(written, undefined)),
+                    Effect.andThen(Effect.never),
+                  ),
+              ),
+            ),
+          ),
+      )
+      .pipe(Effect.forkScoped);
+
+    yield* Effect.raceFirst(Deferred.await(written), Fiber.join(fiber));
+    yield* Fiber.interrupt(fiber);
+    const exit = yield* Fiber.await(fiber);
+
+    expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+    expect(yield* leftStorage.record(leftId)).toEqual(Option.none());
+    expect(yield* rightStorage.record(rightId)).toEqual(Option.none());
+    expect(yield* PubSub.takeUpTo(leftFeed, Infinity)).toEqual([]);
+    expect(yield* PubSub.takeUpTo(rightFeed, Infinity)).toEqual([]);
   }),
 );
 

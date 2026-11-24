@@ -187,9 +187,13 @@ const makeBoundary = (
       Effect.flatMap(currentPending, (parent) => {
         if (probe !== undefined) probe.transactionAttempts += 1;
 
+        let activeParent = Option.getOrUndefined(parent);
+
+        while (activeParent?.active === false) activeParent = activeParent.parent;
+
         const pending: Pending = {
           transactionService,
-          parent: Option.getOrUndefined(parent),
+          parent: activeParent,
           keys: new Set(),
           ids: new Set(),
           active: true,
@@ -263,8 +267,7 @@ const makeBoundary = (
     const mutation: BoundaryRuntime["mutation"] = ({ keys, ids, effect, retryable }) =>
       Effect.flatMap(ambientTransaction, (ambient) =>
         Effect.flatMap(ownedPending, (pendingBefore) => {
-          // A mutation joins an owned entry or opens its own transaction.
-          // Reject unowned ambient transactions before executing any SQL.
+          // A mutation joins an owned ambient transaction or opens its own.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
 
@@ -283,7 +286,7 @@ const makeBoundary = (
             }),
           );
 
-          return Option.isSome(pendingBefore)
+          return Option.isSome(ambient)
             ? run
             : retryWithPolicy(ownedTransaction(run), transactionRetry, (error) =>
                 SqlError.isSqlError(error) ? error.isRetryable : retryable(error),
