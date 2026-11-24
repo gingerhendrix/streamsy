@@ -1,3 +1,4 @@
+import type { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import {
   FoldByKey,
@@ -104,7 +105,12 @@ export type ErrorChecks = [
   Assert<Same<Effect.Success<ReturnType<typeof handler>>, void>>,
   // The error class has one public path.
   Assert<"FoldByKeyError" extends keyof typeof FoldByKey ? false : true>,
-  Assert<Same<Effect.Services<typeof namedRun>, CheckpointStore | Transaction | Facts | Workspace>>,
+  Assert<
+    Same<
+      Effect.Services<typeof namedRun>,
+      CheckpointStore | Transaction | Facts | Workspace | SqlClient.SqlClient
+    >
+  >,
 ];
 
 Projection.process({

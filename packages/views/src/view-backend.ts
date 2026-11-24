@@ -1,6 +1,6 @@
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
-import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Backend } from "./backend.ts";
@@ -99,8 +99,8 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
   );
 
   /** Provide heap operator state and transactions for a host with external inputs. */
-  static readonly layerMemoryHost: Layer.Layer<ViewBackend | CheckpointStore | OwnerTransaction> =
-    Layer.mergeAll(ViewBackend.layerMemory, CheckpointStore.layer, OwnerTransaction.layer).pipe(
+  static readonly layerMemoryHost: Layer.Layer<ViewBackend | CheckpointStore | Transaction> =
+    Layer.mergeAll(ViewBackend.layerMemory, CheckpointStore.layer, Transaction.layer).pipe(
       Layer.provide(MemoryStorage.layer(Streamsy.group())),
     );
 }

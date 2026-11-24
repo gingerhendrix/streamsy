@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Test fixtures select SQL assertions when a SQL reader is present. */
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
-import { CheckpointStore, OwnerTransaction, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Array, Effect, Layer, Option, Order } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Backend } from "../../src/backend.ts";
@@ -17,7 +17,7 @@ export type Fixture = SqlFixture | typeof memory;
 export const memoryHost = <const Keys extends readonly Streamsy.Any[]>(
   group: Streamsy.Group<Keys>,
 ) =>
-  Layer.mergeAll(CheckpointStore.layer, OwnerTransaction.layer, ViewBackend.layerMemory).pipe(
+  Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerMemory).pipe(
     Layer.provideMerge(MemoryStorage.layer(group, { readLimit: 200 })),
   );
 

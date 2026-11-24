@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- These tests deliberately provide the wrong backend service. */
 import { expect, it } from "@effect/vitest";
-import { CheckpointStore, NonRetryable, OwnerTransaction, Projection } from "@streamsy/projection";
+import { CheckpointStore, NonRetryable, Transaction, Projection } from "@streamsy/projection";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import { View, ViewBackend, ViewFault } from "../../src/index.ts";
@@ -120,7 +120,7 @@ for (const backend of ["second SQL client", "memory on a SQL owner"] as const) {
 it.live("layerMemoryHost supplies a shared owner for operator state and checkpoints", () =>
   Effect.gen(function* () {
     const store = yield* CheckpointStore;
-    const owner = yield* OwnerTransaction;
+    const owner = yield* Transaction;
     const backend = yield* currentBackend;
     const state = backend.circuit(layoutNamespace);
     const sql = yield* Effect.serviceOption(SqlClient.SqlClient);

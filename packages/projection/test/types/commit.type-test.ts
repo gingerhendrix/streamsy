@@ -71,9 +71,17 @@ const foldRead = Projection.read(folded);
 const foldForget = Projection.forget(folded);
 
 export type Checks = [
-  Assert<Same<Effect.Services<typeof run>, Input | Extra | CheckpointStore | Transaction>>,
   Assert<
-    Same<Effect.Services<typeof compensated>, Input | Extra | Audit | CheckpointStore | Transaction>
+    Same<
+      Effect.Services<typeof run>,
+      Input | Extra | SqlClient.SqlClient | CheckpointStore | Transaction
+    >
+  >,
+  Assert<
+    Same<
+      Effect.Services<typeof compensated>,
+      Input | Extra | Audit | SqlClient.SqlClient | CheckpointStore | Transaction
+    >
   >,
   Assert<Same<Effect.Services<typeof foldRun>, Input | CheckpointStore>>,
   Assert<Same<Effect.Services<typeof foldRead>, CheckpointStore>>,
@@ -88,11 +96,11 @@ const noTransaction: Effect.Effect<
   Input | Extra | CheckpointStore
 > = run;
 
-// @ts-expect-error SQL subtraction must preserve Extra
+// @ts-expect-error the handler still requires Extra
 const noExtra: Effect.Effect<
   unknown,
   Effect.Error<typeof run>,
-  Input | CheckpointStore | Transaction
+  Input | SqlClient.SqlClient | CheckpointStore | Transaction
 > = run;
 
 // @ts-expect-error checkpoint cannot land a process result
@@ -185,7 +193,7 @@ const hostProcess = Projection.process({
   process: () => Effect.asVoid(SqlClient.SqlClient),
 }).at({});
 
-const memoryGraph = memoryHost();
+const memoryGraph = Transaction.layer.pipe(Layer.provideMerge(memoryHost()));
 
 const memoryRun = Effect.gen(function* () {
   return yield* Projection.run(hostProcess).pipe(
@@ -200,7 +208,7 @@ const memoryRun = Effect.gen(function* () {
 const sqlHost = Layer.merge(
   Protocol.bind(memoryGraph, Streamsy.group(Input)),
   Layer.mergeAll(CheckpointStore.layer, Transaction.layer).pipe(
-    Layer.provide(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
+    Layer.provideMerge(BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } })),
   ),
 );
 
@@ -210,8 +218,8 @@ const sqlRun = Effect.gen(function* () {
   );
 }).pipe(Effect.scoped);
 
-// oxlint-disable effecttsgo/missing-effect-context -- Proves that memory cannot satisfy Transaction.
-// @ts-expect-error A memory host leaves the SQL Transaction requirement unsatisfied
+// oxlint-disable effecttsgo/missing-effect-context -- Proves that the memory fixture cannot satisfy the SQL handler.
+// @ts-expect-error A memory host cannot supply SqlClient
 const runnableOnMemory: Effect.Effect<unknown, Effect.Error<typeof memoryRun>> = memoryRun;
 
 // oxlint-enable effecttsgo/missing-effect-context
@@ -222,6 +230,6 @@ void runnableOnMemory;
 void runnableOnSql;
 
 export type HostChecks = [
-  Assert<Same<Effect.Services<typeof memoryRun>, Transaction>>,
+  Assert<Same<Effect.Services<typeof memoryRun>, SqlClient.SqlClient>>,
   Assert<Same<Effect.Services<typeof sqlRun>, never>>,
 ];

@@ -4,7 +4,7 @@
  * The consumer Map applies changes outside the timed window.
  */
 import { Array as Arr, Effect, Layer } from "effect";
-import { OwnerTransaction } from "@streamsy/projection";
+import { Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import { join } from "node:path";
 import { SqlClient } from "effect/sql";
@@ -40,7 +40,7 @@ const customerCount = count / 10;
 
 const database = join(scratch, `views-sql-${count}-${Date.now()}.sqlite`);
 
-const host = Layer.merge(OwnerTransaction.layer, ViewBackend.layerSql).pipe(
+const host = Layer.merge(Transaction.layer, ViewBackend.layerSql).pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: database } })),
 );
 
@@ -92,7 +92,7 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* View.migrate(sql);
-    const owner = yield* OwnerTransaction;
+    const owner = yield* Transaction;
     const engine = yield* makeEngine(shopPlans());
 
     const runUnit = (input: readonly StateChange[]) =>

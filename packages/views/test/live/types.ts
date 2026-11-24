@@ -1,4 +1,4 @@
-import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { Effect, Schema, type Scope, type Stream } from "effect";
 import { View, ViewBackend, type CircuitError, type LiveSnapshot } from "../../src/index.ts";
 import { customerTotals, orders, Shop, type Order } from "../circuit/support/shop.ts";
@@ -24,7 +24,7 @@ export type LiveTypeChecks = [
   Assert<
     Same<
       Effect.Services<typeof open>,
-      Scope.Scope | CheckpointStore | OwnerTransaction | ViewBackend | Shop
+      Scope.Scope | CheckpointStore | Transaction | ViewBackend | Shop
     >
   >,
   Assert<Same<Effect.Error<typeof open>, CircuitError>>,

@@ -406,9 +406,7 @@ export const build = (
       if (kind !== "process") throw new RangeError("Routed outputs require Projection.process");
 
       if (!supportsPrepare(commit))
-        throw new RangeError(
-          "Routed outputs require Commit.transaction or Commit.ownerTransaction",
-        );
+        throw new RangeError("Routed outputs require Commit.transaction");
     }
   }
 
@@ -424,7 +422,7 @@ export const build = (
   );
 
   if (definition.prepare !== undefined && !supportsPrepare(commit))
-    throw new RangeError("prepare requires Commit.transaction or Commit.ownerTransaction");
+    throw new RangeError("prepare requires Commit.transaction");
 
   const declaration = declare(definition, ({ decoded, ...key }) => {
     const state = definition.state === undefined ? undefined : bindState(definition.state, decoded);

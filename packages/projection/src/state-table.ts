@@ -143,9 +143,11 @@ export const migrate = Effect.fn("StateTable.migrate")(function* (sql: SqlClient
 /** The State stream as stored JSON text, so that apply never needs a collection schema. */
 type Raw<R> = Streamsy.Address<string, R>;
 
-const synchronize = <R>(address: Raw<R>): Effect.Effect<void, ProjectionFault, Transaction | R> =>
+const synchronize = <R>(
+  address: Raw<R>,
+): Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R> =>
   Effect.gen(function* () {
-    const { sql } = yield* Transaction;
+    const sql = yield* SqlClient.SqlClient;
     const { wire } = yield* address.stream;
 
     const unavailable = () =>
@@ -222,9 +224,9 @@ const synchronize = <R>(address: Raw<R>): Effect.Effect<void, ProjectionFault, T
 const applySlice = <R>(
   address: Raw<R>,
   slice: Slice<string>,
-): Effect.Effect<void, ProjectionFault, Transaction | R> =>
+): Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R> =>
   Effect.gen(function* () {
-    const { sql } = yield* Transaction;
+    const sql = yield* SqlClient.SqlClient;
     const stored = yield* head(sql, address.id);
 
     if (
@@ -264,7 +266,7 @@ export interface Bound<C extends StreamAddress.Collections, R> {
   readonly commit: typeof Commit.transaction;
   readonly process: (
     batch: Slices<{ readonly state: Streamsy.Address<string, R> }>,
-  ) => Effect.Effect<void, ProjectionFault, Transaction | R>;
+  ) => Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R>;
   /** The row of `key`. `value` is undefined when the row is absent. */
   readonly get: <K extends keyof C & string>(
     collection: K,
@@ -304,7 +306,7 @@ export interface Bound<C extends StreamAddress.Collections, R> {
   readonly offset: () => Effect.Effect<string, SqlError.SqlError, SqlClient.SqlClient>;
   /** Apply the stream from the head of the table to its tail, in the caller's transaction. */
   // oxlint-disable-next-line effecttsgo/lazy-effect -- Every member of a bound table is a call, so each call gets its own span.
-  readonly sync: () => Effect.Effect<void, ProjectionFault, Transaction | R>;
+  readonly sync: () => Effect.Effect<void, ProjectionFault, SqlClient.SqlClient | R>;
 }
 
 /** The declaration of a State table. Runners and `attach` take it like any declaration. */
@@ -497,8 +499,9 @@ export const clear = Effect.fn("StateTable.clear")(function* <
   R,
 >(table: Bound<C, R>) {
   const tx = yield* Transaction;
+  const sql = yield* SqlClient.SqlClient;
 
-  yield* tx.withTransaction(clearIndex(tx.sql, table.inputs.state.id));
+  yield* tx.withTransaction(clearIndex(sql, table.inputs.state.id));
 });
 
 /** Discard the index and replay the State stream atomically, retaining the binding checkpoint. */
@@ -507,9 +510,10 @@ export const rebuild = Effect.fn("StateTable.rebuild")(function* <
   R,
 >(table: Bound<C, R>) {
   const tx = yield* Transaction;
+  const sql = yield* SqlClient.SqlClient;
   const id = table.inputs.state.id;
 
-  yield* tx.withTransaction(clearIndex(tx.sql, id).pipe(Effect.andThen(table.sync())));
+  yield* tx.withTransaction(clearIndex(sql, id).pipe(Effect.andThen(table.sync())));
 });
 
 /** Append a reset to the State stream. The next table run applies it. */

@@ -35,9 +35,9 @@ export interface Commit<in Result, in Provides = never, out Requires = never>
   ) => Effect.Effect<RetirementStatus, ProjectionFault, Requires>;
 }
 
-export interface RetireRequest {
+export interface RetireRequest<R = never> {
   readonly key: ProjectionKey;
-  readonly cleanup: Effect.Effect<void, ProjectionFault>;
+  readonly cleanup: Effect.Effect<void, ProjectionFault, R>;
 }
 
 export interface Pending<Result, Provides = never> {

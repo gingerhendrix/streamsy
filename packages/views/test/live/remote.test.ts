@@ -69,7 +69,7 @@ it.live("follows and catches up with a State stream on a real HTTP server", () =
         id: "remote-state-probe",
         params: Shop.paramCodecs,
         inputs: { shop: Shop },
-        commit: Commit.ownerTransaction,
+        commit: Commit.transaction,
         process: ({ shop: slice }) => Deferred.succeed(seen, slice.items).pipe(Effect.asVoid),
       }).at(params);
 

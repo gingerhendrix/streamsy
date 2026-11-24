@@ -5,7 +5,7 @@ import {
   CheckpointStore,
   Commit,
   NonRetryable,
-  OwnerTransaction,
+  Transaction,
   Projection,
   ProjectionFault,
   type ProjectionKey,
@@ -285,7 +285,7 @@ const guard = Effect.fn("View.guard")(function* (
   return namespace;
 });
 
-const commit = Commit.ownerTransactionWithCleanup((key) =>
+const commit = Commit.transactionWithCleanup((key) =>
   currentBackend.pipe(
     Effect.flatMap((backend) => backend.clear(namespaceOf(key))),
     Effect.mapError((error) => {
@@ -308,9 +308,9 @@ export interface CircuitBinding<V extends ViewMap, O extends OutputMap> extends 
   readonly streams: ReturnType<
     ReturnType<typeof Projection.process<StreamRoute.ParamCodecs, InputsOf<V>, O>>["at"]
   >["streams"];
-  readonly commit: Commit.OwnerCommit<
+  readonly commit: Commit.TransactionCommit<
     void | WakeAt,
-    CheckpointStore | OwnerTransaction | ViewBackend
+    CheckpointStore | Transaction | ViewBackend
   >;
   readonly process: (
     batch: Slices<CircuitBinding<V, O>["inputs"]>,
@@ -475,15 +475,13 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the checked output map at the Projection boundary.
   const checkedOutputs = routedOutputs as ProjectionRoutes["outputs"];
 
-  // SAFETY: Projection preserves the supplied commit, though its generic binding type erases the owner brand.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Restore the brand of the exact commit supplied below.
   return Projection.process<
     C,
     Record<string, Input>,
     OutputMap,
     CircuitError,
     ViewBackend | Input["Identifier"],
-    CheckpointStore | OwnerTransaction | ViewBackend,
+    CheckpointStore | Transaction | ViewBackend,
     void,
     never,
     never,
@@ -649,5 +647,5 @@ export function circuit<C extends StreamRoute.ParamCodecs, HE, HR>(
 
         return definition.wakeAt?.(unit);
       }).pipe(circuitErrors),
-  }) as CircuitDeclaration<C, ViewMap, OutputMap, HE, HR>;
+  });
 }

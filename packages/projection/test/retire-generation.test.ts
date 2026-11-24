@@ -97,9 +97,10 @@ layer(host)((it) => {
         message: "forget cleanup failed",
       });
 
-      const commit = Commit.transactionWithCleanup((key, client) =>
+      const commit = Commit.transactionWithCleanup((key) =>
         Effect.gen(function* () {
           expect((yield* store.load(key)).token).toBe("0");
+          const client = yield* SqlClient.SqlClient;
           yield* client`INSERT INTO forget_cleanup (id) VALUES (${key.id})`.pipe(Effect.orDie);
 
           return yield* failure;
@@ -134,10 +135,11 @@ layer(host)((it) => {
         message: "retire cleanup failed",
       });
 
-      const commit = Commit.transactionWithCleanup((key, client) =>
+      const commit = Commit.transactionWithCleanup((key) =>
         Effect.gen(function* () {
           expect(yield* store.load(key).pipe(Effect.flip, Effect.orDie)).toMatchObject(retired);
           expect(yield* target.head(rev).pipe(Effect.flip, Effect.orDie)).toMatchObject(missing);
+          const client = yield* SqlClient.SqlClient;
           yield* client`INSERT INTO retire_cleanup (generation) VALUES (${key.generation})`.pipe(
             Effect.orDie,
           );

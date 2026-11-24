@@ -1,11 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Each test runs an isolated owner and can replace its checkpoint settlement. */
 import { expect, it } from "@effect/vitest";
-import {
-  CheckpointStore,
-  OwnerTransaction,
-  Projection,
-  ProjectionFault,
-} from "@streamsy/projection";
+import { CheckpointStore, Transaction, Projection, ProjectionFault } from "@streamsy/projection";
 import { Effect } from "effect";
 import { makeLiveOutputs } from "../../src/live-output.ts";
 import { prepareLive } from "../../src/live.ts";
@@ -24,7 +19,7 @@ const setup = Effect.gen(function* () {
   yield* createShop;
   yield* putOrder(1);
 
-  const tx = yield* OwnerTransaction;
+  const tx = yield* Transaction;
   const store = yield* CheckpointStore;
   const backend = yield* currentBackend;
   const outputs = yield* makeLiveOutputs(plan.names);

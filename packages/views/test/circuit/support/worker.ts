@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { DurableObjectStorage } from "@streamsy/storage/durable-object";
-import { CheckpointStore, OwnerTransaction, Transaction } from "@streamsy/projection";
+import { CheckpointStore, Transaction } from "@streamsy/projection";
 import { ViewBackend } from "../../../src/index.ts";
 import { Shop, Results } from "./shop.ts";
 import { proof } from "./proof.ts";
@@ -63,9 +63,8 @@ export class ShopObject {
     // oxlint-enable anti-slop/no-reflect-get
     const local = Layer.mergeAll(
       CheckpointStore.layer,
-      OwnerTransaction.layer,
-      ViewBackend.layerSql,
       Transaction.layer,
+      ViewBackend.layerSql,
     ).pipe(
       Layer.provideMerge(
         DurableObjectStorage.layerProtocol({ client: { storage }, readLimit: 200 }),

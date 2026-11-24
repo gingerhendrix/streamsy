@@ -16,7 +16,7 @@ import { BunStorage } from "@streamsy/storage/bun";
 import {
   CheckpointStore,
   Commit,
-  OwnerTransaction,
+  Transaction,
   Projection,
   ProjectionFault,
 } from "@streamsy/projection";
@@ -41,7 +41,7 @@ class Accepted extends Streamsy.wake<Accepted>()("owner/Accepted", "owner/accept
   params: { generation: Schema.FiniteFromString },
 }) {}
 
-const services = Layer.mergeAll(CheckpointStore.layer, OwnerTransaction.layer);
+const services = Layer.mergeAll(CheckpointStore.layer, Transaction.layer);
 
 const sqlite = withFamilies(
   services.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } }))),
@@ -98,7 +98,7 @@ for (const [name, host] of [
   ["memory", memory],
   ["SQLite", sqlite],
 ] as const) {
-  layer(host, { buildPerTest: true })(`owner commit on ${name}`, (it) => {
+  layer(host, { buildPerTest: true })(`transaction commit on ${name}`, (it) => {
     it.effect("preserves handler failures and defects after a generation-bound append", () =>
       Effect.gen(function* () {
         yield* seed;
@@ -112,7 +112,7 @@ for (const [name, host] of [
             ...common,
             id: "owner-handler-failure",
             outputs,
-            commit: Commit.ownerTransaction,
+            commit: Commit.transaction,
             process: Projection.each(({ item }) =>
               sink.append(outputParams, [item]).pipe(Effect.andThen(after)),
             ),
@@ -147,7 +147,7 @@ for (const [name, host] of [
             ...common,
             id: "owner-settle",
             outputs,
-            commit: Commit.ownerTransaction,
+            commit: Commit.transaction,
             state: { schema: Schema.Finite, initial: 10 },
             mapAccumBatch: (state, batch) =>
               Effect.gen(function* () {
@@ -187,14 +187,14 @@ for (const [name, host] of [
         const noOutputs = Projection.process({
           ...common,
           id: "foreign-checkpointer",
-          commit: Commit.ownerTransaction,
+          commit: Commit.transaction,
           process: handler,
         }).at({});
 
         const withOutput = Projection.process({
           ...common,
           id: "foreign-output",
-          commit: Commit.ownerTransaction,
+          commit: Commit.transaction,
           outputs,
           process: handler,
         }).at({});
@@ -227,7 +227,7 @@ for (const [name, host] of [
         const projection = Projection.process({
           ...common,
           id: "outer-rollback",
-          commit: Commit.ownerTransaction,
+          commit: Commit.transaction,
           outputs,
           process: Projection.each(({ item }) => sink.append(outputParams, [item])),
         }).at({});
@@ -262,7 +262,7 @@ for (const [name, host] of [
         const declaration = Projection.process({
           ...common,
           id: "owner-routed",
-          commit: Commit.ownerTransactionWithCleanup(() => Effect.void),
+          commit: Commit.transactionWithCleanup(() => Effect.void),
           outputs: {
             routed: Projection.perGeneration(Routed, "generation", { routeBy: ["bucket"] }),
           },
@@ -324,7 +324,7 @@ for (const [name, host] of [
           const declaration = Projection.process({
             ...common,
             id: `owner-${operation}`,
-            commit: Commit.ownerTransactionWithCleanup((key) =>
+            commit: Commit.transactionWithCleanup((key) =>
               Effect.gen(function* () {
                 const ownerRecords = yield* OwnerRecords;
                 const checkpoints = yield* CheckpointStore;
@@ -380,35 +380,37 @@ for (const [name, host] of [
 }
 
 layer(sqlite)((it) => {
-  it.effect("captured SQLite client joins the owner commit without an ambient SqlClient", () =>
-    Effect.gen(function* () {
-      yield* seed;
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TABLE effects (value INTEGER NOT NULL)`;
+  it.effect(
+    "captured SQLite client joins the transaction commit without an ambient SqlClient",
+    () =>
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`CREATE TABLE effects (value INTEGER NOT NULL)`;
 
-      const projection = Projection.process({
-        ...common,
-        id: "owner-captured-sql",
-        commit: Commit.ownerTransaction,
-        outputs,
-        process: () => sql`INSERT INTO effects VALUES (1)`.pipe(Effect.asVoid),
-      }).at({});
+        const projection = Projection.process({
+          ...common,
+          id: "owner-captured-sql",
+          commit: Commit.transaction,
+          outputs,
+          process: () => sql`INSERT INTO effects VALUES (1)`.pipe(Effect.asVoid),
+        }).at({});
 
-      const run = Projection.run(projection).pipe(
-        Effect.updateContext(
-          (context: Context.Context<CheckpointStore | OwnerTransaction | Input | Sink>) =>
-            Context.omit(SqlClient.SqlClient)(context),
-        ),
-      );
+        const run = Projection.run(projection).pipe(
+          Effect.updateContext(
+            (context: Context.Context<CheckpointStore | Transaction | Input | Sink>) =>
+              Context.omit(SqlClient.SqlClient)(context),
+          ),
+        );
 
-      expect(yield* rejectSettle(run).pipe(Effect.flip)).toBe(conflict);
-      expect(yield* sql`SELECT * FROM effects`).toEqual([]);
-      const store = yield* CheckpointStore;
-      expect((yield* store.load(projection)).token).toBe("0");
-      yield* run;
-      expect(yield* sql`SELECT * FROM effects`).toEqual([{ value: 1 }]);
-      expect((yield* store.load(projection)).token).toBe("1");
-    }),
+        expect(yield* rejectSettle(run).pipe(Effect.flip)).toBe(conflict);
+        expect(yield* sql`SELECT * FROM effects`).toEqual([]);
+        const store = yield* CheckpointStore;
+        expect((yield* store.load(projection)).token).toBe("0");
+        yield* run;
+        expect(yield* sql`SELECT * FROM effects`).toEqual([{ value: 1 }]);
+        expect((yield* store.load(projection)).token).toBe("1");
+      }),
   );
 });
 
@@ -416,14 +418,14 @@ layer(sqlite, { buildPerTest: true })((it) => {
   it.effect("retire cleanup sees the transaction owner over the ambient owner", () =>
     Effect.gen(function* () {
       yield* seed;
-      const tx = yield* OwnerTransaction;
+      const tx = yield* Transaction;
       const ambient = {};
       let cleanupOwner: object | undefined;
 
       const declaration = Projection.process({
         ...common,
         id: "retire-current-owner",
-        commit: Commit.ownerTransactionWithCleanup(() =>
+        commit: Commit.transactionWithCleanup(() =>
           Effect.map(CurrentOwner, (owner) => {
             cleanupOwner = owner;
           }),
@@ -448,7 +450,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
       const declaration = Projection.process({
         ...common,
         id: "retire-raw-sql",
-        commit: Commit.ownerTransactionWithCleanup(() =>
+        commit: Commit.transactionWithCleanup(() =>
           Effect.sync(() => {
             called = true;
           }),
@@ -490,7 +492,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
     Effect.map(Context.get(Sink)),
   );
 
-  it.effect("owner commit rejects a foreign handler write and rolls back its output", () =>
+  it.effect("transaction commit rejects a foreign handler write and rolls back its output", () =>
     Effect.gen(function* () {
       yield* seed;
       const local = yield* Sink;
@@ -502,7 +504,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
         ...common,
         id: "foreign-handler-write",
         outputs,
-        commit: Commit.ownerTransaction,
+        commit: Commit.transaction,
         process: () =>
           local
             .append(outputParams, [1])
@@ -532,7 +534,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
           ...common,
           id: `foreign-cleanup-${operation}`,
           outputs,
-          commit: Commit.ownerTransactionWithCleanup(() =>
+          commit: Commit.transactionWithCleanup(() =>
             foreign.append(outputParams, [2]).pipe(Effect.asVoid, Effect.orDie),
           ),
           process: () => local.append(outputParams, [1]),
@@ -574,7 +576,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
         const declaration = Projection.process({
           ...common,
           id: `foreign-checkpoint-${operation}`,
-          commit: Commit.ownerTransactionWithCleanup(() =>
+          commit: Commit.transactionWithCleanup(() =>
             Effect.sync(() => {
               called = true;
             }),
@@ -622,7 +624,7 @@ layer(sqlite, { buildPerTest: true })((it) => {
               ...common,
               id: `savepoint-${operation}`,
               outputs,
-              commit: Commit.ownerTransactionWithCleanup((key) =>
+              commit: Commit.transactionWithCleanup((key) =>
                 sql
                   .withTransaction(
                     Effect.gen(function* () {

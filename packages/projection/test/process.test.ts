@@ -149,11 +149,11 @@ test("prepare requires the transaction capability, including through compensatio
   };
 
   expect(() => Projection.process({ ...definition, commit: Commit.atLeastOnce })).toThrow(
-    "prepare requires Commit.transaction or Commit.ownerTransaction",
+    "prepare requires Commit.transaction",
   );
   const forged = Commit.make({ ...Commit.atLeastOnce, name: "transaction" });
   expect(() => Projection.process({ ...definition, commit: forged })).toThrow(
-    "prepare requires Commit.transaction or Commit.ownerTransaction",
+    "prepare requires Commit.transaction",
   );
   expect(() =>
     Projection.process({

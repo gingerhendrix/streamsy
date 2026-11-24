@@ -1,6 +1,6 @@
 import { it as baseIt, layer } from "@effect/vitest";
 import { expect } from "vitest";
-import { Array, Cause, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
+import { Array, Cause, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { SqlClient } from "effect/sql";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Streamsy, MemoryStorage } from "@streamsy/core";
@@ -8,7 +8,6 @@ import { Protocol } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
-  OwnerTransaction,
   Projection,
   ProjectionFault,
   Transaction,
@@ -61,27 +60,7 @@ layer(sqlite)((it) => {
   );
 });
 
-for (const transactions of [
-  Transaction.layer,
-  Layer.merge(Transaction.layer, OwnerTransaction.layer),
-]) {
-  const host = transactions.pipe(
-    Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
-  );
-
-  layer(host)((it) => {
-    it.effect("SQL and owner transactions share a boundary", () =>
-      Effect.gen(function* () {
-        const transaction = yield* Transaction;
-        const owner = yield* OwnerTransaction;
-        expect(owner.owner).toBe(transaction.owner);
-        expect(owner.withTransaction).toBe(transaction.withTransaction);
-      }),
-    );
-  });
-}
-
-baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkpoint", () =>
+baseIt.effect("SQL from the host rolls back with the checkpoint", () =>
   Effect.gen(function* () {
     const sqlLayer = BunStorage.layer(Streamsy.group(), { client: { filename: ":memory:" } });
 
@@ -90,7 +69,7 @@ baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkp
       Protocol.bind(MemoryStorage.layerProtocol(), Streamsy.group(Input)),
     );
 
-    const services = yield* Layer.build(host);
+    const context = yield* Layer.build(host);
 
     return yield* Effect.gen(function* () {
       yield* seed;
@@ -115,12 +94,7 @@ baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkp
       expect(result).toMatchObject({ _tag: "Failure", failure });
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([]);
       expect((yield* store.load(sqlProcess)).token).toBe("0");
-      // Remove ambient SQL: the Commit still supplies the Transaction's exact client.
-      yield* Projection.run(sqlProcess).pipe(
-        Effect.updateContext((context: Context.Context<CheckpointStore | Transaction | Input>) =>
-          Context.omit(SqlClient.SqlClient)(context),
-        ),
-      );
+      yield* Projection.run(sqlProcess);
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }]);
 
       const folded = Projection.fold({
@@ -152,7 +126,7 @@ baseIt.effect("SQL from Transaction is sufficient and rolls back with the checkp
       yield* Projection.run(folded);
       expect((yield* Projection.read(folded)).state).toBe(11);
       expect(yield* sql.unsafe("SELECT * FROM effects")).toEqual([{ value: 1 }, { value: 11 }]);
-    }).pipe(Effect.provideContext(services));
+    }).pipe(Effect.provideContext(context));
   }),
 );
 

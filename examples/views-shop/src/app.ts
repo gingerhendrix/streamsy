@@ -2,16 +2,12 @@
 import { Array, Effect, Equal, Formatter, Layer, Predicate } from "effect";
 import { SqlClient } from "effect/sql";
 import { DurableState, Streamsy } from "@streamsy/core";
-import { CheckpointStore, Projection, OwnerTransaction } from "@streamsy/projection";
+import { CheckpointStore, Projection, Transaction } from "@streamsy/projection";
 import { BunStorage } from "@streamsy/storage/bun";
 import { View, ViewBackend } from "@streamsy/views";
 import { Orders, ShopViews, shopCircuit } from "./streams.ts";
 
-const host = Layer.mergeAll(
-  CheckpointStore.layer,
-  OwnerTransaction.layer,
-  ViewBackend.layerSql,
-).pipe(
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
   Layer.provideMerge(
     BunStorage.layer(Streamsy.group(Orders, ShopViews), { client: { filename: ":memory:" } }),
   ),

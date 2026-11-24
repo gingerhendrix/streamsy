@@ -1,7 +1,7 @@
 import {
   CheckpointStore,
   Commit,
-  OwnerTransaction,
+  Transaction,
   Projection,
   type WakeAt,
 } from "@streamsy/projection";
@@ -24,15 +24,12 @@ export type CircuitBackendChecks = [
   Assert<
     Same<
       typeof binding.commit,
-      Commit.OwnerCommit<void | WakeAt, CheckpointStore | OwnerTransaction | ViewBackend>
+      Commit.TransactionCommit<void | WakeAt, CheckpointStore | Transaction | ViewBackend>
     >
   >,
   Assert<Same<Effect.Services<ReturnType<typeof binding.process>>, ViewBackend | Results>>,
   Assert<
-    Same<
-      Effect.Services<typeof run>,
-      CheckpointStore | OwnerTransaction | ViewBackend | Shop | Results
-    >
+    Same<Effect.Services<typeof run>, CheckpointStore | Transaction | ViewBackend | Shop | Results>
   >,
 ];
 

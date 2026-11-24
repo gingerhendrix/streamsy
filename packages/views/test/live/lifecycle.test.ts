@@ -4,7 +4,7 @@ import { StorageFault, Streamsy } from "@streamsy/core";
 import { attachOwner, ownerOf } from "@streamsy/core/internal";
 import {
   CheckpointStore,
-  OwnerTransaction,
+  Transaction,
   ProjectionFault,
   ProjectionRetry,
 } from "@streamsy/projection";
@@ -392,7 +392,7 @@ it.live(
       const live = yield* liveOrders.at(params).pipe(Scope.provide(scope));
       yield* live.caughtUp;
 
-      const owner = yield* OwnerTransaction;
+      const owner = yield* Transaction;
       const store = yield* CheckpointStore;
       const saved = yield* store.load(checkpointKey);
       const state = yield* memoryDump;

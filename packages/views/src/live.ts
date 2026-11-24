@@ -4,7 +4,7 @@ import type { StreamRoute } from "@streamsy/core/protocol";
 import {
   CheckpointStore,
   Commit,
-  OwnerTransaction,
+  Transaction,
   Projection,
   ProjectionFault,
   ProjectionRetry,
@@ -95,7 +95,7 @@ interface PreparedBinding<V extends Views> {
 interface LiveBinding<V extends Views> extends ProjectionKey {
   readonly inputs: LiveAddresses<V>;
   readonly state: undefined;
-  readonly commit: Commit.Commit<void, LiveUnit, CheckpointStore | OwnerTransaction>;
+  readonly commit: Commit.Commit<void, LiveUnit, CheckpointStore | Transaction>;
   readonly process: (
     batch: Slices<LiveAddresses<V>>,
     unit: Unit,
@@ -105,11 +105,11 @@ interface LiveBinding<V extends Views> extends ProjectionKey {
 /** Drop heap writes and staged output even if an enclosing owner catches this unit's failure. */
 function liveCommit(
   backend: Backend,
-  tx: typeof OwnerTransaction.Service,
+  tx: typeof Transaction.Service,
   stage: (changes: readonly OutputChange[]) => () => void,
 ) {
-  return Commit.make<void, LiveUnit, CheckpointStore | OwnerTransaction>({
-    ...Commit.ownerTransaction,
+  return Commit.make<void, LiveUnit, CheckpointStore | Transaction>({
+    ...Commit.transaction,
     apply: (pending) =>
       tx
         .withTransaction(
@@ -133,7 +133,7 @@ function liveCommit(
                 }),
               );
 
-              yield* Commit.ownerTransaction
+              yield* Commit.transaction
                 .apply({ ...pending, run })
                 .pipe(
                   Effect.onExit((exit) =>
@@ -199,7 +199,7 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
   const bind = (
     values: StreamRoute.Params<C>,
     backend: Backend,
-    tx: typeof OwnerTransaction.Service,
+    tx: typeof Transaction.Service,
     stage: (changes: readonly OutputChange[]) => () => void,
   ): PreparedBinding<V> => {
     type ProjectionInputs = Parameters<
@@ -216,7 +216,7 @@ export function prepareLive<C extends StreamRoute.ParamCodecs, const V extends V
       CircuitError,
       LiveUnit,
       LiveUnit,
-      CheckpointStore | OwnerTransaction
+      CheckpointStore | Transaction
     >({
       id,
       params,
@@ -266,7 +266,7 @@ export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
   ): Effect.Effect<
     LiveReader<V>,
     CircuitError,
-    Scope.Scope | CheckpointStore | OwnerTransaction | ViewBackend | InputServices<V>
+    Scope.Scope | CheckpointStore | Transaction | ViewBackend | InputServices<V>
   > =>
     Effect.suspend(() => {
       let lifetime: Scope.Closeable | undefined;
@@ -278,7 +278,7 @@ export function live<C extends StreamRoute.ParamCodecs, const V extends Views>(
           if (memory === undefined)
             return yield* new ViewFault({ message: "View.live requires a memory ViewBackend" });
 
-          const tx = yield* OwnerTransaction;
+          const tx = yield* Transaction;
           const store = yield* CheckpointStore;
 
           if (memory.owner !== tx.owner || ownerOf(store.load) !== tx.owner)

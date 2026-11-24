@@ -17,9 +17,7 @@ export { checkpoint } from "./commit/checkpoint.ts";
 export {
   transaction,
   transactionWithCleanup,
-  ownerTransaction,
-  ownerTransactionWithCleanup,
-  type OwnerCommit,
+  type TransactionCommit,
 } from "./commit/transaction.ts";
 
 export { producer } from "./commit/producer.ts";

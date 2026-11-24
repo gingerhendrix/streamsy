@@ -200,5 +200,10 @@ const sqlFold = Projection.fold({
 const sqlFoldRun = Projection.run(sqlFold.at({}));
 
 export type SqlFoldChecks = [
-  Assert<Same<Effect.Services<typeof sqlFoldRun>, Numbers | CheckpointStore | Transaction>>,
+  Assert<
+    Same<
+      Effect.Services<typeof sqlFoldRun>,
+      Numbers | CheckpointStore | Transaction | SqlClient.SqlClient
+    >
+  >,
 ];
