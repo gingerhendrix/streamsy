@@ -7,7 +7,7 @@ import {
   type ProjectionMarksApi,
   type PendingMark,
 } from "@streamsy/core/internal";
-import { MYSQL_PROJECTION_PARAMS_LENGTH } from "./schema.ts";
+import { MYSQL_PROJECTION_ID_LENGTH, MYSQL_PROJECTION_PARAMS_LENGTH } from "./schema.ts";
 
 const TABLE = "streamsy_projection_pending";
 
@@ -309,7 +309,7 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
       .pipe(Effect.mapError(fault("retry")));
   };
 
-  return ProjectionMarks.of({
+  const marks = {
     mark,
     nextDue,
     summary,
@@ -322,5 +322,9 @@ export const sqlProjectionMarks = (sql: SqlClient.SqlClient) => {
     failed,
     resume,
     retry,
-  });
+  };
+
+  return ProjectionMarks.of(
+    mysql ? { ...marks, maxProjectionIdLength: MYSQL_PROJECTION_ID_LENGTH } : marks,
+  );
 };

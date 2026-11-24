@@ -51,7 +51,7 @@ import {
 } from "./boundary.ts";
 import { migrate } from "./migrations.ts";
 import { sqlProjectionMarks } from "./projection-marks.ts";
-import { MYSQL_OWNER_KEY_LENGTH, MYSQL_PROJECTION_ID_LENGTH } from "./schema.ts";
+import { MYSQL_OWNER_KEY_LENGTH } from "./schema.ts";
 import {
   DEFAULT_TRANSACTION_RETRY_ATTEMPTS,
   DEFAULT_TRANSACTION_RETRY_DELAY_MS,
@@ -1035,15 +1035,6 @@ const makeLayer = (
       );
       const boundary = yield* BoundaryRuntimeService;
       const owner = ownerOf(boundary);
-
-      // The attach runner can validate its id even when the host hides its SQL client.
-      sql.onDialectOrElse({
-        mysql: () =>
-          Object.defineProperty(owner, Symbol.for("@streamsy/storage/MaxProjectionIdLength"), {
-            value: MYSQL_PROJECTION_ID_LENGTH,
-          }),
-        orElse: () => owner,
-      });
 
       return Context.empty().pipe(
         Context.add(Storage, attachOwner(makeStorage(sql, boundary), owner)),

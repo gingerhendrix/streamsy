@@ -15,7 +15,7 @@ interface Opaque {
   readonly [BackendTypeId]: true;
 }
 
-const backends = new WeakMap<Opaque, Effect.Effect<Backend, ViewFault>>();
+const BackendState = Symbol("@streamsy/views/ViewBackend/state");
 
 interface MemoryBackend {
   readonly backend: Backend;
@@ -23,19 +23,28 @@ interface MemoryBackend {
   readonly live: Set<string>;
 }
 
-const memoryBackends = new WeakMap<Opaque, MemoryBackend>();
+interface BackendState {
+  readonly backend: Effect.Effect<Backend, ViewFault>;
+  readonly memory?: MemoryBackend;
+}
+
+class BackendService implements Opaque {
+  readonly [BackendTypeId] = true;
+  readonly [BackendState]: BackendState;
+
+  constructor(state: BackendState) {
+    this[BackendState] = state;
+  }
+}
 
 // Different backend layers can still share the owner's checkpoint key space.
 const ownerSlots = new WeakMap<object, Set<string>>();
 
-export const memoryBackendOf = (service: Opaque) => memoryBackends.get(service);
+export const memoryBackendOf = (service: Opaque) =>
+  service instanceof BackendService ? service[BackendState].memory : undefined;
 
-export function makeViewBackend(backend: Effect.Effect<Backend, ViewFault>): Opaque {
-  const service: Opaque = { [BackendTypeId]: true };
-  backends.set(service, backend);
-
-  return service;
-}
+export const makeViewBackend = (backend: Effect.Effect<Backend, ViewFault>): Opaque =>
+  new BackendService({ backend });
 
 const compositionFault = (message: string) =>
   Object.assign(new ViewFault({ message }), { [NonRetryable]: true });
@@ -73,7 +82,6 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
     Effect.map(CommitBoundary, (boundary) => {
       const owner = ownerOf(boundary);
       const backend = makeMemoryBackend(owner);
-      const service = makeViewBackend(Effect.succeed(backend));
 
       let live = ownerSlots.get(owner);
 
@@ -82,9 +90,10 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
         ownerSlots.set(owner, live);
       }
 
-      memoryBackends.set(service, { backend, owner, live });
-
-      return service;
+      return new BackendService({
+        backend: Effect.succeed(backend),
+        memory: { backend, owner, live },
+      });
     }),
   );
 
@@ -95,4 +104,8 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
     );
 }
 
-export const currentBackend = Effect.flatMap(ViewBackend, (service) => backends.get(service)!);
+export const currentBackend = Effect.flatMap(ViewBackend, (service) =>
+  service instanceof BackendService
+    ? service[BackendState].backend
+    : Effect.die(new TypeError("Expected a Views backend service")),
+);

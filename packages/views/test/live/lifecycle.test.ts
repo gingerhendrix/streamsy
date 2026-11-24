@@ -10,17 +10,19 @@ import {
 } from "@streamsy/projection";
 import {
   Cause,
+  Context,
   Clock,
   Deferred,
   Duration,
   Effect,
   Exit,
   Fiber,
+  Layer,
   Schedule,
   Scope,
   Stream,
 } from "effect";
-import { View, ViewFault } from "../../src/index.ts";
+import { View, ViewBackend, ViewFault } from "../../src/index.ts";
 import { memoryStateOf } from "../../src/memory/backend.ts";
 import { currentBackend } from "../../src/view-backend.ts";
 import { orders, Shop } from "../circuit/support/shop.ts";
@@ -75,6 +77,37 @@ it.live("rejects SQL and duplicate readers while allowing different circuits on 
     yield* third.caughtUp;
     expect((yield* third.rows("orders")).rows).toHaveLength(1);
     expect((yield* second.rows("orders")).rows).toHaveLength(0);
+  }).pipe(Effect.provide(liveHost)),
+);
+
+it.live("shares reader reservations across separate memory backends for the same owner", () =>
+  Effect.gen(function* () {
+    yield* createShop;
+    const first = yield* ViewBackend;
+
+    const second = Context.get(
+      yield* Layer.build(Layer.fresh(ViewBackend.layerMemory)),
+      ViewBackend,
+    );
+
+    expect(first).not.toBe(second);
+
+    const scope = yield* Scope.fork(yield* Effect.scope);
+    yield* liveOrders.at(params).pipe(Scope.provide(scope));
+
+    // No checkpoint yet, so the second backend must reject using the shared reservation.
+    const store = yield* CheckpointStore;
+    expect((yield* store.load(checkpointKey)).token).toBe("0");
+    expect(
+      yield* liveOrders.at(params).pipe(Effect.provideService(ViewBackend, second), Effect.flip),
+    ).toMatchObject({
+      _tag: "ViewFault",
+      message: "View.live live-orders is already active for these parameters",
+    });
+
+    yield* Scope.close(scope, Exit.void);
+    const reopened = yield* liveOrders.at(params).pipe(Effect.provideService(ViewBackend, second));
+    yield* reopened.caughtUp;
   }).pipe(Effect.provide(liveHost)),
 );
 
