@@ -35,7 +35,7 @@ export const mysql: ServerDialect = {
       Array.map(updates, (column) => `${column} = VALUES(${column})`),
       ", ",
     )}`,
-  doNothing: "ON DUPLICATE KEY UPDATE row_hash = row_hash",
+  arrangementInsertIgnore: "ON DUPLICATE KEY UPDATE row_hash = row_hash",
   layoutExists: (sql) =>
     sql`SELECT 1 FROM information_schema.tables
       WHERE table_schema = DATABASE() AND table_name = ${migrationLock}`.pipe(

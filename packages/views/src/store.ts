@@ -1,4 +1,3 @@
-import type { enlist } from "@streamsy/core/internal";
 import type { Effect } from "effect";
 import type { SqlError } from "effect/sql";
 import type { JsonObject, RowKey } from "./ir/contracts.ts";
@@ -21,7 +20,10 @@ export interface Accumulator {
   readonly integerMass?: Readonly<Record<string, number>>;
 }
 
-export type MemoryEnlistFailure = Error & Pick<Effect.Error<ReturnType<typeof enlist>>, "_tag">;
+/** The typed rejection returned by the memory owner's enlist operation. */
+export interface MemoryEnlistFailure extends Error {
+  readonly _tag: "MemoryEnlistDefect";
+}
 
 export type Query<A> = Effect.Effect<A, SqlError.SqlError | ViewDataFault | MemoryEnlistFailure>;
 

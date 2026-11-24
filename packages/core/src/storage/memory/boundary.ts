@@ -64,14 +64,14 @@ class MemoryEnlistDefect extends Schema.TaggedError<
 }) {}
 
 /** Join the memory owner transaction open on this fiber. */
-// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
-export function enlist(owner: object, participant: TransactionParticipant): Effect.Effect<void>;
 export function enlist(
   // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
   owner: object,
   participant: TransactionParticipant,
   onReject: "fail",
 ): Effect.Effect<void, MemoryEnlistDefect>;
+// oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
+export function enlist(owner: object, participant: TransactionParticipant): Effect.Effect<void>;
 // oxlint-disable-next-line anti-slop/no-object-parameters -- The owner is an opaque object identity.
 export function enlist(owner: object, participant: TransactionParticipant, onReject?: "fail") {
   const reject = () => {

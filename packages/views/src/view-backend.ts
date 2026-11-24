@@ -1,13 +1,13 @@
 import { CommitBoundary, MemoryStorage, Streamsy } from "@streamsy/core";
 import { ownerOf } from "@streamsy/core/internal";
-import { CheckpointStore, NonRetryable, OwnerTransaction } from "@streamsy/projection";
+import { CheckpointStore, OwnerTransaction } from "@streamsy/projection";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/sql";
 import type { Backend } from "./backend.ts";
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The owning ViewBackend layer allocates the private memory store here.
 import { makeMemoryBackend } from "./memory/backend.ts";
 import { backendFactoryFor } from "./sql/backend.ts";
-import { ViewFault } from "./view-fault.ts";
+import { nonRetryableViewFault, type ViewFault } from "./view-fault.ts";
 
 const BackendTypeId = Symbol("@streamsy/views/ViewBackend");
 
@@ -46,11 +46,10 @@ export const memoryBackendOf = (service: Opaque) =>
 export const makeViewBackend = (backend: Effect.Effect<Backend, ViewFault>): Opaque =>
   new BackendService({ backend });
 
-const compositionFault = (message: string) =>
-  Object.assign(new ViewFault({ message }), { [NonRetryable]: true });
-
-export const memoryEnlistFault = () =>
-  compositionFault("Views memory state requires the active memory owner transaction on this fiber");
+export const memoryEnlistFault = (): ViewFault =>
+  nonRetryableViewFault(
+    "Views memory state requires the active memory owner transaction on this fiber",
+  );
 
 /** Host-selected operator storage for Views circuits. */
 export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
@@ -69,7 +68,9 @@ export class ViewBackend extends Context.Service<ViewBackend, Opaque>()(
             ? // A server backend caches namespace digests for this operation alone.
               Effect.sync(create)
             : Effect.fail(
-                compositionFault("The Views SQL client is outside the storage owner's transaction"),
+                nonRetryableViewFault(
+                  "The Views SQL client is outside the storage owner's transaction",
+                ),
               ),
         ),
       );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Array, Cause, Effect } from "effect";
+import { Statement } from "effect/sql";
 import { NonRetryable } from "@streamsy/projection";
 import { encodeRowKey } from "../../src/runtime/key.ts";
 import { ViewDataFault } from "../../src/sql/data-fault.ts";
@@ -97,6 +98,29 @@ for (const fixture of serverFixtures) {
         );
       }
     }
+
+    it.live("does no SQL or identifier validation for empty batches", () =>
+      Effect.gen(function* () {
+        const backend = yield* createBackend(fixture);
+        const store = backend.store("empty");
+        const invalidId = "x".repeat(256);
+
+        yield* Effect.gen(function* () {
+          expect(yield* store.getMany(invalidId, [])).toEqual(new Map());
+          expect(yield* store.owners(invalidId, [])).toEqual(new Map());
+          yield* store.put(invalidId, []);
+          yield* store.remove(invalidId, []);
+          yield* store.indexPut(invalidId, []);
+          yield* store.indexRemove(invalidId, []);
+          yield* store.ownersPut(invalidId, new Map());
+          yield* store.ownersRemove(invalidId, []);
+        }).pipe(
+          Effect.provideService(Statement.CurrentTransformer, () =>
+            Effect.die(new Error("An empty Views batch issued SQL")),
+          ),
+        );
+      }),
+    );
 
     it.live("rolls back prior chunks when a concurrent batch rejects a row key", () =>
       Effect.gen(function* () {

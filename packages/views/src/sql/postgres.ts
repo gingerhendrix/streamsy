@@ -33,7 +33,17 @@ export const postgres: ServerDialect = {
       Array.map(updates, (key) => `${key} = excluded.${key}`),
       ", ",
     )}`,
-  doNothing: "ON CONFLICT DO NOTHING",
+  arrangementInsertIgnore: "ON CONFLICT DO NOTHING",
+  layoutExists: (sql) =>
+    // An unqualified CREATE can shadow a visible table later in the search path.
+    // Tables ahead of the creation schema (such as implicit pg_temp) stay visible.
+    sql`SELECT 1 FROM pg_catalog.pg_class AS relation
+      JOIN pg_catalog.pg_namespace AS schema ON schema.oid = relation.relnamespace
+      WHERE relation.oid = pg_catalog.to_regclass('streamsy_view_layout')
+        AND pg_catalog.array_position(pg_catalog.current_schemas(true), schema.nspname)
+          <= pg_catalog.array_position(pg_catalog.current_schemas(true), pg_catalog.current_schema())`.pipe(
+      Effect.map(Array.isReadonlyArrayNonEmpty),
+    ),
   withMigrationLock: (sql, migrate) =>
     sql.withTransaction(
       sql`SELECT pg_advisory_xact_lock(${sql.literal(migrationLock)})`.pipe(

@@ -299,6 +299,7 @@ interface CommitHooks extends Context.ServiceClass.Shape<
 interface ProjectionMarks extends Context.ServiceClass.Shape<
   "@streamsy/core/internal/ProjectionMarks",
   {
+    readonly maxProjectionIdLength?: number;
     readonly mark: (
       projection: string,
       params: ReadonlyArray<string>,

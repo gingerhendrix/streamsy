@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Result } from "effect";
-import { SqlClient } from "effect/sql";
+import { Array, Context, Deferred, Effect, Fiber, Layer, Result } from "effect";
+import { SqlClient, Statement } from "effect/sql";
 import { DurableState } from "@streamsy/core";
 import { NonRetryable, Projection } from "@streamsy/projection";
 import { dialectClient, sqlDialects } from "../../../storage/test/dialects/support.ts";
 import { View, ViewFault } from "../../src/index.ts";
+import { postgres } from "../../src/sql/postgres.ts";
 import { circuit, group, Results, Shop } from "../circuit/support/shop.ts";
 import { fixtureDatabase, hostAt } from "../support/backends.ts";
 
@@ -85,7 +86,10 @@ describe.skipIf(pg.url === undefined)("Postgres Views concurrency", () => {
   it.live("migrates concurrently from separate pools and records one layout version", () =>
     Effect.gen(function* () {
       const [first, second] = yield* twoClients;
+      expect(yield* first.unsafe(pg.tables)).toEqual([]);
+
       yield* Effect.all([View.migrate(first), View.migrate(second)], { concurrency: 2 });
+      yield* View.migrate(first);
       expect(yield* first`SELECT id, version FROM streamsy_view_layout`).toEqual([
         { id: 1, version: 1 },
       ]);
@@ -93,12 +97,27 @@ describe.skipIf(pg.url === undefined)("Postgres Views concurrency", () => {
     }),
   );
 
-  it.live("rejects a newer layout without writing any tables or version", () =>
+  it.live("rejects a newer layout inside the lock before any DDL", () =>
     Effect.gen(function* () {
       const [sql] = yield* twoClients;
       yield* sql`CREATE TABLE streamsy_view_layout (id SMALLINT PRIMARY KEY, version INTEGER NOT NULL)`;
       yield* sql`INSERT INTO streamsy_view_layout (id, version) VALUES (1, 2)`;
-      const fault = yield* View.migrate(sql).pipe(Effect.flip);
+      const statements: string[] = [];
+
+      const fault = yield* View.migrate(sql).pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          statements.push(statement.compile()[0]);
+
+          return Effect.succeed(statement);
+        }),
+        Effect.flip,
+      );
+
+      expect(statements[0]).toContain("pg_advisory_xact_lock");
+      expect(statements).toEqual(
+        expect.arrayContaining([expect.stringContaining("SELECT version")]),
+      );
+      expect(Array.every(statements, (query) => /^SELECT\b/u.test(query))).toBe(true);
       expect(fault).toBeInstanceOf(ViewFault);
       expect(fault).toMatchObject({
         message: "Unsupported Views layout version 2. Supported version is 1",
@@ -108,6 +127,60 @@ describe.skipIf(pg.url === undefined)("Postgres Views concurrency", () => {
       expect(yield* sql`SELECT id, version FROM streamsy_view_layout`).toEqual([
         { id: 1, version: 2 },
       ]);
+    }),
+  );
+
+  it.live("migrates the search path's creation schema and reads its version on rerun", () =>
+    Effect.gen(function* () {
+      const [sql] = yield* twoClients;
+      yield* sql`CREATE SCHEMA views_host`;
+      yield* sql.unsafe(postgres.ddl[0]!);
+      yield* sql`INSERT INTO public.streamsy_view_layout (id, version) VALUES (1, 2)`;
+
+      const migrate = sql.withTransaction(
+        sql`SET LOCAL search_path TO absent_schema, views_host, public`.pipe(
+          Effect.andThen(View.migrate(sql)),
+        ),
+      );
+
+      yield* migrate;
+      yield* migrate;
+
+      expect(yield* sql`SELECT id, version FROM views_host.streamsy_view_layout`).toEqual([
+        { id: 1, version: 1 },
+      ]);
+      expect(yield* sql`SELECT id, version FROM public.streamsy_view_layout`).toEqual([
+        { id: 1, version: 2 },
+      ]);
+      expect(
+        yield* sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'views_host'`,
+      ).toHaveLength(postgres.ddl.length);
+
+      yield* sql`UPDATE views_host.streamsy_view_layout SET version = 3`;
+      expect(yield* migrate.pipe(Effect.flip)).toMatchObject({
+        message: "Unsupported Views layout version 3. Supported version is 1",
+        [NonRetryable]: true,
+      });
+    }),
+  );
+
+  it.live("checks an implicitly visible temporary version before the creation schema", () =>
+    Effect.gen(function* () {
+      const [sql] = yield* twoClients;
+
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`CREATE TEMP TABLE streamsy_view_layout (id SMALLINT PRIMARY KEY, version INTEGER NOT NULL) ON COMMIT DROP`;
+          yield* sql`INSERT INTO streamsy_view_layout (id, version) VALUES (1, 4)`;
+          const fault = yield* View.migrate(sql).pipe(Effect.flip);
+
+          expect(fault).toMatchObject({
+            message: "Unsupported Views layout version 4. Supported version is 1",
+            [NonRetryable]: true,
+          });
+          expect(yield* sql.unsafe(pg.tables)).toEqual([]);
+        }),
+      );
     }),
   );
 

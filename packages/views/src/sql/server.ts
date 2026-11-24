@@ -1,12 +1,11 @@
 /* oxlint-disable effecttsgo/prefer-schema-over-json -- Persist the same JSON text and property order as SQLite. */
-import { NonRetryable } from "@streamsy/projection";
 import { Array as Arr, Effect } from "effect";
 import type { SqlClient, SqlError } from "effect/sql";
 import type { Backend } from "../backend.ts";
 import type { RowKey } from "../ir/contracts.ts";
 import { compareRowKeys, encodeRowKey } from "../runtime/key.ts";
-import type { Entry, IndexEntry, Store } from "../store.ts";
-import { ViewFault } from "../view-fault.ts";
+import type { Entry, IndexEntry, Query, Store } from "../store.ts";
+import { nonRetryableViewFault, type ViewFault } from "../view-fault.ts";
 import { decodeAcc, decodeRow } from "./codecs.ts";
 import { dataFault } from "./data-fault.ts";
 
@@ -29,8 +28,8 @@ type Migration = Effect.Effect<void, SqlError.SqlError | ViewFault>;
 export interface ServerDialect {
   readonly ddl: readonly string[];
   readonly upsert: (keys: readonly string[], updates: readonly string[]) => string;
-  readonly doNothing: string;
-  readonly layoutExists?: (sql: SqlClient.SqlClient) => Effect.Effect<boolean, SqlError.SqlError>;
+  readonly arrangementInsertIgnore: string;
+  readonly layoutExists: (sql: SqlClient.SqlClient) => Effect.Effect<boolean, SqlError.SqlError>;
   readonly withMigrationLock: (sql: SqlClient.SqlClient, migrate: Migration) => Migration;
 }
 
@@ -101,11 +100,8 @@ const readLayoutVersion = (sql: SqlClient.SqlClient) =>
     }>`SELECT version FROM streamsy_view_layout WHERE id = 1`;
 
     if (stored !== undefined && stored.version > layoutVersion)
-      return yield* Object.assign(
-        new ViewFault({
-          message: `Unsupported Views layout version ${stored.version}. Supported version is ${layoutVersion}`,
-        }),
-        { [NonRetryable]: true },
+      return yield* nonRetryableViewFault(
+        `Unsupported Views layout version ${stored.version}. Supported version is ${layoutVersion}`,
       );
 
     return stored?.version;
@@ -115,15 +111,10 @@ export const migrateServer = (sql: SqlClient.SqlClient, dialect: ServerDialect):
   dialect.withMigrationLock(
     sql,
     Effect.gen(function* () {
-      // With autocommitting DDL, reject newer layouts before any write.
-      let stored: number | undefined;
-
-      if (dialect.layoutExists !== undefined && (yield* dialect.layoutExists(sql)))
-        stored = yield* readLayoutVersion(sql);
+      // Reject newer layouts before any DDL, which autocommits on MySQL.
+      const stored = (yield* dialect.layoutExists(sql)) ? yield* readLayoutVersion(sql) : undefined;
 
       for (const statement of dialect.ddl) yield* sql.unsafe(statement);
-
-      if (dialect.layoutExists === undefined) stored = yield* readLayoutVersion(sql);
 
       if (stored === undefined)
         yield* sql`INSERT INTO streamsy_view_layout (id, version) VALUES (1, ${layoutVersion})`;
@@ -149,6 +140,11 @@ const arrangementEntry = (arrangement: string, entry: IndexEntry) =>
     };
   });
 
+const arrangementEntries = (arrangement: string, entries: Arr.NonEmptyReadonlyArray<IndexEntry>) =>
+  Effect.forEach(entries, (entry) => arrangementEntry(arrangement, entry), {
+    concurrency: "unbounded",
+  });
+
 function storeFor(
   sql: SqlClient.SqlClient,
   namespaceHash: Effect.Effect<Bytes>,
@@ -166,7 +162,25 @@ function storeFor(
     dialect.upsert(["ns", "relation", "output_hash"], ["output_key", "owner_key"]),
   );
 
-  const doNothing = sql.literal(dialect.doNothing);
+  const arrangementInsertIgnore = sql.literal(dialect.arrangementInsertIgnore);
+
+  const withHashedKeys = (
+    relation: string,
+    keys: readonly string[],
+    run: (ns: Bytes, id: Bytes, hashes: readonly Bytes[]) => Query<void>,
+  ) =>
+    Effect.gen(function* () {
+      if (keys.length === 0) return;
+
+      const ns = yield* namespaceHash;
+      const relationId = idBytes(relation);
+
+      for (const batch of Arr.chunksOf(keys, 98)) {
+        // Invalid keys already took precedence over an invalid relation id.
+        const hashes = yield* hashKeys(relation, batch);
+        yield* run(ns, yield* relationId, hashes);
+      }
+    });
 
   return {
     rows: (relation) =>
@@ -192,25 +206,27 @@ function storeFor(
       Effect.gen(function* () {
         const result = new Map<string, Entry>();
 
-        for (const batch of Arr.chunksOf(keys, 98)) {
-          const ns = yield* namespaceHash;
-          const hashes = yield* hashKeys(relation, batch);
+        yield* withHashedKeys(relation, keys, (ns, id, hashes) =>
+          Effect.gen(function* () {
+            const rows = yield* sql<{ row_key: Bytes; value: string }>`SELECT row_key, value
+              FROM streamsy_view_integrals WHERE ns = ${ns} AND relation = ${id}
+              AND ${sql.in("row_hash", hashes)}`;
 
-          const rows = yield* sql<{ row_key: Bytes; value: string }>`SELECT row_key, value
-            FROM streamsy_view_integrals WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)}
-            AND ${sql.in("row_hash", hashes)}`;
-
-          for (const { row_key, value } of rows)
-            result.set(decoder.decode(row_key), decodeRow(value));
-        }
+            for (const { row_key, value } of rows)
+              result.set(decoder.decode(row_key), decodeRow(value));
+          }),
+        );
 
         return result;
       }),
     put: (relation, entries) =>
       Effect.gen(function* () {
+        if (entries.length === 0) return;
+
+        const ns = yield* namespaceHash;
+        const id = yield* idBytes(relation);
+
         for (const batch of Arr.chunksOf(entries, 20)) {
-          const ns = yield* namespaceHash;
-          const id = yield* idBytes(relation);
           // When the same key appears twice within one insert, keep its final value.
           const keyed = new Map(Arr.map(batch, (entry) => [encodeRowKey(entry.key), entry]));
 
@@ -231,14 +247,10 @@ function storeFor(
         }
       }),
     remove: (relation, keys) =>
-      Effect.gen(function* () {
-        for (const batch of Arr.chunksOf(keys, 98)) {
-          const ns = yield* namespaceHash;
-          const hashes = yield* hashKeys(relation, batch);
-          yield* sql`DELETE FROM streamsy_view_integrals WHERE ns = ${ns}
-            AND relation = ${yield* idBytes(relation)} AND ${sql.in("row_hash", hashes)}`;
-        }
-      }),
+      withHashedKeys(relation, keys, (ns, id, hashes) =>
+        sql`DELETE FROM streamsy_view_integrals WHERE ns = ${ns}
+          AND relation = ${id} AND ${sql.in("row_hash", hashes)}`.pipe(Effect.asVoid),
+      ),
     snapshotMark: (arrangement, key) =>
       Effect.gen(function* () {
         const ns = yield* namespaceHash;
@@ -251,7 +263,7 @@ function storeFor(
         });
 
         yield* sql`INSERT INTO streamsy_view_arrangements
-          ${sql.insert({ ns, arrangement: id, ...entry })} ${doNothing}`;
+          ${sql.insert({ ns, arrangement: id, ...entry })} ${arrangementInsertIgnore}`;
       }),
     clearIndex: (arrangement) =>
       Effect.gen(function* () {
@@ -261,17 +273,13 @@ function storeFor(
       }),
     indexPut: (arrangement, entries) =>
       Effect.gen(function* () {
-        for (const batch of Arr.chunksOf(entries, 14)) {
-          const ns = yield* namespaceHash;
-          const id = yield* idBytes(arrangement);
+        if (entries.length === 0) return;
 
-          const encoded = yield* Effect.forEach(
-            batch,
-            (entry) => arrangementEntry(arrangement, entry),
-            {
-              concurrency: "unbounded",
-            },
-          );
+        const ns = yield* namespaceHash;
+        const id = yield* idBytes(arrangement);
+
+        for (const batch of Arr.chunksOf(entries, 14)) {
+          const encoded = yield* arrangementEntries(arrangement, batch);
 
           const values = Arr.map(encoded, (entry) => ({ ns, arrangement: id, ...entry }));
           yield* sql`INSERT INTO streamsy_view_arrangements ${sql.insert(values)}`;
@@ -279,17 +287,13 @@ function storeFor(
       }),
     indexRemove: (arrangement, entries) =>
       Effect.gen(function* () {
-        for (const batch of Arr.chunksOf(entries, 20)) {
-          const ns = yield* namespaceHash;
-          const id = yield* idBytes(arrangement);
+        if (entries.length === 0) return;
 
-          const encoded = yield* Effect.forEach(
-            batch,
-            (entry) => arrangementEntry(arrangement, entry),
-            {
-              concurrency: "unbounded",
-            },
-          );
+        const ns = yield* namespaceHash;
+        const id = yield* idBytes(arrangement);
+
+        for (const batch of Arr.chunksOf(entries, 20)) {
+          const encoded = yield* arrangementEntries(arrangement, batch);
 
           const clauses = Arr.map(
             encoded,
@@ -378,29 +382,30 @@ function storeFor(
       Effect.gen(function* () {
         const result = new Map<string, string>();
 
-        for (const batch of Arr.chunksOf(keys, 98)) {
-          const ns = yield* namespaceHash;
-          const hashes = yield* hashKeys(relation, batch);
+        yield* withHashedKeys(relation, keys, (ns, id, hashes) =>
+          Effect.gen(function* () {
+            const rows = yield* sql<{
+              output_key: Bytes;
+              owner_key: Bytes;
+            }>`SELECT output_key, owner_key
+              FROM streamsy_view_key_owners WHERE ns = ${ns} AND relation = ${id}
+              AND ${sql.in("output_hash", hashes)}`;
 
-          const rows = yield* sql<{
-            output_key: Bytes;
-            owner_key: Bytes;
-          }>`SELECT output_key, owner_key
-            FROM streamsy_view_key_owners WHERE ns = ${ns} AND relation = ${yield* idBytes(relation)}
-            AND ${sql.in("output_hash", hashes)}`;
-
-          for (const { output_key, owner_key } of rows)
-            result.set(decoder.decode(output_key), decoder.decode(owner_key));
-        }
+            for (const { output_key, owner_key } of rows)
+              result.set(decoder.decode(output_key), decoder.decode(owner_key));
+          }),
+        );
 
         return result;
       }),
     ownersPut: (relation, owners) =>
       Effect.gen(function* () {
-        for (const batch of Arr.chunksOf([...owners], 20)) {
-          const ns = yield* namespaceHash;
-          const id = yield* idBytes(relation);
+        if (owners.size === 0) return;
 
+        const ns = yield* namespaceHash;
+        const id = yield* idBytes(relation);
+
+        for (const batch of Arr.chunksOf([...owners], 20)) {
           const values = yield* Effect.forEach(
             batch,
             ([key, owner]) =>
@@ -418,14 +423,10 @@ function storeFor(
         }
       }),
     ownersRemove: (relation, keys) =>
-      Effect.gen(function* () {
-        for (const batch of Arr.chunksOf(keys, 98)) {
-          const ns = yield* namespaceHash;
-          const hashes = yield* hashKeys(relation, batch);
-          yield* sql`DELETE FROM streamsy_view_key_owners WHERE ns = ${ns}
-            AND relation = ${yield* idBytes(relation)} AND ${sql.in("output_hash", hashes)}`;
-        }
-      }),
+      withHashedKeys(relation, keys, (ns, id, hashes) =>
+        sql`DELETE FROM streamsy_view_key_owners WHERE ns = ${ns}
+          AND relation = ${id} AND ${sql.in("output_hash", hashes)}`.pipe(Effect.asVoid),
+      ),
   };
 }
 
