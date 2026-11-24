@@ -130,8 +130,11 @@ const removeInTransaction = <R>(
       yield* cleanup.pipe(withOwner(tx, "checkpoint"));
 
       // The cleanup may have deleted rows of a unit that committed since the load, or have
-      // swallowed an error that aborted the transaction.
-      const latest = yield* checkpointState(loadLatest(store, key));
+      // swallowed an error that aborted the transaction. This transaction already locks a
+      // record it found, so only an absent one needs the locking listing.
+      const latest = yield* checkpointState(
+        checkpoint === "absent" ? loadLatest(store, key) : store.load(key),
+      );
 
       if (latest !== (checkpoint === "retired" ? "retired" : "absent"))
         return yield* new ProjectionFault({
