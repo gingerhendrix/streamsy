@@ -1,7 +1,17 @@
+/* oxlint-disable anti-slop-effect/no-service-constructor-imports -- The suite constructs its isolated engine. */
 import { describe, expect, it } from "@effect/vitest";
 import { Array as Arr, Effect, type Scope } from "effect";
 import type { Backend } from "../../src/backend.ts";
 import { encodeRowKey } from "../../src/runtime/key.ts";
+import { makeEngine, type StateChange } from "../../src/sql/engine.ts";
+import { plan, ref, source } from "../sql/fixtures.ts";
+
+const putItem = (id: string, group: string | number, n: number) => ({
+  sourceId: "items",
+  kind: "upsert" as const,
+  key: id,
+  value: { id, group, n },
+});
 
 export function storeContract<E>(
   name: string,
@@ -202,6 +212,117 @@ export function storeContract<E>(
           yield* backend.atomic(backend.clear("clear"));
           expect(yield* read("clear")).toEqual(empty);
           expect(yield* read("keep")).toEqual(populated);
+        }),
+      ),
+    );
+
+    it.live("keeps group keys with NUL and lone surrogates apart", () =>
+      use((backend) =>
+        Effect.gen(function* () {
+          const engine = yield* makeEngine({
+            totals: plan("totals", [
+              source("items"),
+              {
+                kind: "grouped-aggregate",
+                id: "totals",
+                input: "items",
+                groupBy: { group: ref("row", "group") },
+                aggregates: {
+                  total: { kind: "aggregate", function: "sum", expression: ref("row", "n") },
+                },
+              },
+            ]),
+          });
+
+          const groups = ["\u0000", "\ud800", "\udbff", "\ufffd", ""];
+
+          const unit = (n: number) =>
+            engine.process(
+              backend,
+              "groups",
+              Arr.map(groups, (group, i) => putItem(`${n}-${i}`, group, n)),
+            );
+
+          for (const [n, total] of [
+            [1, 1],
+            [2, 3],
+          ] as const)
+            expect(Arr.map(yield* unit(n), (change) => ({ ...change }))).toEqual(
+              expect.arrayContaining(
+                Arr.map(groups, (group) => ({
+                  view: "totals",
+                  kind: "upsert",
+                  key: [group],
+                  value: { group, total },
+                })),
+              ),
+            );
+        }),
+      ),
+    );
+
+    it.live("treats negative zero as zero in index, join and group keys", () =>
+      use((backend) =>
+        Effect.gen(function* () {
+          const engine = yield* makeEngine({
+            top: plan("top", [
+              source("items"),
+              {
+                kind: "top-n",
+                id: "top",
+                input: "items",
+                limit: 1,
+                partitionBy: [ref("row", "group")],
+                orderBy: [
+                  { expression: ref("row", "n"), direction: "descending" },
+                  { expression: ref("row", "id"), direction: "ascending" },
+                ],
+              },
+            ]),
+            totals: plan("totals", [
+              source("items"),
+              {
+                kind: "grouped-aggregate",
+                id: "totals",
+                input: "items",
+                groupBy: { group: ref("row", "group") },
+                aggregates: {
+                  rows: { kind: "aggregate", function: "count" },
+                  largest: { kind: "aggregate", function: "max", expression: ref("row", "n") },
+                },
+              },
+            ]),
+          });
+
+          const unit = (...changes: ReadonlyArray<StateChange>) =>
+            Effect.map(engine.process(backend, "zero", changes), (emitted) =>
+              Arr.map(emitted, (change) => [change.view, change.kind, encodeRowKey(change.key)]),
+            );
+
+          yield* unit(putItem("a", -0, -0), putItem("b", 0, -1));
+          // The stored entries of "a" must be found again, whichever zero they were made from.
+          expect(yield* unit(putItem("a", 0, 0))).toEqual([]);
+          expect(yield* unit(putItem("a", -0, -2))).toEqual(
+            expect.arrayContaining([
+              ["top", "delete", "s1:a"],
+              ["top", "upsert", "s1:b"],
+              ["totals", "upsert", "a:n1:0"],
+            ]),
+          );
+          expect(
+            yield* unit(
+              { sourceId: "items", kind: "delete", key: "a" },
+              { sourceId: "items", kind: "delete", key: "b" },
+            ),
+          ).toEqual(
+            expect.arrayContaining([
+              ["top", "delete", "s1:b"],
+              ["totals", "delete", "a:n1:0"],
+            ]),
+          );
+          expect(yield* unit(putItem("c", 0, 0))).toEqual(
+            expect.arrayContaining([["totals", "upsert", "a:n1:0"]]),
+          );
         }),
       ),
     );
