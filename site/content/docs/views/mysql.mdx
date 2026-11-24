@@ -46,9 +46,11 @@ Several hosts can use the same database. Assign one writer to each binding and s
 
 Keep the storage boundary's default `READ COMMITTED` isolation when several hosts use the database. At this level, a circuit can read operator state consistent with its checkpoint when another host advances an existing binding during the transaction. See [MySQL transactions](/docs/reference/storage/sql-storage#mysql-transactions).
 
+At `REPEATABLE READ`, MySQL can also take gap locks when a unit deletes operator entries that do not exist. Units of two unrelated bindings can then deadlock. The unit that loses fails with a retryable `storage-failure`, and its runner runs it again.
+
 ## Migration and stored state
 
-`View.migrate` reserves one connection and takes the named lock `streamsy_view_layout`. Concurrent hosts wait up to 30 seconds for that lock. MySQL commits DDL one statement at a time. If the layout table exists, the migration checks its version before any DDL. A newer layout fails with a non-retryable `ViewFault`.
+`View.migrate` reserves one connection and takes the named lock `streamsy_view_layout`. Concurrent hosts wait up to 30 seconds for that lock. Call it outside a transaction. Inside one it needs a second connection, and it waits forever when the pool has none. MySQL commits DDL one statement at a time. If the layout table exists, the migration checks its version before any DDL. A newer layout fails with a non-retryable `ViewFault`.
 
 The layout table holds the Views layout version, currently `1`. The migration creates the five operator tables and inserts the version if it is absent. You can rerun the migration after an interrupted startup. Building `SqlStorage.layer` runs the separate [Streamsy storage migration](/docs/reference/storage/sql-storage#sqlstoragelayer).
 

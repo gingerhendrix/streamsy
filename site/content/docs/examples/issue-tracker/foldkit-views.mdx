@@ -78,7 +78,7 @@ export const workspaceViews = View.live({
 
 ## Confirm writes
 
-`SendWrite` decodes the API's `Written` response and dispatches `SucceededSendWrite` with its `awaitOffset`. The model compares that offset with the latest workspace snapshot. When the response arrives first, the model saves `awaitOffset` on the pending write and removes it when a snapshot reaches that offset. When the snapshot arrives first, the model removes the pending write as soon as the response arrives. While the response is in flight, the optimistic row overlays the committed row with the same ID.
+`SendWrite` decodes the API's `Written` response and dispatches `SucceededSendWrite` with its `awaitOffset`. The model compares that offset with the latest workspace snapshot. When the response arrives first, the model saves `awaitOffset` on the pending write and removes it when a snapshot reaches that offset. When the snapshot arrives first, the model removes the pending write as soon as the response arrives. If the server accepted the write but its response does not decode, the command answers with the zero offset, so the model drops the pending write with no notice. While the response is in flight, the optimistic row overlays the committed row with the same ID.
 
 A terminal startup or follower fault reaches the workspace error display. Leaving the page closes the reader.
 

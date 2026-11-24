@@ -57,6 +57,8 @@ Keep the append offset from the write response. Read the input's offset using it
 
 If the response arrives first, save its offset on the pending write and check it on each snapshot. If the snapshot arrives first, compare the response with the offset you already have. Offsets confirm writes only to that input stream. They cannot confirm a write to another stream, including a command stream that feeds the input through a projection.
 
+Offsets belong to one incarnation of an input stream. The reader does not detect an input that is removed and created again at the same address, so an offset of the new stream can look confirmed before its rows arrive. Open a new reader after you recreate an input.
+
 ## Subscribe from Foldkit
 
 Open the binding inside the subscription. Use the route parameters as subscription dependencies so Foldkit closes the old subscription when they change. This example uses `shop` and `pageHost` from the Effect example.
@@ -106,7 +108,7 @@ The subscription turns snapshots into messages and reports typed read failures. 
 
 ## End a reader
 
-Two readers can open the same circuit and parameters. Each replays the inputs independently. When a reader's scope closes, Views interrupts the follower and releases its private host. Existing and late subscribers can receive the final snapshot before the stream ends. `snapshot` keeps the final committed rows and offsets after close. A pending `caughtUp` wait is interrupted if the reader ends before it reaches the startup tails.
+Two readers can open the same circuit and parameters. Each replays the inputs independently. When a reader's scope closes, Views interrupts the follower and releases its private host. Existing and late subscribers can receive the final snapshot before the stream ends. `snapshot` keeps the final committed rows and offsets after close. If the reader ends without a fault before it reaches the startup tails, `caughtUp` interrupts its caller, and `Effect.catch` does not see it. This happens when the scope closes or when an input is removed during catch-up.
 
 If the reader fails, `snapshots` delivers the terminal fault after any final snapshot. A `caughtUp` wait that has yet to see a caught-up snapshot gets the same fault. Missing input history can fail the reader with `history-unavailable`. See the [live reader reference](/docs/views/reference#viewlive).
 
@@ -118,4 +120,4 @@ A page load replays every input from its first offset. The page stores no checkp
 
 A parameter change opens a new binding and replays its inputs. Put related views in one circuit and select the current group in the UI when a group key meets your needs.
 
-Snapshots contain whole views in encoded row-key order. The reader has no caller-defined sort, pagination, deltas, or exposed row keys. Select a stable ID as a row field if the UI needs one. A commit clones changed row values. The first read of a changed view sorts its keys and allocates an array of row references. Later reads reuse that array until the view changes again.
+Snapshots contain whole views in encoded row-key order. That order is not the order of a `top` view, and a key encodes its length first, so `b` comes before `aa`. The reader has no caller-defined sort, pagination, deltas, or exposed row keys. Select a stable ID as a row field if the UI needs one. A commit clones changed row values. The first read of a changed view sorts its keys and allocates an array of row references. Later reads reuse that array until the view changes again. A subscriber that reads every snapshot during catch-up sorts each changed view once for every unit.

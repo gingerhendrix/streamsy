@@ -154,7 +154,7 @@ Declaration-time checks:
 | `at(params)` | Effect of `LiveReader<V>`, with `CircuitError` | Opens a reader with a private heap host. Requires `Scope` and the input State services                                                       |
 | `snapshot`   | `Effect<LiveSnapshot<V>>`                      | Reads the latest committed rows of all views, their input offsets, and catch-up status                                                       |
 | `snapshots`  | `Stream<LiveSnapshot<V>, CircuitError>`        | Starts with the latest snapshot and emits after commits and when initial catch-up succeeds. Slow subscribers can skip intermediate snapshots |
-| `caughtUp`   | `Effect<void, CircuitError>`                   | Waits for the first snapshot that reaches the startup tails                                                                                  |
+| `caughtUp`   | `Effect<void, CircuitError>`                   | Waits for the first snapshot that reaches the startup tails. Interrupts its caller if the reader ends without a fault before that            |
 
 Open a reader outside any transaction. A terminal startup or follower fault fails `snapshots`, including `ViewDataFault` from a bad input row and `ProjectionFault` with reason `history-unavailable` when required history is missing. A `caughtUp` wait that is still waiting for the first caught-up snapshot gets the same fault. Offsets are scoped to their input streams. A follower parked when an input closes without data can take up to 30 seconds to notice the close. See [Read live snapshots](/docs/views/live).
 
