@@ -12,7 +12,15 @@ import { Intent } from "../src/domain/intent.ts";
 import { Message } from "../src/message.ts";
 import type { Model } from "../src/model.ts";
 import { init, update } from "../src/update.ts";
-import { issue, project, receivedViews, stamp, upsertIssue, upsertProject } from "./support.ts";
+import {
+  issue,
+  project,
+  receivedViews,
+  stamp,
+  upsertIssue,
+  upsertProject,
+  writeOffset,
+} from "./support.ts";
 
 const seeded = [upsertProject(project), upsertIssue(issue("issue_a"))];
 
@@ -53,7 +61,7 @@ describe("the workspace stream", () => {
 });
 
 describe("optimistic writes (A4)", () => {
-  test("a new issue is pending until its txid arrives on the stream", () => {
+  test("a new issue is pending until its offset commits", () => {
     story(
       update,
       given(live),
@@ -79,13 +87,20 @@ describe("optimistic writes (A4)", () => {
         });
       }),
       Command.expectHas(SendWrite),
-      Command.resolve(SendWrite, Message.SucceededSendWrite({ txid: "tx-1" })),
+      Command.resolve(
+        SendWrite,
+        Message.SucceededSendWrite({ txid: "tx-1", awaitOffset: writeOffset }),
+      ),
       // The server accepted the write, but the stream has not shown it yet.
       model((current) => expect(current.pending).toHaveLength(1)),
       message(
-        receivedViews([...seeded, upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))]),
+        receivedViews(
+          [upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))],
+          true,
+          live.rows,
+          writeOffset,
+        ),
       ),
-      message(Message.ConfirmedWrites({ txids: ["tx-1"] })),
       model((current) => {
         expect(current.pending).toHaveLength(0);
         expect(current.rows.issues["issue_abcdef12"]?.title).toBe("Write tests");
@@ -143,7 +158,10 @@ describe("optimistic writes (A4)", () => {
       model((current) =>
         expect(current.maybeSelectedProjectId).toEqual(Option.some("proj_abcdef12")),
       ),
-      Command.resolve(SendWrite, Message.SucceededSendWrite({ txid: "tx-3" })),
+      Command.resolve(
+        SendWrite,
+        Message.SucceededSendWrite({ txid: "tx-3", awaitOffset: writeOffset }),
+      ),
     );
   });
 
@@ -177,7 +195,7 @@ describe("renaming an issue", () => {
       Command.expectExact(GenerateStamp({ intent: rename })),
       Command.resolveAll(
         [GenerateStamp, Message.CompletedGenerateStamp({ intent: rename, stamp: stamp("tx-4") })],
-        [SendWrite, Message.SucceededSendWrite({ txid: "tx-4" })],
+        [SendWrite, Message.SucceededSendWrite({ txid: "tx-4", awaitOffset: writeOffset })],
       ),
       // Closing the field removes it, and the browser sends one more blur.
       message(Message.BlurredTitleDraft()),

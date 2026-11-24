@@ -33,14 +33,6 @@ const trackerView = (model: Model, h: HtmlBuilder<Message>): Html => {
         [connectionBadgeView(model.isOnline, h), nameFieldView(model.displayName, h)],
         h,
       ),
-      model.canConfirmWrites
-        ? h.empty
-        : h.p(
-            [h.Role("status")],
-            [
-              "Write confirmation stopped. Changes still sync. Reload to restore pending indicators.",
-            ],
-          ),
       h.section(
         [h.Class("layout")],
         [projectsPanelView(model, workspace, h), issuesPanelView(model, workspace, h)],

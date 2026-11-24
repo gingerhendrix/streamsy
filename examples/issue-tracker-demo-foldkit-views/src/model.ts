@@ -1,3 +1,4 @@
+import { Offset } from "@streamsy/core";
 import { Schema } from "effect";
 import { defineTaggedUnion } from "foldkit/schema";
 import { Counts } from "./workspace-views.ts";
@@ -32,9 +33,9 @@ export const Model = Schema.Struct({
   /** The committed outputs of the page circuit. */
   rows: Rows,
   counts: Counts,
-  /** Local changes that wait for their txid on the stream. */
+  offset: Offset,
+  /** Local changes that wait until the view reaches their append offset. */
   pending: Schema.Array(PendingWrite),
-  canConfirmWrites: Schema.Boolean,
   maybeSelectedProjectId: Schema.Option(Schema.String),
   filter: StatusFilter,
   projectName: Schema.String,

@@ -1,3 +1,4 @@
+import { Offset, ZERO_OFFSET } from "@streamsy/core";
 import { Array, Record } from "effect";
 import { issueStatuses } from "@streamsy/issue-tracker-demo-contract/state-schema";
 import { emptyRows, workspaceView, type Rows } from "../src/domain/workspace.ts";
@@ -64,11 +65,14 @@ export const stamp = (txid: string): Stamp => ({
   at: "2026-10-25T12:00:00.000Z",
 });
 
+export const writeOffset = Offset.make("0000000000000002_0000000000000000");
+
 /** A snapshot fixture after applying the given State events. */
 export const receivedViews = (
   changes: ReadonlyArray<StateEvent>,
   caughtUp = true,
   previous: Rows = emptyRows,
+  offset = ZERO_OFFSET,
 ) => {
   const rows = applyChanges(previous, changes);
   const workspace = workspaceView(rows, []);
@@ -77,6 +81,7 @@ export const receivedViews = (
   return Message.ReceivedViews({
     rows,
     caughtUp,
+    offset,
     counts: {
       issueCountByProject: issueCountByProject(workspaceView(rows, [])),
       statusCounts: Array.flatMap(Record.toEntries(byProject), ([projectId, issues]) => {

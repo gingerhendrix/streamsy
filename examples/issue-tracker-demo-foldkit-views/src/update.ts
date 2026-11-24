@@ -1,3 +1,4 @@
+import { compare, ZERO_OFFSET } from "@streamsy/core";
 import { Array, Option, Record, Schema } from "effect";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
@@ -36,7 +37,7 @@ export const init = (flags: Flags): UpdateReturn => ({
     rows: emptyRows,
     counts: { issueCountByProject: {}, statusCounts: [] },
     pending: [],
-    canConfirmWrites: true,
+    offset: ZERO_OFFSET,
     maybeSelectedProjectId: Option.none(),
     filter: "all",
     projectName: "",
@@ -70,24 +71,15 @@ const stamp = (model: Model, intent: Intent): UpdateReturn => ({
 
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
-    ReceivedViews: ({ rows, counts, caughtUp }) => ({
+    ReceivedViews: ({ rows, counts, offset, caughtUp }) => ({
       model: modifyFields(model, {
         rows: () => rows,
         counts: () => counts,
+        offset: () => offset,
         sync: (sync) => (caughtUp ? Sync.Live() : sync),
-      }),
-    }),
-
-    ConfirmedWrites: ({ txids }) => ({
-      model: modifyFields(model, {
-        pending: Array.filter(({ txid }) => !Array.contains(txids, txid)),
-      }),
-    }),
-
-    StoppedConfirmingWrites: () => ({
-      model: modifyFields(model, {
-        canConfirmWrites: () => false,
-        pending: () => [],
+        pending: Array.filter(
+          ({ awaitOffset }) => awaitOffset === undefined || compare(offset, awaitOffset) < 0,
+        ),
       }),
     }),
 
@@ -208,15 +200,21 @@ export const update = (model: Model, message: Message) =>
 
       return {
         model: modifyFields(model, {
-          pending: (writes) => (model.canConfirmWrites ? Array.append(writes, pending) : writes),
+          pending: Array.append(pending),
           maybeSelectedProjectId: () => maybeNewProjectId,
         }),
         commands: [SendWrite({ workspaceId: model.workspaceId, pending })],
       };
     },
 
-    // The row stays pending until its txid arrives on the stream.
-    SucceededSendWrite: () => ({ model }),
+    SucceededSendWrite: ({ txid, awaitOffset }) => ({
+      model: modifyFields(model, {
+        pending:
+          compare(model.offset, awaitOffset) >= 0
+            ? Array.filter((write) => write.txid !== txid)
+            : Array.map((write) => (write.txid === txid ? { ...write, awaitOffset } : write)),
+      }),
+    }),
 
     FailedSendWrite: ({ txid, error }) => {
       const noticeId = model.nextNoticeId;

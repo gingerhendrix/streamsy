@@ -49,7 +49,11 @@ export const Write = defineTaggedUnion({
 
 export type Write = typeof Write.Type;
 
-export const PendingWrite = Schema.Struct({ txid: Schema.String, write: Write });
+export const PendingWrite = Schema.Struct({
+  txid: Schema.String,
+  write: Write,
+  awaitOffset: Schema.optionalKey(Schema.String),
+});
 
 export type PendingWrite = typeof PendingWrite.Type;
 

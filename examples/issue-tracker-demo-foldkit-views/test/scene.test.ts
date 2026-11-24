@@ -20,7 +20,15 @@ import { Message } from "../src/message.ts";
 import type { Model } from "../src/model.ts";
 import { init, update } from "../src/update.ts";
 import { view } from "../src/view/view.ts";
-import { issue, project, receivedViews, stamp, upsertIssue, upsertProject } from "./support.ts";
+import {
+  issue,
+  project,
+  receivedViews,
+  stamp,
+  upsertIssue,
+  upsertProject,
+  writeOffset,
+} from "./support.ts";
 
 // Scene tests drive the page through the view: they click, type and submit,
 // resolve the Commands that `update` returns, and check what the page shows.
@@ -67,7 +75,7 @@ describe("the workspace stream", () => {
 });
 
 describe("optimistic writes (A4)", () => {
-  test("a new issue shows faded at once and turns solid when its txid arrives", () => {
+  test("a new issue shows faded at once and turns solid when its offset commits", () => {
     const intent = Intent.CreateIssue({ projectId: project.id, title: "Write tests" });
 
     scene(
@@ -85,13 +93,20 @@ describe("optimistic writes (A4)", () => {
       expect(pendingRow).toHaveAttr("aria-busy", "true"),
       expect(role("button", { name: /^All\s*2$/ })).toExist(),
       expect(role("button", { name: /^Open\s*1$/ })).toExist(),
-      Command.resolve(SendWrite, Message.SucceededSendWrite({ txid: "tx-1" })),
+      Command.resolve(
+        SendWrite,
+        Message.SucceededSendWrite({ txid: "tx-1", awaitOffset: writeOffset }),
+      ),
       // The server said yes, but only the stream confirms the write.
       expect(pendingRow).toExist(),
       Subscription.emit(
-        receivedViews([...seeded, upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))]),
+        receivedViews(
+          [upsertIssue(issue("issue_abcdef12", { title: "Write tests" }))],
+          true,
+          live.rows,
+          writeOffset,
+        ),
       ),
-      Subscription.emit(Message.ConfirmedWrites({ txids: ["tx-1"] })),
       expect(pendingRow).toBeAbsent(),
       expect(role("button", { name: "Write tests" })).toExist(),
       expect(role("button", { name: /^All\s*3$/ })).toExist(),

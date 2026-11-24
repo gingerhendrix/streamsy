@@ -1,3 +1,4 @@
+import { compare } from "@streamsy/core";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Test entry points supply the child process and HTTP services. */
 /* oxlint-disable effecttsgo/global-fetch -- The browser transport probes forward native requests and observe their abort signals. */
 import { BunServices } from "@effect/platform-bun";
@@ -6,10 +7,11 @@ import {
   decodeStateEvents,
   issueStatuses,
 } from "@streamsy/issue-tracker-demo-contract/state-schema";
-import type {
-  CommentInput,
-  IssueInput,
-  ProjectInput,
+import {
+  Written,
+  type CommentInput,
+  type IssueInput,
+  type ProjectInput,
 } from "@streamsy/issue-tracker-demo-contract/api-schema";
 import { spawnServer } from "@streamsy/test-support/server";
 import {
@@ -38,6 +40,7 @@ import {
   within,
 } from "foldkit/scene";
 import { afterEach, beforeAll, afterAll, expect, test, vi } from "vitest";
+import { SendWrite } from "../src/command.ts";
 import { Intent } from "../src/domain/intent.ts";
 import { Message } from "../src/message.ts";
 import { emptyRows, workspaceView } from "../src/domain/workspace.ts";
@@ -183,7 +186,10 @@ test("replays the workspace and matches the old selectors after every API write"
             HttpClientRequest.bodyJsonUnsafe(body),
           ),
         )
-        .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.andThen(verify));
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.tap(() => verify),
+        );
 
     yield* write("POST", "projects", { id: "proj_views", name: "Views" });
     const txid = "00000000-0000-4000-8000-000000000008";
@@ -202,12 +208,18 @@ test("replays the workspace and matches the old selectors after every API write"
       check(selector(".filter-chip.selected .filter-count")).toHaveText("0"),
     );
 
-    yield* write("POST", "issues", {
+    const written = yield* write("POST", "issues", {
       id: "issue_abcdef12",
       projectId: "proj_views",
       title: "Replay",
       txid,
     });
+
+    const receipt = yield* HttpClientResponse.schemaBodyJson(Written)(written);
+    yield* Ref.update(
+      model,
+      (current) => update(current, Message.SucceededSendWrite(receipt)).model,
+    );
     yield* matchesModel(model, (current) => expect(current.pending).toHaveLength(0));
     yield* write("POST", "issues", {
       id: "issue_views_b",
@@ -276,11 +288,11 @@ test("waits for caughtUp and aborts the parked requests when the page leaves", (
 
       yield* Deferred.succeed(releaseHead, undefined);
       yield* matchesModel(model, live);
-      yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(2)));
+      yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(1)));
       yield* leave;
       yield* Deferred.await(closed).pipe(Effect.timeout("3 seconds"));
       yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(0)));
-      expect(aborted).toBe(2);
+      expect(aborted).toBe(1);
     }).pipe(Effect.ensuring(Effect.andThen(Deferred.succeed(releaseHead, undefined), leave)));
   }).pipe(Effect.runPromise));
 
@@ -293,7 +305,6 @@ test.each([
   },
 ])("renders a terminal View.live $method failure in the page", ({ method, error }) =>
   Effect.gen(function* () {
-    // A failing startup HEAD or first Views GET leaves the other reader intact.
     vi.stubGlobal("fetch", (input: RequestInfo | URL, options?: RequestInit) => {
       const isViewReplay =
         requestUrl(input).searchParams.get("offset") === "0000000000000000_0000000000000000";
@@ -314,76 +325,98 @@ test.each([
   }).pipe(Effect.scoped, Effect.runPromise),
 );
 
-test("keeps live views and writes available when only confirmation stops", () =>
+test.each([
+  { order: "response first", suffix: "face0001", responseFirst: true },
+  { order: "snapshot first", suffix: "face0002", responseFirst: false },
+])("confirms a write over HTTP with the $order", ({ order, suffix, responseFirst }) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const refuseConfirmation = yield* Deferred.make();
-    // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- The native fetch callback waits on this promise.
-    const refuse = Effect.runPromise(Deferred.await(refuseConfirmation));
+    const model = yield* Ref.make(startModel("main"));
+    const release = yield* Deferred.make<void>();
+    const issueId = `issue_${suffix}`;
+    const title = `Confirm with ${order}`;
 
-    vi.stubGlobal("fetch", (input: RequestInfo | URL, options?: RequestInit) =>
-      requestUrl(input).searchParams.get("offset") === "-1"
-        ? refuse.then(() => new Response(null, { status: 404 }))
-        : nativeFetch(input, options),
+    const apply = (message: Message) =>
+      Ref.update(model, (current) => update(current, message).model);
+
+    yield* workspaceMessages("main", `${origin}/streams`).pipe(
+      Stream.tap((message) =>
+        responseFirst && message._tag === "ReceivedViews" && message.rows.issues[issueId]
+          ? Deferred.await(release)
+          : Effect.void,
+      ),
+      Stream.runForEach(apply),
+      Effect.forkScoped,
+    );
+    yield* matchesModel(model, live);
+
+    const txid = `${suffix}-0000-4000-8000-000000000001`;
+    const intent = Intent.CreateIssue({ projectId: "proj_streamsy", title });
+    yield* apply(
+      Message.CompletedGenerateStamp({
+        intent,
+        stamp: { ...stamp(txid), entropy: txid },
+      }),
+    );
+    const pending = (yield* Ref.get(model)).pending[0];
+
+    const commandClient = client.pipe(
+      HttpClient.mapRequest(HttpClientRequest.prependUrl(origin)),
+      HttpClient.tap(() => (responseFirst ? Effect.void : Deferred.await(release))),
     );
 
-    const model = yield* Ref.make(startModel("main"));
-    yield* consume("main", model).pipe(Effect.forkScoped);
+    const send = yield* SendWrite({ workspaceId: "main", pending }).effect.pipe(
+      Effect.provideService(HttpClient.HttpClient, commandClient),
+      Effect.forkScoped,
+    );
 
-    yield* Effect.gen(function* () {
-      const ready = yield* matchesModel(model, (actual) => {
-        live(actual);
-        expect(actual.rows.projects["proj_streamsy"]?.name).toBe("Streamsy Demo");
-        expect(actual.counts.issueCountByProject["proj_streamsy"]).toBe(4);
-      });
+    const applyResponse = Effect.gen(function* () {
+      const response = yield* Fiber.join(send);
+      expect(response._tag).toBe("SucceededSendWrite");
 
-      const intent = Intent.CreateIssue({ projectId: "proj_streamsy", title: "Shows from Views" });
-      const txid = "00000000-0000-4000-8000-000000000009";
-      const request = Message.CompletedGenerateStamp({ intent, stamp: stamp(txid) });
+      if (response._tag !== "SucceededSendWrite") return yield* Effect.die(response.error);
 
-      const pending = yield* Ref.updateAndGet(model, (current) => update(current, request).model);
-      expect(pending.pending).toHaveLength(1);
+      yield* apply(response);
 
-      yield* Deferred.succeed(refuseConfirmation, undefined);
+      return response.awaitOffset;
+    });
 
-      const degraded = yield* matchesModel(model, (actual) => {
-        live(actual);
-        expect(actual.canConfirmWrites).toBe(false);
-        expect(actual.rows).toEqual(ready.rows);
-        expect(actual.counts).toEqual(ready.counts);
-        expect(actual.pending).toHaveLength(0);
-      });
-
-      scene(
-        { update, view },
-        given({ ...degraded, maybeSelectedProjectId: Option.some("proj_streamsy") }),
-        check(
-          text(
-            "Write confirmation stopped. Changes still sync. Reload to restore pending indicators.",
-          ),
-        ).toExist(),
-        expectAll(all.selector(".issue-row")).toHaveCount(4),
-        check(selector(".filter-chip.selected .filter-count")).toHaveText("4"),
+    const assertShown = (current: Model, isPending: boolean) => {
+      const shown = Array.filter(
+        workspaceView(current.rows, current.pending).issues,
+        ({ row }) => row.id === issueId,
       );
 
-      const unstaged = update(degraded, request);
-      expect(unstaged.model.pending).toHaveLength(0);
-      expect(unstaged.commands).toHaveLength(1);
+      expect(shown).toEqual([{ row: expect.objectContaining({ title }), isPending }]);
+    };
 
-      const body: IssueInput = { projectId: "proj_streamsy", title: "Shows from Views", txid };
-      yield* HttpClientRequest.post(`${origin}/api/w/main/issues`).pipe(
-        HttpClientRequest.bodyJsonUnsafe(body),
-        client.execute,
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-      );
+    const awaitOffset = yield* Effect.gen(function* () {
+      if (responseFirst) {
+        const offset = yield* applyResponse;
+        const current = yield* Ref.get(model);
+        expect(current.rows.issues[issueId]).toBeUndefined();
+        expect(current.pending[0]?.awaitOffset).toBe(offset);
+        assertShown(current, true);
+        yield* Deferred.succeed(release, undefined);
 
-      yield* matchesModel(model, (actual) => {
-        live(actual);
-        expect(actual.canConfirmWrites).toBe(false);
-        expect(actual.counts.issueCountByProject["proj_streamsy"]).toBe(5);
-        expect(Record.values(actual.rows.issues)).toEqual(
-          expect.arrayContaining([expect.objectContaining({ title: body.title })]),
-        );
+        return offset;
+      }
+
+      const current = yield* matchesModel(model, (value) => {
+        expect(value.rows.issues[issueId]?.title).toBe(title);
       });
-    }).pipe(Effect.ensuring(Deferred.succeed(refuseConfirmation, undefined)));
-  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise));
+
+      expect(current.pending[0]?.awaitOffset).toBeUndefined();
+      assertShown(current, true);
+      yield* Deferred.succeed(release, undefined);
+
+      return yield* applyResponse;
+    });
+
+    yield* matchesModel(model, (current) => {
+      expect(compare(current.offset, awaitOffset)).toBeGreaterThanOrEqual(0);
+      expect(current.pending).toHaveLength(0);
+      assertShown(current, false);
+    });
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise),
+);

@@ -6,6 +6,7 @@ import { KeyValueStore } from "effect/persistence";
 import { Command, Dom, Navigation } from "foldkit";
 import {
   WorkspaceCreated,
+  Written,
   type CommentInput,
   type IssueInput,
   type ProjectInput,
@@ -99,8 +100,8 @@ const refusal = (response: HttpClientResponse.HttpClientResponse) =>
   );
 
 /**
- * Send one write. Success only means the server accepted it: the row stays
- * pending until its txid arrives on the stream.
+ * Send one write and read its append offset. The row stays pending until
+ * the workspace snapshot reaches that offset.
  */
 export const SendWrite = Command.define("SendWrite", {
   args: { workspaceId: Schema.String, pending: PendingWrite },
@@ -110,7 +111,11 @@ export const SendWrite = Command.define("SendWrite", {
       const client = yield* HttpClient.HttpClient;
       const response = yield* client.execute(writeRequest(workspaceId, pending));
 
-      if (response.status < 300) return Message.SucceededSendWrite({ txid: pending.txid });
+      if (response.status < 300) {
+        const { awaitOffset } = yield* HttpClientResponse.schemaBodyJson(Written)(response);
+
+        return Message.SucceededSendWrite({ txid: pending.txid, awaitOffset });
+      }
 
       return Message.FailedSendWrite({ txid: pending.txid, error: yield* refusal(response) });
     }).pipe(
