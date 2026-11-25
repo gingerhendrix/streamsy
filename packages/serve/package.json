@@ -80,12 +80,12 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@alchemy.run/cloudflare": "2.0.0-beta.85",
-    "@effect/platform-bun": "^4.1.2",
-    "@effect/platform-deno": "^4.1.2",
-    "@effect/platform-node": "^4.1.2",
-    "alchemy": "2.0.0-beta.85",
-    "effect": "^4.1.2"
+    "@alchemy.run/cloudflare": "2.0.0-beta.87",
+    "@effect/platform-bun": "^4.1.5",
+    "@effect/platform-deno": "^4.1.5",
+    "@effect/platform-node": "^4.1.5",
+    "alchemy": "2.0.0-beta.87",
+    "effect": "^4.1.5"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
