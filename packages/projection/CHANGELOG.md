@@ -1,3 +1,92 @@
+## @streamsy/projection@0.14.0
+
+### Give nested SQL clients their own transactions
+
+In 0.13.0, nesting `CommitBoundary.withTransaction` on a second SQL client ran the inner body without a transaction, so a failure could leave partial writes behind.
+
+- **Independent inner transactions:** A nested `CommitBoundary.withTransaction` on a second SQL client now opens its own transaction, which commits first and survives an outer rollback. Non-transactional projections running on the second client now save their checkpoints inside a transaction. Durable Object clients still share the driver's transaction.
+- **Stricter boundary and lifetime checks:** Open `CommitBoundary.withTransaction` before nesting raw `sql.withTransaction` on that client. Mutating a second client inside its raw `sql.withTransaction` while only the first client's boundary is open now dies instead of running. Fibers or finalizers that outlive a transaction body and reuse its old context now die if they attempt to enter the boundary or mutate storage.
+
+See [Commit with your own tables](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables).
+
+### List projection bindings and routed outputs on MySQL (schema v4)
+
+`Projection.bindings`, startup binding discovery for attached projections, and `Projection.retire` / `Projection.forget` for bindings with routed outputs now work on MySQL. Durable pending marks on MySQL also now support encoded params longer than 512 code points, and both attach hosts reject MySQL projection IDs longer than 255 code points when durability is enabled.
+
+**Breaking change (MySQL schema v4):** Opening a MySQL database adds `full_key` to `streamsy_owner_records` and `full_params` to `streamsy_projection_pending`, upgrading MySQL storage to schema version 4. Streamsy 0.13.0 cannot open a MySQL database at version 4. SQLite and Postgres remain at schema version 3.
+
+**Upgrade steps for MySQL:**
+
+- Stop every 0.13.0 process before opening the database with this release. A running 0.13.0 process can read the fitted form of a long pending mark, fail to decode it, and delete the mark without running the binding (leaving it idle until its next commit).
+- Any MySQL owner key longer than 512 code points written by 0.13.0 becomes listable again after its next write; until then, listing a range containing that key fails.
+
+See [MySQL owner record listing](https://streamsy.dev/docs/reference/storage/sql-storage#mysql-owner-record-listing).
+
+### MySQL storage transactions default to `READ COMMITTED`
+
+**Breaking change:** On MySQL, `CommitBoundary.withTransaction` now sets `READ COMMITTED` for each transaction regardless of the session, pool, or global default (including `SERIALIZABLE`), so every plain read takes a fresh snapshot. At this isolation level, locking reads cannot lock absent rows or guard ranges against inserts—use a unique key or lock an existing parent row instead.
+
+This isolation level ensures consistent reads across concurrent hosts:
+
+- Views circuits in a host transaction read operator state consistent with checkpoints when another host advances the binding (with or without earlier application reads, and when running two circuits in one transaction).
+- `Projection.forget` sees a routed binding's first checkpoint committed concurrently by another host.
+- `Projection.bindings` sees newly committed bindings from other hosts during the same transaction.
+
+**Configuration and requirements:**
+
+- **Opting out:** Set Effect's `SqlClient.BeginTransaction` to `"START TRANSACTION"` to use the session default. Running under `REPEATABLE READ` reintroduces stale Views results in the sequences above and causes `Projection.forget` to fail with a retryable `token-conflict` if its snapshot predates a new checkpoint.
+- **Multi-statement requests:** Storage sends `SET TRANSACTION` and `START TRANSACTION` in one request (per-transaction only; keep the session in autocommit). Effect's `mysql2` client enables multi-statement support by default, whereas passing `-MULTI_STATEMENTS` or using a custom client without it fails at the first transaction.
+- **Binary logging:** With binary logging enabled, InnoDB writes in `READ COMMITTED` transactions require `binlog_format=ROW` or `MIXED` (logged by row in mixed mode).
+
+See the [MySQL isolation-level reference](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html) and [MySQL transactions](https://streamsy.dev/docs/reference/storage/sql-storage#mysql-transactions).
+
+### Use `generation` instead of `version` on projections and Views circuits
+
+**Breaking change:** Projection and Views circuit declarations now use `generation` alone to version stored state and rebuilds, and reject any defined `version` with `RangeError`.
+
+- **Declarations:** Remove `version: 1` to keep the existing generation. For any other version, remove `version` and raise `generation` above every generation the `id` has previously used.
+- **Types and custom stores:** `ProjectionKey`, `Unit`, and the derived declaration and binding types no longer have a `version` field. If custom stores or handlers included `key.version` or `unit.version` in storage keys, substitute the literal `1` to preserve keys for the former default version. Passing a key object with a defined `version` other than `1` to `recordKey`, `Projection.forget`, or a `fromStore` checkpoint store throws `RangeError`.
+- **Unchanged:** `View.fn(name, version, implementation)` keeps its function version argument.
+
+When upgrading a declaration that used a `version` other than `1`, stop the old runners, retain full input history, and prepare output addresses before starting the upgraded process. Let the new generation catch up and move readers before retiring the old binding with a one-off 0.13.0 script that only calls `retire`. See [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version).
+
+### Unified transaction commits on SQL and memory hosts
+
+`Commit.transaction` and `Commit.transactionWithCleanup` now use one unified transaction model across SQL and `MemoryStorage` hosts: compose `Transaction.layer` and `CheckpointStore.layer` over the same storage owner so each unit, its outputs, and its checkpoint (or lifecycle cleanup on `forget`/`retire`) commit together.
+
+**Breaking change:**
+
+- `Transaction` no longer exposes a `sql` field. Read `SqlClient` from Effect context where SQL is needed, and use `Layer.provideMerge` when composing the host so the storage owner's `SqlClient` remains in the runner's context (including for `StateTable` and `FoldByKey` runners).
+- The `Commit.transactionWithCleanup` callback now takes only the checkpoint key.
+- `StateTable` and `FoldByKey` fail with `unsupported-composition` if `SqlClient` has no open transaction. Wrap direct `table.sync()` calls in `Transaction.withTransaction`.
+- The transaction now verifies checkpoint ownership on every unit, including units without routed outputs. Use the `load` function provided by `CheckpointStore.layer` directly—wrapping `load` drops owner metadata and fails with `unsupported-composition`.
+
+See [`Commit.transaction`](https://streamsy.dev/docs/reference/projection/commit#committransaction).
+
+### Retire forgotten routed streams and undecodable checkpoints
+
+- `Projection.forget(bound)` now marks routed output records as forgotten rather than deleting them, so `Projection.retire` can still locate and clean up those streams. Pass the binding from `declaration.at(params)` with its routed outputs. Replay checks that each forgotten stream starts empty and open.
+- `Projection.retire` can now write a tombstone over an undecodable checkpoint and close or remove its streams in the same call.
+- **Breaking change:** `Retired.streams` replaces `Retired.outputs` and `Retired.routed`, and `Projection.RetiredOutput` is renamed to `Projection.RetiredStream` with an `output` field. The array is sorted by output name and stream id, and includes shared wrapped outputs as well as the wrapped accepted stream under `"@streamsy/accepted"`.
+- **Custom stores:** Custom `RouteRecords` implementations must now provide `state` and `forget` (`fromStore` from `@streamsy/projection/checkpoint` supplies both). See [`RouteRecords`](https://streamsy.dev/docs/reference/projection/checkpoint-store#routerecords).
+
+**Upgrade notes:**
+
+- Bindings forgotten under 0.13.0 have no route records left, so `retire` cannot discover their routed streams.
+- Keep 0.13.0 runners stopped after upgrading: a 0.13.0 runner trusts forgotten route records and can append replayed data into old streams.
+- Routed `forget` (for an existing checkpoint) and routed `retire` fail with `unsupported-composition` when the owner store cannot list the binding's records (such as a MySQL range containing a legacy hashed key).
+
+See [Forget](https://streamsy.dev/docs/projections/checkpoints#forget) and [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation).
+
+### Prevent `Projection.forget` cleanup from overlapping another host's first unit
+
+In 0.13.0 on Postgres, a `Projection.forget` under `Commit.transactionWithCleanup` that saw no checkpoint could run its cleanup after another host committed the binding's first unit, leaving the checkpoint behind without its cleaned-up rows while reporting success.
+
+- `Commit.transaction` and `Commit.transactionWithCleanup` now re-check the checkpoint after running cleanup. If a checkpoint exists, the forget rolls back and fails with a retryable `token-conflict`. This covers routed and unrouted bindings, including MySQL at `REPEATABLE READ` (requires `@streamsy/storage` at the same version).
+- A cleanup callback that catches a SQL error now fails `forget` instead of reporting success on a rolled-back MySQL transaction.
+
+Always stop and drain a binding's runners before calling `forget`. To clean up a binding left with a checkpoint and missing rows by an earlier release, stop its runners and forget it again, or raise `generation`. One limit remains: if two hosts race to commit a binding's first unit on Postgres or MySQL, one wins while the slower host can hit a non-retryable `invalid-output` (or `ViewDataFault` on a routed Views circuit), stopping the binding until `Registry.retry` or restart—run one host per binding. See [One writer](https://streamsy.dev/docs/projections/checkpoints#one-writer).
+
 ## @streamsy/projection@0.13.0
 
 ### Stop a binding on a permanent handler error
