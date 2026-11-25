@@ -19,7 +19,7 @@
     },
     "examples/bugsy": {
       "name": "bugsy",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@effect/sql-mysql2": "4.1.5",
@@ -41,7 +41,7 @@
     },
     "examples/command-stream": {
       "name": "command-stream",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -57,7 +57,7 @@
     },
     "examples/durable-response": {
       "name": "durable-response",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -75,7 +75,7 @@
     },
     "examples/durable-response-aisdk": {
       "name": "durable-response-aisdk",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@ai-sdk/react": "3.0.335",
         "@durable-streams/aisdk-transport": "0.0.8",
@@ -102,7 +102,7 @@
     },
     "examples/durable-response-atom": {
       "name": "durable-response-atom",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@effect/atom-react": "4.1.5",
         "@effect/platform-browser": "4.1.5",
@@ -138,7 +138,7 @@
     },
     "examples/durable-response-foldkit": {
       "name": "durable-response-foldkit",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@effect/platform-browser": "4.1.5",
         "@streamsy/durable-response-contract": "workspace:*",
@@ -158,7 +158,7 @@
     },
     "examples/durable-response-tanstack": {
       "name": "durable-response-tanstack",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@durable-streams/client": "0.2.7",
         "@durable-streams/tanstack-ai-transport": "0.0.10",
@@ -186,7 +186,7 @@
     },
     "examples/fold-agent": {
       "name": "fold-agent-example",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/ai-anthropic": "4.1.5",
         "@effect/ai-openai": "4.1.5",
@@ -241,7 +241,7 @@
     },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.1.5",
@@ -267,7 +267,7 @@
     },
     "examples/hex-board": {
       "name": "hex-board",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/sql-sqlite-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -284,7 +284,7 @@
     },
     "examples/hex-domination": {
       "name": "hex-domination",
-      "version": "0.0.3",
+      "version": "0.0.4",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.1.5",
@@ -315,7 +315,7 @@
     },
     "examples/issue-tracker-demo": {
       "name": "issue-tracker-demo",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@durable-streams/state": "^0.3.2",
         "@effect/platform-bun": "4.1.5",
@@ -341,7 +341,7 @@
     },
     "examples/issue-tracker-demo-atom": {
       "name": "issue-tracker-demo-atom",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@durable-streams/client": "^0.2.7",
         "@effect/atom-react": "4.1.5",
@@ -378,7 +378,7 @@
     },
     "examples/issue-tracker-demo-event-sourced": {
       "name": "issue-tracker-demo-event-sourced",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -399,7 +399,7 @@
     },
     "examples/issue-tracker-demo-foldkit": {
       "name": "issue-tracker-demo-foldkit",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "dependencies": {
         "@durable-streams/client": "^0.2.7",
         "@effect/platform-browser": "4.1.5",
@@ -421,7 +421,7 @@
     },
     "examples/issue-tracker-demo-foldkit-views": {
       "name": "issue-tracker-demo-foldkit-views",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "dependencies": {
         "@effect/platform-browser": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -446,7 +446,7 @@
     },
     "examples/memory-server": {
       "name": "memory-server",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -463,7 +463,7 @@
     },
     "examples/platform-matrix": {
       "name": "platform-matrix",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@effect/platform-deno": "4.1.5",
@@ -502,7 +502,7 @@
     },
     "examples/timer-stream": {
       "name": "timer-stream",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@effect/platform-bun": "4.1.5",
         "@streamsy/core": "workspace:*",
@@ -582,7 +582,7 @@
     },
     "packages/conformance-tests": {
       "name": "@streamsy/conformance-tests",
-      "version": "0.4.11",
+      "version": "0.4.12",
       "dependencies": {
         "@durable-streams/client": "0.2.7",
         "@durable-streams/server-conformance-tests": "^0.3.7",
@@ -611,7 +611,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "devDependencies": {
         "@effect/vitest": "catalog:",
         "@types/bun": "^1.4.3",
@@ -629,7 +629,7 @@
     },
     "packages/projection": {
       "name": "@streamsy/projection",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
       },
@@ -655,7 +655,7 @@
     },
     "packages/serve": {
       "name": "@streamsy/serve",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
       },
@@ -693,7 +693,7 @@
     },
     "packages/storage": {
       "name": "@streamsy/storage",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
       },
@@ -726,7 +726,7 @@
     },
     "packages/views": {
       "name": "@streamsy/views",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "dependencies": {
         "@streamsy/core": "workspace:^",
         "@streamsy/projection": "workspace:^",

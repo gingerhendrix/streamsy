@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/views",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Incremental SQL views over Streamsy State collections, run as projections.",
   "homepage": "https://github.com/gingerhendrix/streamsy/tree/main/packages/views#readme",
   "bugs": {

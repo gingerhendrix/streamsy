@@ -1,20 +1,10 @@
 core:changelogs:
-  - content: "---\npackages:\n  \"@streamsy/storage\":\n    type: patch\n  \"@streamsy/projection\":\n    type: patch\n---\n\n## Give nested SQL clients their own transactions\n\nIn 0.13.0, nesting `CommitBoundary.withTransaction` on a second SQL client ran the inner body without a transaction, so a failure could leave partial writes behind.\n\n- **Independent inner transactions:** A nested `CommitBoundary.withTransaction` on a second SQL client now opens its own transaction, which commits first and survives an outer rollback. Non-transactional projections running on the second client now save their checkpoints inside a transaction. Durable Object clients still share the driver's transaction.\n- **Stricter boundary and lifetime checks:** Open `CommitBoundary.withTransaction` before nesting raw `sql.withTransaction` on that client. Mutating a second client inside its raw `sql.withTransaction` while only the first client's boundary is open now dies instead of running. Fibers or finalizers that outlive a transaction body and reuse its old context now die if they attempt to enter the boundary or mutate storage.\n\nSee [Commit with your own tables](https://streamsy.dev/docs/storage/sqlite#commit-with-your-own-tables).\n"
-    filename: fix-sql-transaction-owner.md
-    v: 0.0.0
-  - content: "---\npackages:\n  \"@streamsy/storage\":\n    type: minor\n  \"@streamsy/projection\":\n    type: minor\n---\n\n## List projection bindings and routed outputs on MySQL (schema v4)\n\n`Projection.bindings`, startup binding discovery for attached projections, and `Projection.retire` / `Projection.forget` for bindings with routed outputs now work on MySQL. Durable pending marks on MySQL also now support encoded params longer than 512 code points, and both attach hosts reject MySQL projection IDs longer than 255 code points when durability is enabled.\n\n**Breaking change (MySQL schema v4):** Opening a MySQL database adds `full_key` to `streamsy_owner_records` and `full_params` to `streamsy_projection_pending`, upgrading MySQL storage to schema version 4. Streamsy 0.13.0 cannot open a MySQL database at version 4. SQLite and Postgres remain at schema version 3.\n\n**Upgrade steps for MySQL:**\n\n- Stop every 0.13.0 process before opening the database with this release. A running 0.13.0 process can read the fitted form of a long pending mark, fail to decode it, and delete the mark without running the binding (leaving it idle until its next commit).\n- Any MySQL owner key longer than 512 code points written by 0.13.0 becomes listable again after its next write; until then, listing a range containing that key fails.\n\nSee [MySQL owner record listing](https://streamsy.dev/docs/reference/storage/sql-storage#mysql-owner-record-listing).\n\n## MySQL storage transactions default to `READ COMMITTED`\n\n**Breaking change:** On MySQL, `CommitBoundary.withTransaction` now sets `READ COMMITTED` for each transaction regardless of the session, pool, or global default (including `SERIALIZABLE`), so every plain read takes a fresh snapshot. At this isolation level, locking reads cannot lock absent rows or guard ranges against inserts—use a unique key or lock an existing parent row instead.\n\nThis isolation level ensures consistent reads across concurrent hosts:\n\n- Views circuits in a host transaction read operator state consistent with checkpoints when another host advances the binding (with or without earlier application reads, and when running two circuits in one transaction).\n- `Projection.forget` sees a routed binding's first checkpoint committed concurrently by another host.\n- `Projection.bindings` sees newly committed bindings from other hosts during the same transaction.\n\n**Configuration and requirements:**\n\n- **Opting out:** Set Effect's `SqlClient.BeginTransaction` to `\"START TRANSACTION\"` to use the session default. Running under `REPEATABLE READ` reintroduces stale Views results in the sequences above and causes `Projection.forget` to fail with a retryable `token-conflict` if its snapshot predates a new checkpoint.\n- **Multi-statement requests:** Storage sends `SET TRANSACTION` and `START TRANSACTION` in one request (per-transaction only; keep the session in autocommit). Effect's `mysql2` client enables multi-statement support by default, whereas passing `-MULTI_STATEMENTS` or using a custom client without it fails at the first transaction.\n- **Binary logging:** With binary logging enabled, InnoDB writes in `READ COMMITTED` transactions require `binlog_format=ROW` or `MIXED` (logged by row in mixed mode).\n\nSee the [MySQL isolation-level reference](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html) and [MySQL transactions](https://streamsy.dev/docs/reference/storage/sql-storage#mysql-transactions).\n"
-    filename: mysql-storage.md
-    v: 0.0.0
-  - content: "---\npackages:\n  \"@streamsy/projection\":\n    type: minor\n  \"@streamsy/views\":\n    type: minor\n---\n\n## Use `generation` instead of `version` on projections and Views circuits\n\n**Breaking change:** Projection and Views circuit declarations now use `generation` alone to version stored state and rebuilds, and reject any defined `version` with `RangeError`.\n\n- **Declarations:** Remove `version: 1` to keep the existing generation. For any other version, remove `version` and raise `generation` above every generation the `id` has previously used.\n- **Types and custom stores:** `ProjectionKey`, `Unit`, and the derived declaration and binding types no longer have a `version` field. If custom stores or handlers included `key.version` or `unit.version` in storage keys, substitute the literal `1` to preserve keys for the former default version. Passing a key object with a defined `version` other than `1` to `recordKey`, `Projection.forget`, or a `fromStore` checkpoint store throws `RangeError`.\n- **Unchanged:** `View.fn(name, version, implementation)` keeps its function version argument.\n\nWhen upgrading a declaration that used a `version` other than `1`, stop the old runners, retain full input history, and prepare output addresses before starting the upgraded process. Let the new generation catch up and move readers before retiring the old binding with a one-off 0.13.0 script that only calls `retire`. See [Migrate a declaration that set `version`](https://streamsy.dev/docs/projections/checkpoints#migrate-a-declaration-that-set-version).\n"
-    filename: projection-generation-identity.md
-    v: 0.0.0
-  - content: "---\npackages:\n  \"@streamsy/projection\":\n    type: minor\n---\n\n## Unified transaction commits on SQL and memory hosts\n\n`Commit.transaction` and `Commit.transactionWithCleanup` now use one unified transaction model across SQL and `MemoryStorage` hosts: compose `Transaction.layer` and `CheckpointStore.layer` over the same storage owner so each unit, its outputs, and its checkpoint (or lifecycle cleanup on `forget`/`retire`) commit together.\n\n**Breaking change:**\n\n- `Transaction` no longer exposes a `sql` field. Read `SqlClient` from Effect context where SQL is needed, and use `Layer.provideMerge` when composing the host so the storage owner's `SqlClient` remains in the runner's context (including for `StateTable` and `FoldByKey` runners).\n- The `Commit.transactionWithCleanup` callback now takes only the checkpoint key.\n- `StateTable` and `FoldByKey` fail with `unsupported-composition` if `SqlClient` has no open transaction. Wrap direct `table.sync()` calls in `Transaction.withTransaction`.\n- The transaction now verifies checkpoint ownership on every unit, including units without routed outputs. Use the `load` function provided by `CheckpointStore.layer` directly—wrapping `load` drops owner metadata and fails with `unsupported-composition`.\n\nSee [`Commit.transaction`](https://streamsy.dev/docs/reference/projection/commit#committransaction).\n\n## Retire forgotten routed streams and undecodable checkpoints\n\n- `Projection.forget(bound)` now marks routed output records as forgotten rather than deleting them, so `Projection.retire` can still locate and clean up those streams. Pass the binding from `declaration.at(params)` with its routed outputs. Replay checks that each forgotten stream starts empty and open.\n- `Projection.retire` can now write a tombstone over an undecodable checkpoint and close or remove its streams in the same call.\n- **Breaking change:** `Retired.streams` replaces `Retired.outputs` and `Retired.routed`, and `Projection.RetiredOutput` is renamed to `Projection.RetiredStream` with an `output` field. The array is sorted by output name and stream id, and includes shared wrapped outputs as well as the wrapped accepted stream under `\"@streamsy/accepted\"`.\n- **Custom stores:** Custom `RouteRecords` implementations must now provide `state` and `forget` (`fromStore` from `@streamsy/projection/checkpoint` supplies both). See [`RouteRecords`](https://streamsy.dev/docs/reference/projection/checkpoint-store#routerecords).\n\n**Upgrade notes:**\n\n- Bindings forgotten under 0.13.0 have no route records left, so `retire` cannot discover their routed streams.\n- Keep 0.13.0 runners stopped after upgrading: a 0.13.0 runner trusts forgotten route records and can append replayed data into old streams.\n- Routed `forget` (for an existing checkpoint) and routed `retire` fail with `unsupported-composition` when the owner store cannot list the binding's records (such as a MySQL range containing a legacy hashed key).\n\nSee [Forget](https://streamsy.dev/docs/projections/checkpoints#forget) and [Retire a generation](https://streamsy.dev/docs/projections/checkpoints#retire-a-generation).\n\n## Prevent `Projection.forget` cleanup from overlapping another host's first unit\n\nIn 0.13.0 on Postgres, a `Projection.forget` under `Commit.transactionWithCleanup` that saw no checkpoint could run its cleanup after another host committed the binding's first unit, leaving the checkpoint behind without its cleaned-up rows while reporting success.\n\n- `Commit.transaction` and `Commit.transactionWithCleanup` now re-check the checkpoint after running cleanup. If a checkpoint exists, the forget rolls back and fails with a retryable `token-conflict`. This covers routed and unrouted bindings, including MySQL at `REPEATABLE READ` (requires `@streamsy/storage` at the same version).\n- A cleanup callback that catches a SQL error now fails `forget` instead of reporting success on a rolled-back MySQL transaction.\n\nAlways stop and drain a binding's runners before calling `forget`. To clean up a binding left with a checkpoint and missing rows by an earlier release, stop its runners and forget it again, or raise `generation`. One limit remains: if two hosts race to commit a binding's first unit on Postgres or MySQL, one wins while the slower host can hit a non-retryable `invalid-output` (or `ViewDataFault` on a routed Views circuit), stopping the binding until `Registry.retry` or restart—run one host per binding. See [One writer](https://streamsy.dev/docs/projections/checkpoints#one-writer).\n"
-    filename: projection-transactions-and-lifecycle.md
-    v: 0.0.0
-  - content: "---\npackages:\n  \"@streamsy/views\":\n    type: minor\n---\n\n## Run Views on Postgres, MySQL, and in memory\n\n`@streamsy/views` now supports PostgreSQL, MySQL, and in-memory `MemoryStorage` hosts alongside SQLite and Cloudflare Durable Objects.\n\n**Breaking change:** `View.circuit` now requires a `ViewBackend` service. Provide `ViewBackend.layerSql` (for SQLite, Postgres, or MySQL) or `ViewBackend.layerMemory` (for `MemoryStorage`) alongside `CheckpointStore.layer` and `Transaction.layer` over the same storage layer. Code that names a circuit's commit type now uses `Commit.TransactionCommit`.\n\n```ts\nimport { Layer } from \"effect\";\nimport { CheckpointStore, Transaction } from \"@streamsy/projection\";\nimport { BunStorage } from \"@streamsy/storage/bun\";\nimport { ViewBackend } from \"@streamsy/views\";\n\nconst host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(\n  Layer.provideMerge(BunStorage.layer(group, { client })),\n);\n```\n\n- **SQLite and Durable Objects:** Keep calling `View.migrate(sql)` at startup. If the host also uses `StateTable`, call `StateTable.migrate(sql)`. See [Choose a host](https://streamsy.dev/docs/views/declare-and-run#choose-a-host).\n- **Postgres and MySQL:** Compose `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over `SqlStorage`, and run `View.migrate(sql)` at host startup (safe across concurrent hosts). On MySQL (tested on MySQL 8.4.11), install `@streamsy/storage` at the same version for the `READ COMMITTED` transaction isolation Views relies on. Neither dialect imposes a length limit on row keys or sort keys, but snapshot arrangement identifiers must fit in 255 UTF-8 bytes (including prefix, encoded State key, and collection name); an overlong identifier or a row/owner key containing a lone surrogate fails the unit with a non-retryable `ViewDataFault`. See [Postgres](https://streamsy.dev/docs/views/postgres) and [MySQL](https://streamsy.dev/docs/views/mysql).\n- **In memory:** Compose `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over `MemoryStorage.layer(group)`. Checkpoints, operator state, and output streams commit together in memory with no SQL client or migration. See [Run Views in memory](https://streamsy.dev/docs/views/memory).\n\n## Read live Views snapshots with `View.live`\n\nDeclare in-memory views with `View.live` and open a reader with `at(params)` inside an Effect scope. The reader maintains its own memory host and exposes `snapshot` (all committed views and their input offsets together), `snapshots` (a live stream of updates), and `caughtUp` (waits for the initial replay). Works in browsers, tests, or any Effect process—provide remote State services with `RemoteStreams` to follow server streams and compare committed input offsets against write offsets. See [Live snapshots](https://streamsy.dev/docs/views/live).\n\n## Break row-key ties consistently across backends\n\nWhen rows have equal sort terms, Views now breaks ties by encoded row key in SQLite order across all backends. This can change which rows `top` emits and how floating-point sums round when keys contain supplementary Unicode characters. SQLite keeps the same stored key bytes and table layout.\n\nIf an existing view already wrote affected results, raise its circuit's `generation` to rebuild from retained input history and switch readers once it catches up. See [Lifecycle](https://streamsy.dev/docs/views/lifecycle).\n"
-    filename: views-hosts-and-live.md
+  - content: "---\npackages:\n  group:streamsy:\n    type: minor\n---\n\n## Require Effect 4.1.5 and Alchemy beta.87\n\n**Breaking change:** Streamsy now requires `effect` and any `@effect/*` peers at `^4.1.5`. Upgrade the Effect family together.\n\nThe optional Alchemy integration requires exactly `alchemy@2.0.0-beta.87` and `@alchemy.run/cloudflare@2.0.0-beta.87`. Install both when using `@streamsy/serve/alchemy`.\n\nOn Node, `Node.listener` leaves the answer before the routes serve and after they stop to Effect's `NodeHttpServer`. It stays 503 with the body `service unavailable` and `Retry-After: 1`. It now has `Cache-Control: no-store` and keeps the connection open. With Effect 4.1.5 and Streamsy 0.14.0, such a request got no answer. Bun and Deno answer 503 instead of 404 in the same gap. See [the Node listener](https://streamsy.dev/docs/reference/serve/node).\n\n`expiresAt` and `Stream-Expires-At` follow Effect 4.1.5 `DateTime.make`, which also accepts the zone names `UTC`, `UT`, `EST`, `EDT`, `CST`, `CDT`, `MST`, `MDT`, `PST` and `PDT`, such as `Sat, 01 Jan 2028 00:00:00 UTC`.\n"
+    filename: effect-4-1-5-alchemy-87.md
     v: 0.0.0
 core:packages:
+  - id: npm:durable-response
+    updated: true
   - id: npm:command-stream
     updated: true
   - id: npm:durable-response-aisdk
@@ -23,8 +13,6 @@ core:packages:
     updated: true
   - id: npm:@streamsy/durable-response-contract
     updated: false
-  - id: npm:durable-response
-    updated: true
   - id: npm:durable-response-foldkit
     updated: true
   - id: npm:durable-response-tanstack
@@ -42,32 +30,31 @@ core:packages:
   - id: npm:yjs-editor
     updated: false
   - changelogIds:
-      - fix-sql-transaction-owner.md
-      - mysql-storage.md
-      - projection-generation-identity.md
-      - projection-transactions-and-lifecycle.md
-    id: npm:@streamsy/projection
-    updated: true
-  - id: npm:@streamsy/serve
-    updated: true
-  - id: npm:@streamsy/core
+      - effect-4-1-5-alchemy-87.md
+    id: npm:@streamsy/core
     updated: true
   - changelogIds:
-      - fix-sql-transaction-owner.md
-      - mysql-storage.md
+      - effect-4-1-5-alchemy-87.md
+    id: npm:@streamsy/projection
+    updated: true
+  - changelogIds:
+      - effect-4-1-5-alchemy-87.md
+    id: npm:@streamsy/serve
+    updated: true
+  - changelogIds:
+      - effect-4-1-5-alchemy-87.md
     id: npm:@streamsy/storage
     updated: true
   - changelogIds:
-      - projection-generation-identity.md
-      - views-hosts-and-live.md
+      - effect-4-1-5-alchemy-87.md
     id: npm:@streamsy/views
     updated: true
 npm:packages:
+  - id: npm:durable-response
   - id: npm:command-stream
   - id: npm:durable-response-aisdk
   - id: npm:durable-response-atom
   - id: npm:@streamsy/durable-response-contract
-  - id: npm:durable-response
   - id: npm:durable-response-foldkit
   - id: npm:durable-response-tanstack
   - id: npm:folder-sync
@@ -76,9 +63,9 @@ npm:packages:
   - id: npm:todo
   - id: npm:views-shop
   - id: npm:yjs-editor
+  - id: npm:@streamsy/core
   - id: npm:@streamsy/projection
   - id: npm:@streamsy/serve
-  - id: npm:@streamsy/core
   - id: npm:@streamsy/storage
   - id: npm:@streamsy/views
   - id: npm:issue-tracker-demo-foldkit-views
@@ -91,6 +78,6 @@ npm:packages:
   - id: npm:issue-tracker-demo-atom
   - id: npm:issue-tracker-demo-event-sourced
   - id: npm:issue-tracker-demo-foldkit
-  - id: npm:memory-server
   - id: npm:platform-matrix
   - id: npm:@streamsy/conformance-tests
+  - id: npm:memory-server
