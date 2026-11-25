@@ -106,7 +106,7 @@ Each runtime module exports a `listener(options)` Layer:
 | `idleTimeout`             | 0           | Bun      | 0 keeps parked long polls open                        |
 | `server`                  | `{}`        | Node     | The options of `createServer` from `node:http`        |
 
-The listener binds the port when its Layer builds. A bind failure, such as a port in use, fails the main with an `HttpServerError.ServeError` from `effect/http`. Before the routes attach and after they detach, the Node listener answers each request with 503 and `Retry-After: 1`. See the [Bun](/docs/reference/serve/bun), [Node](/docs/reference/serve/node), and [Deno](/docs/reference/serve/deno) listener references.
+The listener binds the port when its Layer builds. A bind failure, such as a port in use, fails the main with an `HttpServerError.ServeError` from `effect/http`. Before the routes attach and after they detach, the platform server answers each request with 503 and `Retry-After: 1`. See the [Bun](/docs/reference/serve/bun), [Node](/docs/reference/serve/node), and [Deno](/docs/reference/serve/deno) listener references.
 
 ## Background work
 

@@ -50,7 +50,7 @@ same<typeof listener, typeof Node.listener>(true);
 
 The listener binds port 3000 on `127.0.0.1` unless the options set others. Without `gracefulShutdownTimeout`, the listener turns off the preemptive shutdown of the platform server, and its scope finalizer waits for in-flight requests to end. With `gracefulShutdownTimeout`, the platform server stops waiting after that time.
 
-Node binds the port before the routes serve, and it never answers a request that arrives while no route handler is attached. So before the routes attach and after they detach, the listener answers each request with 503, `Retry-After: 1`, and `Connection: close`. A client that retries reaches the routes once they serve.
+Node binds the port before the routes serve. Before the routes attach and after they detach, Effect's `NodeHttpServer` answers each request with 503, `Retry-After: 1`, and `Cache-Control: no-store`. A client that retries reaches the routes once they serve.
 
 Some protocol responses carry a web `Response` as a raw body, which the Node server cannot write. The listener converts such a body into a stream body with the same status and headers.
 

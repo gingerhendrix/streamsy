@@ -402,9 +402,8 @@ const program = Effect.gen(function* () {
 
       const healthy = HttpClient.get(`${url}/healthz`).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(Health)),
-        // Every listener binds the port before the routes serve. Bun and Deno
-        // answer 404 in that gap and Node answers 503, so the schema decode
-        // fails and the attempt retries. The timeout bounds a stuck attempt.
+        // Every listener binds the port before the routes serve and answers 503
+        // in that gap, so the schema decode fails and the attempt retries. The timeout bounds a stuck attempt.
         Effect.timeout("2 seconds"),
         Effect.filterOrFail(
           (health) => health.runtime === runtime.name,
