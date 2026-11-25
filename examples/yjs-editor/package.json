@@ -33,9 +33,9 @@
     "yjs": "^13.6.24"
   },
   "devDependencies": {
-    "@alchemy.run/cloudflare": "2.0.0-beta.85",
+    "@alchemy.run/cloudflare": "2.0.0-beta.87",
     "@cloudflare/workers-types": "4.20251228.0",
-    "alchemy": "2.0.0-beta.85",
+    "alchemy": "2.0.0-beta.87",
     "bun-types": "^1.4.3",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:",

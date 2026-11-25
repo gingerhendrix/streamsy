@@ -11,12 +11,12 @@
     "destroy": "node node_modules/alchemy/bin/cli.js destroy"
   },
   "devDependencies": {
-    "@alchemy.run/cloudflare": "2.0.0-beta.85",
+    "@alchemy.run/cloudflare": "2.0.0-beta.87",
     "@effect/platform-bun": "4.1.5",
     "@effect/platform-node": "4.1.5",
     "@effect/vitest": "4.1.5",
     "@types/bun": "1.4.3",
-    "alchemy": "2.0.0-beta.85",
+    "alchemy": "2.0.0-beta.87",
     "effect": "4.1.5",
     "typescript": "^7.0.2",
     "vitest": "5.0.5"
