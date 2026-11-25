@@ -1,6 +1,6 @@
 {
   "name": "hex-domination",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "Playable event-sourced Hex Domination on Bun and SQLite, with a local workerd host.",
   "type": "module",
