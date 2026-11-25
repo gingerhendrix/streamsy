@@ -470,7 +470,6 @@ const expiryCases: ReadonlyArray<{
     headers: { "stream-expires-at": "Sat, 01 Jan 2028 00:00:00 UTC" },
     put: 201,
     head: 200,
-    effectRejects: true,
   },
 ];
 
