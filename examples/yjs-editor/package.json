@@ -14,13 +14,13 @@
     "deploy": "bun run build:web && bun run build:worker && node node_modules/alchemy/bin/cli.js deploy"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "@streamsy/y-durable-streams": "workspace:*",
-    "effect": "4.1.2",
+    "effect": "4.1.5",
     "lib0": "^0.2.99",
     "nanoid": "^6.0.2",
     "prosemirror-commands": "^1.7.1",

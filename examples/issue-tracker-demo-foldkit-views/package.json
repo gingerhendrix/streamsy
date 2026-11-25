@@ -14,16 +14,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-browser": "4.1.2",
+    "@effect/platform-browser": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/issue-tracker-demo-contract": "workspace:*",
     "@streamsy/views": "workspace:*",
-    "effect": "4.1.2",
+    "effect": "4.1.5",
     "foldkit": "0.170.0",
     "issue-tracker-demo": "workspace:*"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
     "@foldkit/devtools": "0.170.0",
     "@foldkit/devtools-mcp": "0.26.0",
     "@foldkit/ui": "0.170.0",

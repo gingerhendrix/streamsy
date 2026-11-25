@@ -10,11 +10,11 @@
     "test:unit": "bun --bun vitest run --dir test"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.1.2"
+    "effect": "4.1.5"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

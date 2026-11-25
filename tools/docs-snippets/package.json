@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
-    "@effect/platform-bun": "4.1.2",
-    "@effect/sql-sqlite-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
+    "@effect/sql-sqlite-bun": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
     "@streamsy/serve": "workspace:*",
@@ -17,7 +17,7 @@
     "@streamsy/views": "workspace:*",
     "@types/bun": "^1.4.3",
     "alchemy": "2.0.0-beta.85",
-    "effect": "4.1.2"
+    "effect": "4.1.5"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "2.0.0-beta.85",

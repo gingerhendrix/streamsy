@@ -4,7 +4,7 @@ import { CheckpointStore, StateTable, Transaction } from "@streamsy/projection";
 import { SqlStorage } from "@streamsy/storage";
 import { BunStorage } from "@streamsy/storage/bun";
 import { Context, Effect, Layer } from "effect";
-import { SqlClient, Statement } from "effect/sql";
+import { SqlClient, Statement, type SqlError } from "effect/sql";
 import {
   dialectClient,
   freshDatabase,
@@ -35,7 +35,7 @@ export const fixtureDatabase = (server: SqlDialect) =>
 const fixtureClient = (server: SqlDialect) =>
   Layer.unwrap(Effect.map(fixtureDatabase(server), (url) => dialectClient(server, url)));
 
-export const client = (fixture: SqlFixture) =>
+export const client = (fixture: SqlFixture): Layer.Layer<SqlClient.SqlClient, SqlError.SqlError> =>
   fixture.server === undefined
     ? SqliteClient.layer({ filename: ":memory:" })
     : fixtureClient(fixture.server);

@@ -105,7 +105,7 @@ await Effect.runPromise(
         orders: count,
         customers: customerCount,
         database,
-        effect: "4.1.2",
+        effect: "4.1.5",
         units: "ms",
         mode: "WAL",
       }),

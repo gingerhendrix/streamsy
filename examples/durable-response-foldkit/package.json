@@ -13,10 +13,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@effect/platform-browser": "4.1.2",
+    "@effect/platform-browser": "4.1.5",
     "@streamsy/durable-response-contract": "workspace:*",
     "durable-response": "workspace:*",
-    "effect": "4.1.2",
+    "effect": "4.1.5",
     "foldkit": "0.170.0"
   },
   "devDependencies": {

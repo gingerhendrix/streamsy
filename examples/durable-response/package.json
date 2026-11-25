@@ -12,12 +12,12 @@
     "build": "bun build src/index.ts --target bun --packages external --outdir dist"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/durable-response-contract": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.1.2"
+    "effect": "4.1.5"
   },
   "devDependencies": {
     "@durable-streams/client": "^0.2.7",

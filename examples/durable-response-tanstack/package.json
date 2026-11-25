@@ -16,14 +16,14 @@
   "dependencies": {
     "@durable-streams/client": "0.2.7",
     "@durable-streams/tanstack-ai-transport": "0.0.10",
-    "@effect/platform-bun": "4.1.2",
+    "@effect/platform-bun": "4.1.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "@tanstack/ai": "1.4.0",
     "@tanstack/ai-client": "1.1.0",
     "@tanstack/ai-react": "1.0.2",
-    "effect": "4.1.2",
+    "effect": "4.1.5",
     "react": "latest",
     "react-dom": "latest"
   },

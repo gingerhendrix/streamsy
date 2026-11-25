@@ -95,11 +95,11 @@ The server is the base app's server, so the base app's `smoke:http` covers it.
 
 ## Limits
 
-- `effect` and `@effect/platform-browser` are `4.1.2`. Foldkit `0.170.0` and
+- `effect` and `@effect/platform-browser` are `4.1.5`. Foldkit `0.170.0` and
   its tools accept `~4.1.0`, so Foldkit must release again before the repository
   moves to Effect 4.2. The Vite plugin brings `@effect/platform-node` and
   `@effect/platform-node-shared` for its Node side, and the root `overrides`
-  entries keep both at `4.1.2`.
+  entries keep both at `4.1.5`.
 - `@foldkit/vite-plugin` and `@foldkit/devtools-mcp` need Node `22.19.0` or
   newer.
 - With two tabs open, a reload after an edit gives both tabs the Model of the
