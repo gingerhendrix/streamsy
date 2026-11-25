@@ -106,7 +106,7 @@ Each runtime module exports a `listener(options)` Layer:
 | `idleTimeout`             | 0           | Bun      | 0 keeps parked long polls open                        |
 | `server`                  | `{}`        | Node     | The options of `createServer` from `node:http`        |
 
-The listener binds the port when its Layer builds. A bind failure, such as a port in use, fails the main with a `ServeError`. Before the routes attach and after they detach, the Node listener answers each request with 503 and `Retry-After: 1`. See the [Bun](/docs/reference/serve/bun), [Node](/docs/reference/serve/node), and [Deno](/docs/reference/serve/deno) listener references.
+The listener binds the port when its Layer builds. A bind failure, such as a port in use, fails the main with an `HttpServerError.ServeError` from `effect/http`. Before the routes attach and after they detach, the Node listener answers each request with 503 and `Retry-After: 1`. See the [Bun](/docs/reference/serve/bun), [Node](/docs/reference/serve/node), and [Deno](/docs/reference/serve/deno) listener references.
 
 ## Background work
 
@@ -188,6 +188,8 @@ A proxy or load balancer in front of the server needs an idle timeout above both
 | Bun     | `BunRuntime.runMain`  | `@streamsy/serve/bun`  | `BunStorage.layer`                                | Several                 |
 | Node    | `NodeRuntime.runMain` | `@streamsy/serve/node` | `SqlStorage.layer` over `@effect/sql-sqlite-node` | One                     |
 | Deno    | `DenoRuntime.runMain` | `@streamsy/serve/deno` | As Node, after `nodeSqliteCompat`                 | One                     |
+
+Any of the three runtimes can also run `SqlStorage.layer` over Postgres (`@effect/sql-pg`) or MySQL (`@effect/sql-mysql2`) when several processes need to share a server database. See [`SqlStorage`](/docs/reference/storage/sql-storage), [Views on Postgres](/docs/views/postgres), and [Views on MySQL](/docs/views/mysql).
 
 On every process host, expired streams are removed when a call reaches them. A process host runs no expiry sweep. An application can sweep with `Protocol.expireDue()`. A commit wakes followers in the same process at once, and followers in another process on the same file within `repairIntervalMs`. See [Several processes](/docs/storage/sqlite#several-processes).
 

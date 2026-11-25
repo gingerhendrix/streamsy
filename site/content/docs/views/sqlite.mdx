@@ -1,0 +1,160 @@
+---
+title: SQLite
+description: Migrate Views tables on SQLite and run or attach circuits on Bun and Cloudflare Durable Objects.
+---
+
+Views runs the same SQLite runtime and operator tables on Bun (`BunStorage`) and Cloudflare Durable Objects (`DurableObjectStorage`), and works alongside `StateTable` on the same SQLite owner.
+
+## Migrate tables
+
+Call `View.migrate(sql)` during host startup, before running or attaching any circuit. Pass the same `SqlClient` instance to storage, `ViewBackend.layerSql`, and the migration by providing the Views layers over the storage layer.
+
+`View.migrate` creates five SQLite tables with `CREATE TABLE IF NOT EXISTS`:
+
+- `streamsy_view_integrals`
+- `streamsy_view_arrangements`
+- `streamsy_view_accumulators`
+- `streamsy_view_key_owners`
+- `streamsy_view_circuits`
+
+Use UTF-8 database encoding on SQLite. If your host indexes circuit outputs with `StateTable`, also call `StateTable.migrate(sql)` at startup.
+
+For server SQL hosts, see [Postgres](/docs/views/postgres) or [MySQL](/docs/views/mysql).
+
+## Bun
+
+Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over `BunStorage.layer`. Run `View.migrate(sql)` before running a bound circuit. The examples below use the `Orders`, `ShopViews`, and `shopCircuit` declarations from [Declare and run a circuit](/docs/views/declare-and-run#declare-input-and-output-state-classes).
+
+```ts title="examples/views-shop/src/app.ts"
+const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
+  Layer.provideMerge(
+    BunStorage.layer(Streamsy.group(Orders, ShopViews), { client: { filename: ":memory:" } }),
+  ),
+);
+
+export const smoke = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* View.migrate(sql);
+
+  const params = { shopId: "main" };
+  const input = yield* Orders;
+  const output = yield* ShopViews;
+  yield* input.create(params);
+  // ...
+  const initial = shopCircuit(1).at(params);
+  // ...
+  yield* Projection.run(initial);
+  // ...
+}).pipe(Effect.provide(host));
+```
+
+For a long-lived Bun process, migrate once at startup and attach the circuit (and any output `StateTable`) with `Projection.attach`:
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
+import { BunStorage } from "@streamsy/storage/bun";
+import { View, ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+const shopViews = shopCircuit(1);
+const ShopViewsTable = StateTable.define(ShopViews);
+
+const storage = BunStorage.layer(Streamsy.group(Orders, ShopViews), {
+  client: { filename: "./shop.sqlite" },
+});
+
+const migrate = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* View.migrate(sql);
+    yield* StateTable.migrate(sql);
+  }),
+);
+
+export const host = Layer.mergeAll(
+  Projection.attach(shopViews, { durable: true }),
+  Projection.attach(ShopViewsTable, { durable: true }),
+).pipe(
+  Layer.provideMerge(migrate),
+  Layer.provideMerge(Projection.Registry.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer),
+  ),
+  Layer.provideMerge(storage),
+);
+```
+
+Follow the [one-writer rule](/docs/projections/checkpoints#one-writer): do not call `Projection.run` or `Projection.follow` on a binding that is already attached. Use `registry.awaitOffset` for read-your-writes; see [Observe attached runners](/docs/projections/run#observe-attached-runners).
+
+## Durable Objects
+
+On Cloudflare Durable Objects, provide `DurableObjectStorage.layer` with the object's full `state.storage` handle alongside `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql`. The circuit and any `StateTable` share that transaction service. Run `View.migrate(sql)` during object layer initialization, then run bound circuits with `Projection.run` or attach them through `ProjectionWakeup.attach`. The example treats a Views setup failure as fatal to object startup.
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/sql";
+import { Streamsy } from "@streamsy/core";
+import {
+  CheckpointStore,
+  Projection,
+  ProjectionWakeup,
+  StateTable,
+  Transaction,
+} from "@streamsy/projection";
+import { StreamsyObject } from "@streamsy/serve/cloudflare";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { View, ViewBackend } from "@streamsy/views";
+import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+
+const shopViews = shopCircuit(1);
+const ShopViewsTable = StateTable.define(ShopViews);
+
+type HostServices =
+  CheckpointStore | Orders | ShopViews | SqlClient.SqlClient | Transaction | ViewBackend;
+
+export class ShopObject extends StreamsyObject.make<unknown, HostServices>({
+  app: Layer.empty,
+  layer: (state) => {
+    const storage = DurableObjectStorage.layer(Streamsy.group(Orders, ShopViews), {
+      client: { storage: state.storage },
+    });
+    const migrate = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* View.migrate(sql);
+        yield* StateTable.migrate(sql);
+      }),
+    );
+
+    return Layer.mergeAll(
+      migrate.pipe(Layer.orDie),
+      CheckpointStore.layer,
+      ViewBackend.layerSql.pipe(Layer.orDie),
+      Transaction.layer,
+      Projection.Registry.layer,
+    ).pipe(Layer.provideMerge(storage));
+  },
+  wakeups: [ProjectionWakeup.attach(shopViews), ProjectionWakeup.attach(ShopViewsTable)],
+}) {}
+```
+
+For Cloudflare stream placement, configure `Placement.byRoute` without the generation parameter in the placement key so every generation of a binding stays on the same Durable Object as its checkpoint. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs) and [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
+
+## Transaction context
+
+`ViewBackend.layerSql` must be provided over the same `SqlClient` as the storage owner (via `Layer.provideMerge(storage)`). If the Views client's transaction is missing from the running fiber, the circuit fails with a non-retryable `ViewFault`:
+
+> `The Views SQL client is outside the storage owner's transaction`
+
+The check looks specifically for a transaction on the storage owner's client, even if a second client has its own transaction open. If your code names the circuit's commit type, use [`Commit.TransactionCommit`](/docs/reference/projection/commit#committransactioncommit).

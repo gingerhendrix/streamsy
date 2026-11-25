@@ -68,15 +68,16 @@ const Opponent = Serve.route(
 );
 ```
 
-| Request                   | Response                    |
-| ------------------------- | --------------------------- |
-| GET, HEAD                 | The data                    |
-| Other methods             | 405 with `allow: GET, HEAD` |
-| Parameter does not decode | 400                         |
-| Path does not match       | 404 from the router         |
-| Absent stream             | 404                         |
-| Removed stream            | 410                         |
-| Storage failure           | 503                         |
+| Request                                          | Response                                                |
+| ------------------------------------------------ | ------------------------------------------------------- |
+| GET, HEAD                                        | The data                                                |
+| Other methods                                    | 405 with `allow: GET, HEAD`                             |
+| Parameter does not decode                        | 400 (`InvalidParams`)                                   |
+| Path does not match                              | 404 from the router                                     |
+| Absent stream (fresh read or `HEAD`)             | 404                                                     |
+| Removed stream (fresh read or `HEAD`)            | 410                                                     |
+| Absent or removed stream (resuming `GET` offset) | 409 (`ResumeRejected`, `reason: "history-unavailable"`) |
+| Storage or transport failure                     | 503 (`TransportUnavailable`)                            |
 
 Two routes with the same path shape fail the Layer build. Use URL-safe stream segments. Serve decodes path parameters, and the protocol routes match raw encoded ids.
 
@@ -90,12 +91,12 @@ Stored control messages (`snapshot-start`, `snapshot-end`, and `reset`) are serv
 
 `Serve.value(schema, effect)` runs `effect` on each request and encodes its result with `schema`. The encoded value must be JSON with finite numbers. Errors of `effect` stay in the Effect error channel, so the route can catch them.
 
-| Behavior      | Value                                                                      |
-| ------------- | -------------------------------------------------------------------------- |
-| Body          | Canonical JSON, with object keys sorted                                    |
-| ETag          | From the body bytes. `If-None-Match` with it answers 304                   |
-| Cache-Control | `private, max-age=0, must-revalidate`, unless `options.cache` sets another |
-| Contract      | The `x-streamsy-value-contract` header                                     |
+| Behavior      | Value                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Body          | Canonical JSON, with object keys sorted                                                                                               |
+| ETag          | From the body bytes. `If-None-Match` with it answers 304                                                                              |
+| Cache-Control | `private, max-age=0, must-revalidate` by default, or configured via `options.cache` (`{ visibility, maxAgeSeconds, mustRevalidate }`) |
+| Contract      | The `x-streamsy-value-contract` header                                                                                                |
 
 A value that cannot be encoded fails with `WireEncodeFailed`, which answers 500.
 
@@ -228,6 +229,7 @@ const Cors = HttpRouter.cors({
   allowedMethods: ["GET", "HEAD", "OPTIONS"],
   allowedHeaders: [
     "authorization",
+    "if-none-match",
     "x-streamsy-state-version",
     "x-streamsy-state-contract",
     "x-streamsy-stream-version",
@@ -238,6 +240,7 @@ const Cors = HttpRouter.cors({
     "stream-next-offset",
     "stream-cursor",
     "stream-up-to-date",
+    "stream-closed",
     "etag",
     "x-streamsy-state-version",
     "x-streamsy-state-contract",
@@ -251,10 +254,11 @@ const BrowserApp = Layer.mergeAll(App, Cors);
 
 Each response carries a contract fingerprint. A client sends the fingerprint back with its next request. When the fingerprint differs, the route rejects the request with 409 and a recovery in the body:
 
-| Response kind | Rejection         | Client recovery                         |
-| ------------- | ----------------- | --------------------------------------- |
-| Stream, state | `ResumeRejected`  | Drop local data and replay from `-1`    |
-| Value         | `ContractChanged` | Fetch again without the old fingerprint |
+| Response kind | Rejection                    | Client recovery                         |
+| ------------- | ---------------------------- | --------------------------------------- |
+| Stream, state | `ResumeRejected`             | Drop local data and replay from `-1`    |
+| Stream, state | `ProtocolVersionUnsupported` | Drop local data and replay from `-1`    |
+| Value         | `ContractChanged`            | Fetch again without the old fingerprint |
 
 The fingerprint covers the route path, the stream address, and the State collection names and keys. It does not cover the item Schema or the computation. When either changes and the metadata does not, set `options.contract` to a new value, so that clients recover. A resume from an offset that no longer exists also answers `ResumeRejected`. See [`Serve` errors](/docs/reference/serve/serve-errors).
 

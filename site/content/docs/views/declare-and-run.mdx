@@ -1,9 +1,11 @@
 ---
 title: Declare and run a circuit
-description: Build relations with View.from, wrap outputs in Projection.perGeneration, migrate operator tables, and run a circuit on a SQL host.
+description: Wire input and output State classes into View.circuit, route output rows across streams, and choose a host to run or attach the circuit.
 ---
 
-A Views circuit reads one or more `Streamsy.state` collections, maintains their relational operators incrementally, and writes generation-addressed `Streamsy.state` outputs. SQL hosts use SQLite, Postgres, or MySQL. For heap storage, see [Run Views in memory](/docs/views/memory). Install it with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`.
+A Views circuit reads one or more `Streamsy.state` collections, maintains relational views incrementally, and writes generation-addressed `Streamsy.state` outputs. Install it with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`.
+
+To learn the relational operators (`where`, `select`, `selectRow`, `join`, `leftJoin`, `groupBy`, `top`, `concat`, `closure`, and `View.fn`), see [Build relations](/docs/views/relations).
 
 ## Declare input and output State classes
 
@@ -46,63 +48,11 @@ export class ShopViews extends Streamsy.state<ShopViews>()(
 ) {}
 ```
 
-`View.from` derives the row type, schema, and key directly from the State class. You do not redeclare sources or schemas for circuits.
+`View.from` derives the row type, schema, and key directly from the input State class, and `View.circuit` checks each view's row type against its output collection at compile time and validates rows when encoding at runtime.
 
-## Build relations
+## Declare a circuit
 
-Start every relation with `View.from(StateClass, "collection")`. Chain operators using typed expression callbacks.
-
-### Joins, filters, projections, and functions
-
-Use `join`, `leftJoin`, `where`, and `select` to combine and shape rows across collections:
-
-```ts no-twoslash
-import { View } from "@streamsy/views";
-import { Shop } from "./shop.ts";
-
-const orders = View.from(Shop, "order");
-const customers = View.from(Shop, "customer");
-
-const goldOrders = orders
-  .join(customers, {
-    as: "customer",
-    on: (order, customer) => order.customerId.eq(customer.customerId),
-  })
-  .where((row) => row.customer.tier.eq("gold"))
-  .select((row) => ({
-    orderId: row.orderId,
-    customerName: row.customer.name,
-    total: row.total,
-  }));
-
-const displayName = View.fn(
-  "customer-display-name",
-  1,
-  (name: string | undefined) => name ?? "Guest",
-);
-
-const orderLabels = orders
-  .leftJoin(customers, {
-    as: "customer",
-    on: (order, customer) => order.customerId.eq(customer.customerId),
-  })
-  .select((row) => ({
-    orderId: row.orderId,
-    customerName: displayName(row.customer.name),
-  }));
-```
-
-Rules for expressions and joins:
-
-- A join condition must test equality between a left-only expression and a right-only expression.
-- A `leftJoin` alias can be absent. Nested references such as `row.customer.name` stay optional through every field, and `select` omits absent fields from the output row.
-- Use `isPresent()` to test presence, `orElse(fallback)` to provide a default, and `unwrap()` to fail the unit with `ViewDataFault` if a value is absent.
-- Use `View.field(row.value, "path")` when a row field name overlaps an expression method or member.
-- `View.fn(name, version, implementation)` registers a pure, synchronous function for `select` or `where`. It must be deterministic and leave its inputs unchanged. Its name and positive integer version are part of the plan hash, so raise `version` whenever the implementation changes. Absent optional arguments arrive as `undefined`; present values keep their value, including `null`. Returning `undefined` omits a selected field. A function used in `where` must return a boolean.
-
-### Grouped aggregates and bounded top
-
-Use `groupBy(...).aggregate(...)` with `View.count`, `View.sum`, `View.min`, and `View.max`. Use `top` with an optional `partitionBy`, an explicit `by` sort order, and a positive integer `limit`.
+Pass your views and generation-wrapped output(s) to `View.circuit`:
 
 ```ts title="examples/views-shop/src/streams.ts"
 export const shopCircuit = (generation: number, minimumTotal?: number) => {
@@ -130,205 +80,98 @@ export const shopCircuit = (generation: number, minimumTotal?: number) => {
 };
 ```
 
-Include a final ascending stable key term in `top` (such as `row.orderId.asc()`). `top` maintains a keyed collection rather than a ranked list; see [Ordering and limits](/docs/views/ordering-and-limits#string-extrema-and-top-ordering).
-
-## Declare a circuit
-
 `View.circuit` accepts either a single wrapped output under `output` or a record of wrapped outputs under `outputs`:
 
-- Every output route must be wrapped with `Projection.perGeneration(StateClass, param)`. Passing an unwrapped output throws `ViewFault` at declaration time.
-- Each collection on an output State class must have exactly one view. Missing collections, unknown collection names, and duplicate output State classes throw `RangeError`.
-- With `outputs`, group `views` under the same route names as `outputs`.
-- Input route parameters and output route parameters supplied by the binding must match circuit `params` with identical decoded types. Projection supplies the wrapped generation parameter from the circuit's `generation`.
-- Pass `views: (params) => ({ ... })` to reference decoded JSON-valued binding parameters in expressions, such as `row.workspace.eq(params.workspace)`. Parameter names are part of the plan hash, and each binding evaluates with its own values and storage namespace.
-- `generation` defaults to `1`.
-- Optional `retry` accepts the standard projection [binding retry policy](/docs/reference/projection/runners#binding-retry).
-- Optional `maxAffectedKeys` caps distinct changed relation keys per unit. See [Bounding fan-out with maxAffectedKeys](/docs/views/ordering-and-limits#bounding-fan-out-with-maxaffectedkeys).
-- Optional `wakeAt: (unit) => Projection.wakeAt(deadline)` records a wake deadline with the unit; returning `void` clears it.
+- **Generation-wrapped outputs:** Every output route must be wrapped with `Projection.perGeneration(StateClass, param)`. Passing an unwrapped output throws `ViewFault` at declaration time.
+- **Exact collection coverage:** Each collection on an output State class must have exactly one view. Missing collections, unknown collection names, and duplicate output State classes throw `RangeError`. With `outputs`, group `views` under the same route names as `outputs`.
+- **Parameters and discovered inputs:** `View.circuit` automatically discovers every input `Streamsy.state` stream referenced via `View.from`, whether views pull from one stream or join across several distinct streams. Each input stream's route parameters (and any output route parameters not supplied by `generation` or `routeBy`) must be a subset of the circuit's `params` with identical decoded types. Projection supplies the wrapped generation parameter from the circuit's `generation`. Pass `views: (params) => ({ ... })` to use decoded JSON-valued binding parameters in expressions; see [Binding parameter expressions](/docs/views/relations#binding-parameter-expressions).
+- **Generation:** `generation` defaults to `1`. Raise it whenever a plan or collection codec changes; see [Lifecycle and rebuilds](/docs/views/lifecycle).
+- **Retry policy:** Optional `retry` accepts the standard projection [binding retry policy](/docs/reference/projection/runners#binding-retry).
+- **Fan-out limit:** Optional `maxAffectedKeys` caps distinct changed relation keys per unit. See [Bounding fan-out with `maxAffectedKeys`](/docs/views/ordering-and-limits#bounding-fan-out-with-maxaffectedkeys).
+- **Wake deadlines:** Optional `wakeAt: (unit) => Projection.wakeAt(deadline)` records a wake deadline with the unit; returning `void` clears it.
 
 `View.circuit` returns a projection declaration with `.at(params)` and `.parse(id)`, like other [projection declarations](/docs/projections/define).
 
-### Route output rows
+## Route output rows
 
-Declare `output: Projection.perGeneration(DayRows, "generation", { routeBy: ["workspace", "date"] })` to let one binding write separate workspace and date streams. Wrap each output collection's relation in `View.routed(relation, { by: (row) => ({ workspace: row.workspace, date: row.date }) })`. The `by` expressions must supply exactly the declared route names with the corresponding decoded types. Add `row: (row) => row.value` when the emitted row is nested inside the relation row.
+One circuit binding can fan output rows out to multiple streams based on row values. Declare `routeBy` on `Projection.perGeneration` and wrap each view for that output in `View.routed`:
 
-The collection key is unique within a stream. A route change deletes the key in the old stream and upserts it in the new stream. Both writes have the same `txid` and commit with the checkpoint. Readers following individual streams observe separate notifications.
+```ts
+// @filename: streams.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
 
-A route with no emitted rows returns `StreamNotFound`. Streams that have held rows remain readable after those rows are deleted. When rebuilding, use `Projection.caughtUp` on the binding to check whether it has caught up to its inputs.
+const Event = Schema.Struct({
+  eventId: Schema.String,
+  workspace: Schema.String,
+  date: Schema.String,
+  total: Schema.Finite,
+});
 
-## Migrate tables
+export class Events extends Streamsy.state<Events>()("App/Events", "events", {
+  params: {},
+  collections: { event: { schema: Event, key: "eventId" } },
+}) {}
 
-Call `View.migrate(sql)` during SQL host startup, before running or attaching any circuit. Pass the same `SqlClient` instance to storage, `ViewBackend.layerSql`, and the migration. Provide the Views layers over the storage layer to share that client.
+export class DayRows extends Streamsy.state<DayRows>()(
+  "App/DayRows",
+  "workspaces/:workspace/days/:date/g/:generation",
+  {
+    params: {
+      workspace: Schema.String,
+      date: Schema.String,
+      generation: Schema.FiniteFromString,
+    },
+    collections: { event: { schema: Event, key: "eventId" } },
+  },
+) {}
+// @filename: index.ts
+// ---cut---
+import { Projection } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+import { DayRows, Events } from "./streams.ts";
 
-`View.migrate` creates five SQLite tables with `CREATE TABLE IF NOT EXISTS`:
+const events = View.from(Events, "event");
 
-- `streamsy_view_integrals`
-- `streamsy_view_arrangements`
-- `streamsy_view_accumulators`
-- `streamsy_view_key_owners`
-- `streamsy_view_circuits`
-
-For server SQL hosts, see [Run on Postgres](/docs/views/postgres) or [Run on MySQL](/docs/views/mysql). If your SQLite host uses `StateTable`, also call `StateTable.migrate(sql)` at startup.
-
-## Run on Bun SQLite
-
-Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql` over `BunStorage.layer`. Run `View.migrate(sql)` before running the bound circuit.
-
-```ts title="examples/views-shop/src/app.ts"
-const host = Layer.mergeAll(CheckpointStore.layer, Transaction.layer, ViewBackend.layerSql).pipe(
-  Layer.provideMerge(
-    BunStorage.layer(Streamsy.group(Orders, ShopViews), { client: { filename: ":memory:" } }),
-  ),
-);
-
-export const smoke = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* View.migrate(sql);
-
-  const params = { shopId: "main" };
-  const input = yield* Orders;
-  const output = yield* ShopViews;
-  yield* input.create(params);
-  // ...
-  const initial = shopCircuit(1).at(params);
-  // ...
-  yield* Projection.run(initial);
-  // ...
-}).pipe(Effect.provide(host));
+export const byDay = View.circuit({
+  id: "events-by-day",
+  params: {},
+  output: Projection.perGeneration(DayRows, "generation", { routeBy: ["workspace", "date"] }),
+  views: {
+    event: View.routed(events, {
+      by: (row) => ({ workspace: row.workspace, date: row.date }),
+    }),
+  },
+});
 ```
+
+Rules for routed outputs:
+
+- The `by` expressions must supply exactly the declared `routeBy` parameter names with matching decoded types (`string`, finite `number`, or `boolean`).
+- Add `row: (row) => row.value` when the emitted row is nested inside the relation row.
+- The collection key is unique within each routed stream, so different streams can hold the same collection key. A route change deletes the key in the old stream and upserts it in the new stream in the same transaction with the same `txid`. Readers following individual streams observe separate notifications.
+- A route that has never received an emitted row returns `StreamNotFound`. The first emitted row creates the stream in the checkpoint transaction, and streams that have held rows remain readable after those rows are deleted.
+- If a route value fails to encode, the unit fails with a `ViewDataFault` identifying the row.
+- When rebuilding, use `Projection.caughtUp` on the binding to check whether it has caught up to its inputs before switching readers.
+
+## Run and attach
+
+A circuit is a standard `@streamsy/projection` declaration:
+
+- Run a single binding to catch up once with `Projection.run(circuit.at(params))`.
+- Attach a declaration to a long-lived process with `Projection.attach(circuit, { durable: true })`, or to a Cloudflare Durable Object with `ProjectionWakeup.attach(circuit)`.
+- Follow the [one-writer rule](/docs/projections/checkpoints#one-writer): do not call `Projection.run` or `Projection.follow` on a binding that is already attached. Use `registry.awaitOffset` for read-your-writes; see [Observe attached runners](/docs/projections/run#observe-attached-runners).
 
 In the first unit, the circuit uses `Commit.transaction` to create each non-routed generation output and check that it starts empty and open. Every declared output must share the storage owner of the checkpoint and `Transaction`. Input streams use normal projection stream services and do not need an input `StateTable`.
 
-For a long-lived Bun process, migrate once at startup and attach the circuit (and any output `StateTable`) with `Projection.attach`:
+### Choose a host
 
-```ts
-// @filename: streams.ts
-export * from "./views-shop-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Effect, Layer } from "effect";
-import { SqlClient } from "effect/sql";
-import { Streamsy } from "@streamsy/core";
-import { CheckpointStore, Projection, StateTable, Transaction } from "@streamsy/projection";
-import { BunStorage } from "@streamsy/storage/bun";
-import { View, ViewBackend } from "@streamsy/views";
-import { Orders, ShopViews, shopCircuit } from "./streams.ts";
+Every host provides `CheckpointStore.layer`, `Transaction.layer`, and a `ViewBackend` layer over the storage owner. SQL hosts also call `View.migrate(sql)` at startup.
 
-const shopViews = shopCircuit(1);
-const ShopViewsTable = StateTable.define(ShopViews);
-
-const storage = BunStorage.layer(Streamsy.group(Orders, ShopViews), {
-  client: { filename: "./shop.sqlite" },
-});
-
-const migrate = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* View.migrate(sql);
-    yield* StateTable.migrate(sql);
-  }),
-);
-
-export const host = Layer.mergeAll(
-  Projection.attach(shopViews, { durable: true }),
-  Projection.attach(ShopViewsTable, { durable: true }),
-).pipe(
-  Layer.provideMerge(migrate),
-  Layer.provideMerge(Projection.Registry.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(CheckpointStore.layer, ViewBackend.layerSql, Transaction.layer),
-  ),
-  Layer.provideMerge(storage),
-);
-```
-
-Follow the [one-writer rule](/docs/projections/checkpoints#one-writer): do not call `Projection.run` or `Projection.follow` on a binding that is already attached. Use `registry.awaitOffset` for read-your-writes; see [Observe attached runners](/docs/projections/run#observe-attached-runners).
-
-## Run on a Durable Object
-
-On Cloudflare Durable Objects, provide `DurableObjectStorage.layer` with the object's full `state.storage` handle, alongside `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerSql`. The circuit and the `StateTable` share that transaction service. Run `View.migrate(sql)` during object layer initialization, then run bound circuits with `Projection.run` or attach them through `ProjectionWakeup.attach`. The example treats a Views setup failure as fatal to object startup.
-
-```ts
-// @filename: streams.ts
-export * from "./views-shop-streams.ts";
-// @filename: index.ts
-// ---cut---
-import { Effect, Layer } from "effect";
-import { SqlClient } from "effect/sql";
-import { Streamsy } from "@streamsy/core";
-import {
-  CheckpointStore,
-  Projection,
-  ProjectionWakeup,
-  StateTable,
-  Transaction,
-} from "@streamsy/projection";
-import { StreamsyObject } from "@streamsy/serve/cloudflare";
-import { DurableObjectStorage } from "@streamsy/storage/durable-object";
-import { View, ViewBackend } from "@streamsy/views";
-import { Orders, ShopViews, shopCircuit } from "./streams.ts";
-
-const shopViews = shopCircuit(1);
-const ShopViewsTable = StateTable.define(ShopViews);
-
-type HostServices =
-  CheckpointStore | Orders | ShopViews | SqlClient.SqlClient | Transaction | ViewBackend;
-
-export class ShopObject extends StreamsyObject.make<unknown, HostServices>({
-  app: Layer.empty,
-  layer: (state) => {
-    const storage = DurableObjectStorage.layer(Streamsy.group(Orders, ShopViews), {
-      client: { storage: state.storage },
-    });
-    const migrate = Layer.effectDiscard(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* View.migrate(sql);
-        yield* StateTable.migrate(sql);
-      }),
-    );
-
-    return Layer.mergeAll(
-      migrate.pipe(Layer.orDie),
-      CheckpointStore.layer,
-      ViewBackend.layerSql.pipe(Layer.orDie),
-      Transaction.layer,
-      Projection.Registry.layer,
-    ).pipe(Layer.provideMerge(storage));
-  },
-  wakeups: [ProjectionWakeup.attach(shopViews), ProjectionWakeup.attach(ShopViewsTable)],
-}) {}
-```
-
-Views uses the same runtime and SQLite tables on Bun and Durable Objects. For Cloudflare stream placement, configure `Placement.byRoute` without the generation parameter in the placement key so every generation of a binding stays on the same Durable Object as its checkpoint. See [Generation-addressed outputs](/docs/projections/outputs#generation-addressed-outputs) and [Projections on Cloudflare](/docs/servers/cloudflare/alarms#projections).
-
-## Upgrade an existing circuit host
-
-Add `ViewBackend.layerSql` beside the existing projection layers for a SQL circuit.
-
-```ts
-import { Layer } from "effect";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
-
-// ---cut---
-const projectionLayers = Layer.mergeAll(CheckpointStore.layer, Transaction.layer);
-```
-
-Replace that group with the circuit layers.
-
-```ts
-import { Layer } from "effect";
-import { CheckpointStore, Transaction } from "@streamsy/projection";
-import { ViewBackend } from "@streamsy/views";
-
-// ---cut---
-const projectionLayers = Layer.mergeAll(
-  CheckpointStore.layer,
-  Transaction.layer,
-  ViewBackend.layerSql,
-);
-```
-
-Provide the group with `Layer.provideMerge(storage)` and keep the `View.migrate(sql)` call. Call `StateTable.migrate(sql)` at startup if the SQLite host also runs a `StateTable`. If your code names the circuit's commit type, use [`Commit.TransactionCommit`](/docs/reference/projection/commit#committransactioncommit).
-
-If the Views client's transaction is missing from the running fiber, the circuit fails with a non-retryable `ViewFault` whose message is `The Views SQL client is outside the storage owner's transaction`. The check looks for a transaction on that client. Always use the storage owner's client, even if a second client has its own transaction open.
+| Host                               | Storage layer                            | Views backend             | Notes                                                     |
+| ---------------------------------- | ---------------------------------------- | ------------------------- | --------------------------------------------------------- |
+| [SQLite](/docs/views/sqlite)       | `BunStorage` or `DurableObjectStorage`   | `ViewBackend.layerSql`    | Supports `StateTable` on the same SQLite owner            |
+| [Postgres](/docs/views/postgres)   | `SqlStorage` with `@effect/sql-pg`       | `ViewBackend.layerSql`    | Shared server database; `StateTable` is SQLite-only       |
+| [MySQL](/docs/views/mysql)         | `SqlStorage` with `@effect/sql-mysql2`   | `ViewBackend.layerSql`    | Requires MySQL 8.0.17+ and `READ COMMITTED`               |
+| [Memory](/docs/views/memory)       | `MemoryStorage`                          | `ViewBackend.layerMemory` | Heap-only, no migration; useful for tests and prototypes  |
+| [Live snapshots](/docs/views/live) | Private heap host created by `View.live` | Managed internally        | Reads committed snapshots directly without output streams |

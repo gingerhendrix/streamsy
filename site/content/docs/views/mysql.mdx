@@ -1,5 +1,5 @@
 ---
-title: Run on MySQL
+title: MySQL
 description: Configure a MySQL circuit host, run the Views migration, and check key and identifier limits.
 ---
 
@@ -40,7 +40,7 @@ export const runShop = (databaseUrl: string, shopId: string) => {
 };
 ```
 
-Create the input for `shopId` before running the circuit. See the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes).
+Create the input for `shopId` before running the circuit. See the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). `StateTable` requires a SQLite host; see [State table operations](/docs/projections/state-table-operations#sqlite-only).
 
 Several hosts can use the same database. Assign one writer to each binding and stop and drain its runners before lifecycle operations. See [One writer](/docs/projections/checkpoints#one-writer) and [Lifecycle and rebuilds](/docs/views/lifecycle).
 

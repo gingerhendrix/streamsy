@@ -3,7 +3,7 @@ title: Read live snapshots
 description: Open a scoped View.live reader and consume committed snapshots in Effect or Foldkit.
 ---
 
-Use `View.live` to maintain named relations in memory and read their committed rows together. Provide the input State services and pass binding parameters to `at(params)`. Each reader builds its own memory host for operator state and checkpoints. Open the reader outside any transaction.
+Use `View.live` to maintain named relations in memory and read their committed rows together. Unlike `View.circuit`, `View.live` writes no output State streams, needs no `Projection.perGeneration` or `generation` tracking, and creates its own private memory host for operator state and checkpoints. Provide the input State services, open the reader outside any transaction, and pass binding parameters to `at(params)`.
 
 ## Read from Effect
 
@@ -47,17 +47,22 @@ export const watchOrders = (baseUrl: string, shopId: string) =>
   }).pipe(Effect.scoped, Effect.provide(pageHost(baseUrl)));
 ```
 
-`snapshot` reads the latest committed snapshot. `snapshots` starts with that snapshot and emits after committed units and when initial catch-up completes. Every snapshot holds the rows of all views after the same unit, the committed offset per input, and a `caughtUp` flag. A slow subscriber can skip intermediate snapshots. To watch one view, select its row array and use `Stream.changesWith(Object.is)`. A view keeps its array identity until its rows change.
+A `LiveReader` exposes three members:
 
-`caughtUp` waits for the first snapshot that reaches the input tails captured at startup. The flag stays true as later changes arrive. The startup tail reads and the follower use the declaration's retry schedule or the default `ProjectionRetry`. A terminal fault or exhausted retry schedule fails `snapshots`.
+- **`snapshot`** reads the latest committed `LiveSnapshot` containing the rows of all views after the same unit, the committed offset per input, and a `caughtUp` flag.
+- **`snapshots`** starts with the latest snapshot and emits after committed units and when initial catch-up completes. A slow subscriber can skip intermediate snapshots. A view keeps its array identity until its rows change, so selecting a view and piping through `Stream.changesWith(Object.is)` emits only when that view updates.
+- **`caughtUp`** waits for the first snapshot that reaches the input tails captured at startup. The flag stays `true` as later changes arrive.
+
+The startup tail reads and the follower use the declaration's `retry` schedule or the default `ProjectionRetry`. A terminal fault or exhausted retry schedule fails `snapshots`.
 
 ## Confirm a write
 
 Keep the append offset from the write response. Read the input's offset using its State key, for example `snapshot.offsets[Orders.key]`. Once that offset is defined and `compare(offset, awaitOffset) >= 0`, the snapshot includes the write's effect. Use `compare` from `@streamsy/core`.
 
-If the response arrives first, save its offset on the pending write and check it on each snapshot. If the snapshot arrives first, compare the response with the offset you already have. Offsets confirm writes only to that input stream. They cannot confirm a write to another stream, including a command stream that feeds the input through a projection.
-
-Offsets belong to one incarnation of an input stream. The reader does not detect an input that is removed and created again at the same address, so an offset of the new stream can look confirmed before its rows arrive. Open a new reader after you recreate an input.
+- If the response arrives first, save its offset on the pending write and check it on each snapshot.
+- If the snapshot arrives first, compare the response with the offset you already have.
+- Offsets confirm writes only to that input stream. They cannot confirm a write to another stream, including a command stream that feeds the input through a projection.
+- Offsets belong to one incarnation of an input stream. The reader does not detect an input that is removed and created again at the same address, so an offset of the new stream can look confirmed before its rows arrive. Open a new reader after you recreate an input.
 
 ## Subscribe from Foldkit
 
@@ -108,16 +113,16 @@ The subscription turns snapshots into messages and reports typed read failures. 
 
 ## End a reader
 
-Two readers can open the same circuit and parameters. Each replays the inputs independently. When a reader's scope closes, Views interrupts the follower and releases its private host. Existing and late subscribers can receive the final snapshot before the stream ends. `snapshot` keeps the final committed rows and offsets after close. If the reader ends without a fault before it reaches the startup tails, `caughtUp` interrupts its caller, and `Effect.catch` does not see it. This happens when the scope closes or when an input is removed during catch-up.
+Two readers can open the same declaration and parameters; each replays the inputs independently.
 
-If the reader fails, `snapshots` delivers the terminal fault after any final snapshot. A `caughtUp` wait that has yet to see a caught-up snapshot gets the same fault. Missing input history can fail the reader with `history-unavailable`. See the [live reader reference](/docs/views/reference#viewlive).
-
-The stream ends normally when all inputs close or a previously read input is removed and the follower ends. When an input closes without new data while `Projection.follow` is parked, the follower can take up to its 30-second repair interval to notice the close.
+- **Scope close:** When a reader's scope closes, Views interrupts the follower and releases its private host. Existing and late subscribers can receive the final snapshot before the stream ends, and `snapshot` keeps the final committed rows and offsets after close.
+- **Interrupted catch-up:** If the reader ends without a fault before it reaches the startup tails (for example when the scope closes or an input is removed during catch-up), `caughtUp` interrupts its caller and `Effect.catch` does not see it.
+- **Faults:** If the reader fails, `snapshots` delivers the terminal fault after any final snapshot, and any pending `caughtUp` wait receives the same fault. Missing input history can fail the reader with `history-unavailable`. See the [live reader reference](/docs/reference/views#viewlive).
+- **Normal stream end:** The stream ends normally when all inputs close or a previously read input is removed and the follower ends. When an input closes without new data while `Projection.follow` is parked, the follower can take up to its 30-second repair interval to notice the close.
 
 ## Replay and snapshot costs
 
-A page load replays every input from its first offset. The page stores no checkpoint or view state across loads. Each circuit keeps its own integral of each input it uses. Two circuits over the same input open two readers.
-
-A parameter change opens a new binding and replays its inputs. Put related views in one circuit and select the current group in the UI when a group key meets your needs.
-
-Snapshots contain whole views in encoded row-key order. That order is not the order of a `top` view, and a key encodes its length first, so `b` comes before `aa`. The reader has no caller-defined sort, pagination, deltas, or exposed row keys. Select a stable ID as a row field if the UI needs one. A commit clones changed row values. The first read of a changed view sorts its keys and allocates an array of row references. Later reads reuse that array until the view changes again. A subscriber that reads every snapshot during catch-up sorts each changed view once for every unit.
+- **Full replay on open:** A new reader replays every input from its first offset and stores no checkpoint or view state across loads. Each reader keeps its own integral of each input it uses, so two `View.live` declarations over the same input open two readers.
+- **Parameter changes:** Changing binding parameters opens a new binding and replays its inputs. Put related views in one `View.live` declaration and select the current group in the UI when a group key meets your needs.
+- **Row ordering:** Snapshots contain whole views in encoded row-key order—not the sort order of a `top` view—and keys encode their length first, so `b` comes before `aa`. The reader has no caller-defined sort, pagination, deltas, or exposed row keys; select a stable ID as a row field if the UI needs one.
+- **Snapshot allocation:** A commit clones changed row values. The first read of a changed view sorts its keys and allocates an array of row references; later reads reuse that array until the view changes again. A subscriber that reads every snapshot during catch-up sorts each changed view once per unit.

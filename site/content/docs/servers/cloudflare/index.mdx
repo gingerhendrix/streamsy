@@ -142,11 +142,11 @@ The object expires streams in an alarm at their deadline. See [Expiry](/docs/str
 
 ## Projections and deliveries
 
-Run work that must continue with no request in flight as a wakeup in an alarm turn. For external delivery, attach a projection with `ProjectionWakeup.attach`, use [`Commit.atLeastOnce`](/docs/projections/commits#atleastonce) with `unit.key` as the idempotency key, set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](/docs/projections/process#timers) for a deferred retry or a snooze. See the [effects guide](/docs/projections/effects) for the complete pattern. Short work can also run with `Projection.run` in request middleware, before the response. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) and [Triggers](/docs/projections/run#triggers).
+Run work that must continue with no request in flight as a wakeup in an alarm turn. For external delivery, attach a projection with `ProjectionWakeup.attach`, use [`Commit.atLeastOnce`](/docs/projections/commits#atleastonce) with `unit.key` as the idempotency key, set the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry) for a retry budget and `onExhausted`, and return [`Projection.wakeAt`](/docs/projections/process#timers) for a deferred retry or a snooze. See the [effects guide](/docs/projections/effects) for the complete pattern, or [Views on Durable Objects](/docs/views/sqlite#durable-objects) for incremental relational circuits. Short work can also run with `Projection.run` in request middleware, before the response. See [Schedule work with alarms](/docs/servers/cloudflare/alarms) and [Triggers](/docs/projections/run#triggers).
 
 ## Alchemy
 
-`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack. The routes, storage, placement, wakeups, and links are the same. Only the wiring changes.
+`@streamsy/serve/alchemy` builds the same object for an [Alchemy](https://alchemy.run) stack. The routes, storage, placement, wakeups, and links are the same; only the wiring changes. Hibernatable `live=websocket` sockets are currently supported on `StreamsyObject.make` (`@streamsy/serve/cloudflare`) only, not on `objectHandlers`.
 
 ```ts
 import * as Cloudflare from "@alchemy.run/cloudflare";

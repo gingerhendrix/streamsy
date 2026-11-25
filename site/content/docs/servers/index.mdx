@@ -27,11 +27,11 @@ Both are Effect `HttpRouter` route Layers. A server can merge both with `Layer.m
 
 | Client                                        | Uses                | Guide                                                                    |
 | --------------------------------------------- | ------------------- | ------------------------------------------------------------------------ |
-| An Effect program with `RemoteStreams.layer`  | The protocol routes | [Connect to a remote server](/docs/servers/remote)                       |
+| An Effect program (server or browser)         | The protocol routes | [Connect to a remote server](/docs/servers/remote)                       |
 | A browser app with the Durable Streams client | The protocol routes | [Browsers](/docs/servers/remote#browsers)                                |
 | A browser app that reads Serve endpoints      | Serve routes        | [Browser clients and CORS](/docs/servers/serve#browser-clients-and-cors) |
 
-A remote Effect program uses the same stream classes as the server, and its code does not change. A browser app does not load the server's Effect services. It reads the wire format through `@durable-streams/client` or `@durable-streams/state`.
+An Effect client—on a server, CLI, or in a browser (for example with [`View.live`](/docs/views/live))—uses `RemoteStreams.layer` with the same stream classes and codecs as the server. A lightweight browser app that does not bundle Effect reads the wire format through `@durable-streams/client`, `@durable-streams/state`, or `@streamsy/serve/contract`.
 
 ## Runtimes
 
@@ -46,13 +46,14 @@ The routes and the storage contract are the same on every runtime. Only the comp
 
 ## Pick a guide
 
-| Task                                                                  | Guide                                                        |
-| --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Let protocol clients create, append, and read streams                 | [Expose the stream protocol](/docs/servers/protocol)         |
-| Give a browser one feed, one state, or one value at an app URL        | [Serve application reads](/docs/servers/serve)               |
-| Use another server's streams from an Effect program                   | [Connect to a remote server](/docs/servers/remote)           |
-| Start and stop a server on Bun, Node, or Deno                         | [Run a process server](/docs/servers/process)                |
-| Run the routes in a Worker and Durable Objects                        | [Run on Cloudflare](/docs/servers/cloudflare)                |
-| Run projections or deliveries with no request in flight on Cloudflare | [Schedule work with alarms](/docs/servers/cloudflare/alarms) |
-| Use a stream that another Durable Object owns                         | [Connect Durable Objects](/docs/servers/cloudflare/objects)  |
-| Choose where the data lives                                           | [Choose storage](/docs/storage)                              |
+| Task                                                                  | Guide                                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Let protocol clients create, append, and read streams                 | [Expose the stream protocol](/docs/servers/protocol)                    |
+| Give a browser one feed, one state, or one value at an app URL        | [Serve application reads](/docs/servers/serve)                          |
+| Use another server's streams from an Effect program                   | [Connect to a remote server](/docs/servers/remote)                      |
+| Start and stop a server on Bun, Node, or Deno                         | [Run a process server](/docs/servers/process)                           |
+| Run the routes in a Worker and Durable Objects                        | [Run on Cloudflare](/docs/servers/cloudflare)                           |
+| Run projections or deliveries with no request in flight on Cloudflare | [Schedule work with alarms](/docs/servers/cloudflare/alarms)            |
+| Use a stream that another Durable Object owns                         | [Connect Durable Objects](/docs/servers/cloudflare/objects)             |
+| Let idle Durable Object readers hibernate over WebSockets             | [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets) |
+| Choose where the data lives                                           | [Choose storage](/docs/storage)                                         |

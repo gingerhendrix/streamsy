@@ -1,11 +1,11 @@
 ---
-title: Run on Postgres
+title: Postgres
 description: Configure a Postgres circuit host, run the Views migration, and check key and identifier limits.
 ---
 
 ## Build the host
 
-Use `SqlStorage.layer` with a Postgres client from `@effect/sql-pg`. Build the storage and Views layers over the same `SqlClient` instance. Call `View.migrate(sql)` before running a circuit.
+Use `SqlStorage.layer` with a Postgres client from `@effect/sql-pg`. Build the storage and Views layers over the same `SqlClient` instance so `ViewBackend.layerSql` shares the storage owner's transaction. Call `View.migrate(sql)` before running or attaching a circuit.
 
 ```ts no-twoslash
 import { Effect, Layer, Redacted } from "effect";
@@ -34,7 +34,7 @@ export const runShop = (databaseUrl: string, shopId: string) => {
 };
 ```
 
-The example uses the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). Create the input for `shopId` before running the circuit. `StateTable` requires a SQLite host. See [State table operations](/docs/projections/state-table-operations#sqlite-only).
+The example uses the [shop circuit declarations](/docs/views/declare-and-run#declare-input-and-output-state-classes). Create the input for `shopId` before running the circuit. `StateTable` requires a SQLite host; see [State table operations](/docs/projections/state-table-operations#sqlite-only). For the SQL transaction-context requirement, see [Transaction context](/docs/views/sqlite#transaction-context).
 
 ## Migration and stored state
 
@@ -49,7 +49,7 @@ The example uses the [shop circuit declarations](/docs/views/declare-and-run#dec
 | `streamsy_view_accumulators` | Group keys and aggregate state                  |
 | `streamsy_view_key_owners`   | Output keys and the relation keys that own them |
 
-The current Postgres layout version is `1`. The migration inserts that version when the table has no version row. A newer version fails the migration with a non-retryable `ViewFault`. The database layout version is separate from a circuit's plan `version` and `generation`.
+The current Postgres layout version is `1`. The migration inserts that version when the table has no version row. A newer version fails the migration with a non-retryable `ViewFault`. The database layout version is separate from a circuit's `generation`.
 
 Equality lookups use SHA-256 digests of the UTF-8 namespace and keys. The database retains full row keys, output keys, and owner keys as bytes. Values and group keys use JSON text. Namespace text and full encoded sort keys are stored alongside their lookup columns.
 

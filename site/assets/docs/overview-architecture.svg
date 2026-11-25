@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 558" width="920" height="558" role="img" aria-labelledby="title desc">
+  <title id="title">Streamsy architecture</title>
+  <desc id="desc">Application programs, HTTP and Serve routes, Projections, and Views all depend on typed stream services from @streamsy/core (Streamsy.json, Streamsy.state, Streamsy.bytes, and Streamsy.wake). Those stream services are provided either by a local storage Layer (Memory from @streamsy/core, or SQLite, Postgres, MySQL, and Cloudflare Durable Objects from @streamsy/storage) or by RemoteStreams.layer over HTTP to a remote Streamsy server. Runtime hosts from @streamsy/serve run the stack on Bun, Node, Deno, or Cloudflare Workers and Durable Objects.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .heading { fill: #64748b; font: 700 18px ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; }
+      .caption { fill: #64748b; font: 500 13px ui-sans-serif, system-ui, sans-serif; }
+      .group-label { fill: #94a3b8; font: 700 11px ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; }
+      .node-title { fill: #f8fafc; font: 700 15px ui-sans-serif, system-ui, sans-serif; }
+      .node-subtitle { fill: #e2e8f0; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .flow-label { fill: #64748b; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .group { fill: none; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 6 5; }
+      .node { fill: #3f4756; stroke: #94a3b8; stroke-width: 1.5; }
+      .stream { fill: #416f68; stroke: #83b8ad; stroke-width: 1.5; }
+      .host { fill: #2f3642; stroke: #64748b; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #64748b; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <text class="heading" x="24" y="36">Streamsy architecture</text>
+  <text class="caption" x="24" y="58">Application code depends on typed stream services. Swap Layers to change storage, transport, or runtime.</text>
+
+  <!-- Row 1: Consumers -->
+  <rect class="node" x="24" y="84" width="203" height="84" rx="14"/>
+  <text class="node-title" x="125.5" y="121" text-anchor="middle">Your program</text>
+  <text class="node-subtitle" x="125.5" y="142" text-anchor="middle">Effect.gen</text>
+
+  <rect class="node" x="247" y="84" width="203" height="84" rx="14"/>
+  <text class="node-title" x="348.5" y="121" text-anchor="middle">HTTP routes</text>
+  <text class="node-subtitle" x="348.5" y="142" text-anchor="middle">Http.routes · Serve</text>
+
+  <rect class="node" x="470" y="84" width="203" height="84" rx="14"/>
+  <text class="node-title" x="571.5" y="121" text-anchor="middle">Projections</text>
+  <text class="node-subtitle" x="571.5" y="142" text-anchor="middle">@streamsy/projection</text>
+
+  <rect class="node" x="693" y="84" width="203" height="84" rx="14"/>
+  <text class="node-title" x="794.5" y="121" text-anchor="middle">Views</text>
+  <text class="node-subtitle" x="794.5" y="142" text-anchor="middle">@streamsy/views</text>
+
+  <!-- Arrows from consumers to typed stream services -->
+  <path class="flow" d="M 125.5 170 V 208"/>
+  <path class="flow" d="M 348.5 170 V 208"/>
+  <path class="flow" d="M 571.5 170 V 208"/>
+  <path class="flow" d="M 794.5 170 V 208"/>
+
+  <!-- Row 2: Typed stream services -->
+  <rect class="stream" x="24" y="214" width="872" height="80" rx="16"/>
+  <text class="node-title" x="460" y="248" text-anchor="middle">Typed stream services (@streamsy/core)</text>
+  <text class="node-subtitle" x="460" y="271" text-anchor="middle">Streamsy.json · Streamsy.state · Streamsy.bytes · Streamsy.wake</text>
+
+  <!-- Split arrows to local storage vs remote transport -->
+  <path class="flow" d="M 460 296 V 318 H 250 V 342"/>
+  <path class="flow" d="M 460 318 H 698 V 342"/>
+  <text class="flow-label" x="355" y="311" text-anchor="middle">local storage Layer</text>
+  <text class="flow-label" x="579" y="311" text-anchor="middle">remote HTTP Layer</text>
+
+  <!-- Row 3 Left: Local storage layers -->
+  <rect class="group" x="24" y="348" width="452" height="118" rx="16"/>
+  <text class="group-label" x="40" y="369">LOCAL STORAGE LAYERS</text>
+
+  <rect class="host" x="38" y="382" width="150" height="72" rx="12"/>
+  <text class="node-title" x="113" y="413" text-anchor="middle">Memory</text>
+  <text class="node-subtitle" x="113" y="434" text-anchor="middle">@streamsy/core</text>
+
+  <rect class="host" x="202" y="382" width="260" height="72" rx="12"/>
+  <text class="node-title" x="332" y="413" text-anchor="middle">SQL &amp; Durable Objects</text>
+  <text class="node-subtitle" x="332" y="434" text-anchor="middle">SQLite · Postgres · MySQL · DO</text>
+
+  <!-- Row 3 Right: Remote transport -->
+  <rect class="group" x="500" y="348" width="396" height="118" rx="16"/>
+  <text class="group-label" x="516" y="369">REMOTE TRANSPORT LAYER</text>
+
+  <rect class="host" x="514" y="382" width="176" height="72" rx="12"/>
+  <text class="node-title" x="602" y="413" text-anchor="middle">RemoteStreams</text>
+  <text class="node-subtitle" x="602" y="434" text-anchor="middle">Effect HTTP client</text>
+
+  <path class="flow" d="M 692 418 H 720"/>
+
+  <rect class="stream" x="726" y="382" width="156" height="72" rx="12"/>
+  <text class="node-title" x="804" y="413" text-anchor="middle">Remote server</text>
+  <text class="node-subtitle" x="804" y="434" text-anchor="middle">HTTP protocol</text>
+
+  <!-- Row 4: Runtime hosts -->
+  <rect class="host" x="24" y="486" width="872" height="56" rx="12"/>
+  <text class="node-title" x="460" y="510" text-anchor="middle">Runtime hosts (@streamsy/serve)</text>
+  <text class="node-subtitle" x="460" y="529" text-anchor="middle">Bun · Node · Deno process servers  ·  Cloudflare Workers &amp; Durable Objects (alarms, links, WebSockets)</text>
+</svg>

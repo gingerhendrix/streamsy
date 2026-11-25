@@ -1,6 +1,6 @@
 ---
-title: Reference
-description: Root exports, the View namespace, Relation operators, expression methods, fault classes, and exported types in @streamsy/views.
+title: "@streamsy/views"
+description: Reference for every public export of @streamsy/views, including View, Relation, TypedExpression, ViewBackend, faults, and types.
 ---
 
 ```ts
@@ -23,19 +23,20 @@ import type {
   ParameterExpressions,
   Reference,
   Relation,
+  RoutedView,
   State,
   TypedAggregateExpression,
   TypedExpression,
 } from "@streamsy/views";
 ```
 
-Install with `bun add @streamsy/views`. All public APIs are exported from the package root. Views supports SQLite, Postgres, MySQL, and memory backends.
+Install with `bun add @streamsy/views @streamsy/projection @streamsy/core effect`. All public APIs are exported from the package root. Views supports [SQLite](/docs/views/sqlite), [Postgres](/docs/views/postgres), [MySQL](/docs/views/mysql), and [memory](/docs/views/memory) backends, plus scoped in-memory [live snapshots](/docs/views/live).
 
 ## Root exports
 
 | Export                     | Kind                         | Purpose                                                                                              |
 | -------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `View`                     | Namespace                    | Relation builders, aggregates, expressions, `circuit`, `live`, and `migrate`                         |
+| `View`                     | Namespace                    | Relation builders, routing, aggregates, expressions, `circuit`, `live`, and `migrate`                |
 | `ViewBackend`              | Service                      | Host-selected operator storage                                                                       |
 | `LiveReader`               | Type                         | Scoped reader returned by `View.live`'s `at(params)`                                                 |
 | `LiveSnapshot`             | Type                         | Committed rows and input offsets with initial catch-up status                                        |
@@ -50,6 +51,7 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | `State`                    | Type                         | Structural contract of a `Streamsy.state` class                                                      |
 | `Input`                    | Type                         | Existential input State class boundary used in `Relation` and `View.circuit`                         |
 | `Relation`                 | Type                         | Typed relation handle returned by `View.from` and relation operators                                 |
+| `RoutedView`               | Type                         | Routed circuit view returned by `View.routed`                                                        |
 | `TypedExpression`          | Type                         | Typed expression node with fluent comparison, boolean, numeric, sort, optional, and field operations |
 | `Reference`                | Type                         | Alias for `TypedExpression<T>` passed to operator callbacks                                          |
 | `BooleanExpression`        | Type                         | Alias for `TypedExpression<boolean>`                                                                 |
@@ -62,6 +64,7 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | Member                    | Kind     | Purpose                                                                              |
 | ------------------------- | -------- | ------------------------------------------------------------------------------------ |
 | `View.from`               | Function | Start a `Relation` from a `Streamsy.state` class and collection name                 |
+| `View.routed`             | Function | Attach explicit route expressions (and optional row selector) for a routed output    |
 | `View.circuit`            | Function | Compile views and generation-addressed outputs into a `CircuitDeclaration`           |
 | `View.live`               | Function | Compile named views for a scoped heap reader                                         |
 | `View.migrate`            | Function | Create operator tables on SQLite, Postgres, or MySQL                                 |
@@ -77,25 +80,56 @@ Install with `bun add @streamsy/views`. All public APIs are exported from the pa
 | `View.State`              | Type     | Same as root `State`                                                                 |
 | `View.Input`              | Type     | Same as root `Input`                                                                 |
 | `View.Relation`           | Type     | Same as root `Relation`                                                              |
+| `View.RoutedView`         | Type     | Same as root `RoutedView`                                                            |
 | `View.CircuitDeclaration` | Type     | Same as root `CircuitDeclaration`                                                    |
 | `View.CircuitBinding`     | Type     | Same as root `CircuitBinding`                                                        |
 
 ### `View.from`
 
 ```ts
+// ---cut-start---
 import type { StreamAddress } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
-import type { Relation, State } from "@streamsy/views";
-// ---cut---
+import { View, type Relation, type State } from "@streamsy/views";
+import { same } from "./reference-check.ts";
+// ---cut-end---
 declare function from<
   Codecs extends StreamRoute.ParamCodecs,
   C extends StreamAddress.Collections,
   R,
   K extends keyof C & string,
 >(state: State<Codecs, C, R>, collection: K): Relation<C[K]["schema"]["Type"], State<Codecs, C, R>>;
+// ---cut-after---
+same<typeof from, typeof View.from>(true);
 ```
 
 Creates a source relation for `collection` on `state`. Throws `RangeError` if `collection` is not declared on `state`.
+
+### `View.routed`
+
+```ts no-twoslash
+declare function routed<Row, Inputs extends Input, const By extends RouteFields>(
+  source: Relation<Row, Inputs>,
+  spec: { readonly by: (row: Reference<Row>) => By; readonly row?: never },
+): RoutedView<Row, Inputs, By>;
+
+declare function routed<
+  Row,
+  Inputs extends Input,
+  const By extends RouteFields,
+  Result extends JsonObject,
+>(
+  source: Relation<Row, Inputs>,
+  spec: {
+    readonly by: (row: Reference<Row>) => By;
+    readonly row: (row: Reference<Row>) => TypedExpression<Result>;
+  },
+): RoutedView<Result, Inputs, By>;
+```
+
+Wraps a `Relation` for an output declared with `Projection.perGeneration(StateClass, param, { routeBy: [...] })`. `by` must return an expression (`string`, finite `number`, or `boolean`) for every parameter listed in `routeBy` with matching decoded types. Pass `row` when the emitted JSON object row is nested inside the relation row.
+
+Passing a `RoutedView` to a non-routed circuit output or to `View.live` throws `RangeError`. See [Route output rows](/docs/views/declare-and-run#route-output-rows).
 
 ### `View.circuit`
 
@@ -104,7 +138,7 @@ Creates a source relation for `collection` on `state`. Throws `RangeError` if `c
 declare function circuit<
   C extends StreamRoute.ParamCodecs,
   const V extends Views,
-  O extends Projection.PerGeneration<Input, string>,
+  O extends Projection.PerGeneration<Input, string, string>,
   HE = never,
   HR = never,
 >(definition: {
@@ -122,7 +156,7 @@ declare function circuit<
 declare function circuit<
   C extends StreamRoute.ParamCodecs,
   const V extends ViewMap,
-  const O extends Readonly<Record<string, Projection.PerGeneration<Input, string>>>,
+  const O extends Readonly<Record<string, Projection.PerGeneration<Input, string, string>>>,
   HE = never,
   HR = never,
 >(definition: {
@@ -142,8 +176,8 @@ Compiles the declared views and returns a [`Declaration`](/docs/reference/projec
 Declaration-time checks:
 
 - Throws `ViewFault` if any output is not wrapped in `Projection.perGeneration`.
-- Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, an invalid `maxAffectedKeys`, or a defined `version` option.
-- Fails with `PlanCheckFailed` if the compiled plan fails static validation.
+- Throws `RangeError` for missing circuit parameters, duplicate output State classes, missing or unknown output collections, empty `outputs`, mismatched `View.routed` route fields, an invalid `maxAffectedKeys`, or a defined `version` option.
+- Throws `PlanCheckFailed` if the compiled plan fails static validation.
 
 ### `View.live`
 
@@ -161,22 +195,28 @@ Open a reader outside any transaction. A terminal startup or follower fault fail
 ### `View.migrate`
 
 ```ts
+// ---cut-start---
 import type { Effect } from "effect";
 import type { SqlClient, SqlError } from "effect/sql";
-import type { ViewFault } from "@streamsy/views";
-// ---cut---
+import { View, type ViewFault } from "@streamsy/views";
+import { same } from "./reference-check.ts";
+// ---cut-end---
 declare const migrate: (
   sql: SqlClient.SqlClient,
 ) => Effect.Effect<void, ViewFault | SqlError.SqlError>;
+// ---cut-after---
+same<typeof migrate, typeof View.migrate>(true);
 ```
 
-Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. On Postgres and MySQL it also creates and checks `streamsy_view_layout`. An unsupported SQL dialect fails with `ViewFault`. See the migration rules for [Postgres](/docs/views/postgres#migration-and-stored-state) and [MySQL](/docs/views/mysql#migration-and-stored-state).
+Creates `streamsy_view_integrals`, `streamsy_view_arrangements`, `streamsy_view_accumulators`, `streamsy_view_key_owners`, and `streamsy_view_circuits` if they do not exist. On Postgres and MySQL it also creates and checks `streamsy_view_layout`. An unsupported SQL dialect fails with `ViewFault`. See the migration rules for [SQLite](/docs/views/sqlite#migrate-tables), [Postgres](/docs/views/postgres#migration-and-stored-state), and [MySQL](/docs/views/mysql#migration-and-stored-state).
 
 ### Aggregates
 
 ```ts
-import type { TypedAggregateExpression, TypedExpression } from "@streamsy/views";
-// ---cut---
+// ---cut-start---
+import { View, type TypedAggregateExpression, type TypedExpression } from "@streamsy/views";
+import { same } from "./reference-check.ts";
+// ---cut-end---
 declare const count: () => TypedAggregateExpression<number>;
 declare const sum: (expression: TypedExpression<number>) => TypedAggregateExpression<number>;
 declare const min: <T extends number | string>(
@@ -188,6 +228,12 @@ declare const max: <T extends number | string>(
 declare const list: <T extends number | string>(
   expression: TypedExpression<T>,
 ) => TypedAggregateExpression<readonly T[]>;
+// ---cut-after---
+same<typeof count, typeof View.count>(true);
+same<typeof sum, typeof View.sum>(true);
+same<typeof min, typeof View.min>(true);
+same<typeof max, typeof View.max>(true);
+same<typeof list, typeof View.list>(true);
 ```
 
 Used inside `relation.groupBy(fields).aggregate(aggregates)`.
@@ -197,10 +243,12 @@ Used inside `relation.groupBy(fields).aggregate(aggregates)`.
 ### Expression helpers
 
 ```ts
-import type { TypedExpression } from "@streamsy/views";
-type JsonValue = Parameters<typeof import("@streamsy/views").View.literal>[0];
-type SortTerm = ReturnType<typeof import("@streamsy/views").View.key.asc>;
-// ---cut---
+// ---cut-start---
+import { View, type TypedExpression } from "@streamsy/views";
+import { same } from "./reference-check.ts";
+type JsonValue = Parameters<typeof View.literal>[0];
+type SortTerm = ReturnType<typeof View.key.asc>;
+// ---cut-end---
 declare function field<T, K extends keyof Exclude<T, undefined> & string>(
   expression: TypedExpression<T>,
   name: K,
@@ -219,14 +267,16 @@ declare function fn<
 
 declare const literal: <T extends JsonValue>(value: T) => TypedExpression<T>;
 
-declare const key: {
-  (
-    ...parts: readonly (
-      TypedExpression<boolean> | TypedExpression<number> | TypedExpression<string>
-    )[]
-  ): TypedExpression<readonly (boolean | number | string)[]>;
-  asc(): SortTerm;
+declare const key: ((
+  ...parts: readonly (
+    TypedExpression<boolean> | TypedExpression<number> | TypedExpression<string>
+  )[]
+) => TypedExpression<readonly (boolean | number | string)[]>) & {
+  asc: () => SortTerm;
 };
+// ---cut-after---
+same<typeof literal, typeof View.literal>(true);
+same<typeof key, typeof View.key>(true);
 ```
 
 `View.fn` throws `RangeError` if `name` is blank or `version` is not a positive safe integer.
@@ -290,11 +340,11 @@ interface Relation<Row, Inputs extends Input = Input> {
 }
 ```
 
-`selectRow` projects the whole row from one expression that returns a JSON object. It keeps the input relation key, as `select` does. A circuit uses its output State collection's declared key when writing the row.
+- `selectRow` projects the whole row from one expression that returns a JSON object. It keeps the input relation key, as `select` does. A circuit uses its output State collection's declared key when writing the row.
+- `concat` preserves all input values and prefixes each encoded relation key with its side as `["l", encodedKey]` or `["r", encodedKey]`.
+- `closure` follows one parent per string relation key for at most `maxDepth` edges. A missing parent row is a final ancestor. Cycles stop before an ancestor repeats or the walk returns to its starting node. Each output key contains the encoded node and ancestor keys. Pass `part` to include the path values from the row below the ancestor down to the node. If any part on an emitted path is absent, the unit fails with `ViewDataFault`. Use `View.field(row, "path")` to read the path. The selectors accept typed expressions, including optional parent values.
 
-`concat` preserves all input values and prefixes each encoded relation key with its side as `["l", encodedKey]` or `["r", encodedKey]`.
-
-`closure` follows one parent per string relation key for at most `maxDepth` edges. A missing parent row is a final ancestor. Cycles stop before an ancestor repeats or the walk returns to its starting node. Each output key contains the encoded node and ancestor keys. Pass `part` to include the path values from the row below the ancestor down to the node. If any part on an emitted path is absent, the unit fails with `ViewDataFault`. Use `View.field(row, "path")` to read the path. The selectors accept typed expressions, including optional parent values.
+See [Build relations](/docs/views/relations) for worked examples of every operator.
 
 ## `TypedExpression` operations
 
@@ -330,8 +380,11 @@ For either transaction check, a circuit unit fails with a non-retryable `ViewFau
 ### `PlanChanged`
 
 ```ts
+// ---cut-start---
 import { NonRetryable } from "@streamsy/projection";
-// ---cut---
+import type * as Real from "@streamsy/views";
+import { same, type Fields, type Flat } from "./reference-check.ts";
+// ---cut-end---
 interface PlanChanged {
   readonly _tag: "ViewPlanChanged";
   readonly namespace: string;
@@ -339,13 +392,18 @@ interface PlanChanged {
   readonly requested: string;
   readonly [NonRetryable]: true;
 }
+// ---cut-after---
+same<PlanChanged, Flat<Omit<Fields<Real.PlanChanged>, "brand">>>(true);
 ```
 
 ### `ViewDataFault`
 
 ```ts
+// ---cut-start---
 import { NonRetryable } from "@streamsy/projection";
-// ---cut---
+import type * as Real from "@streamsy/views";
+import { same, type Fields, type Flat } from "./reference-check.ts";
+// ---cut-end---
 interface ViewDataFault {
   readonly _tag: "ViewDataFault";
   readonly view: string;
@@ -354,21 +412,33 @@ interface ViewDataFault {
   readonly reason: string;
   readonly [NonRetryable]: true;
 }
+// ---cut-after---
+same<ViewDataFault, Flat<Omit<Fields<Real.ViewDataFault>, "brand">>>(true);
 ```
 
 ### `ViewFault`
 
 ```ts
+// ---cut-start---
+import type * as Real from "@streamsy/views";
+import { same, type Flat } from "./reference-check.ts";
+// ---cut-end---
 interface ViewFault {
   readonly _tag: "ViewFault";
   readonly message: string;
   readonly cause?: unknown;
 }
+// ---cut-after---
+same<ViewFault, Readonly<Flat<Pick<Real.ViewFault, "_tag" | "message" | "cause">>>>(true);
 ```
 
 ### `PlanCheckFailed`
 
 ```ts
+// ---cut-start---
+import type * as Real from "@streamsy/views";
+import { same, type Fields, type Flat } from "./reference-check.ts";
+// ---cut-end---
 interface PlanCheckFailed {
   readonly _tag: "PlanCheckFailed";
   readonly issues: ReadonlyArray<{
@@ -390,6 +460,8 @@ interface PlanCheckFailed {
     readonly message: string;
   }>;
 }
+// ---cut-after---
+same<PlanCheckFailed, Flat<Omit<Fields<Real.PlanCheckFailed>, "brand">>>(true);
 ```
 
 ## Types
@@ -397,6 +469,7 @@ interface PlanCheckFailed {
 ### `LiveReader` and `LiveSnapshot`
 
 ```ts
+// ---cut-start---
 import type { Offset } from "@streamsy/core";
 import type { Effect, Stream } from "effect";
 import type {
@@ -406,7 +479,7 @@ import type {
   Relation,
 } from "@streamsy/views";
 import { same } from "./reference-check.ts";
-// ---cut---
+// ---cut-end---
 interface LiveSnapshot<V> {
   readonly rows: {
     readonly [K in keyof V]: ReadonlyArray<V[K] extends Relation<infer Row> ? Row : never>;
@@ -420,7 +493,6 @@ interface LiveReader<V> {
   readonly snapshots: Stream.Stream<LiveSnapshot<V>, CircuitError>;
   readonly caughtUp: Effect.Effect<void, CircuitError>;
 }
-
 // ---cut-after---
 type Views = { orders: Relation<{ id: string }> };
 same<LiveSnapshot<Views>, ExportedSnapshot<Views>>(true);
@@ -432,10 +504,19 @@ The snapshot and its rows are read-only. Use a State input's `key` to look up it
 ### `CircuitError`
 
 ```ts
+// ---cut-start---
 import type { ProjectionFault } from "@streamsy/projection";
-import type { PlanChanged, ViewDataFault, ViewFault } from "@streamsy/views";
-// ---cut---
+import type {
+  CircuitError as ExportedCircuitError,
+  PlanChanged,
+  ViewDataFault,
+  ViewFault,
+} from "@streamsy/views";
+import { same } from "./reference-check.ts";
+// ---cut-end---
 type CircuitError = PlanChanged | ViewFault | ViewDataFault | ProjectionFault;
+// ---cut-after---
+same<CircuitError, ExportedCircuitError>(true);
 ```
 
 ### `CircuitBinding` and `CircuitDeclaration`

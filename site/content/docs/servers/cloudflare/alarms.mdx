@@ -39,7 +39,11 @@ The earliest deadline of all wakeups owns the alarm. The host reconciles the ala
 
 Reconciling reads every `next`, arms the alarm at the earliest deadline, and clears it when no wakeup has work. A due deadline arms the alarm at `now + 1`, so the work runs in an alarm turn, not in the request.
 
-A wakeup can implement `bind(host)`, which the host calls once at acquisition. `WakeupHost` supplies `reconcile` and the wakeup's current retry `state`, plus `retry` to clear this wakeup’s backoff floor without resetting the retry schedule. These effects work outside requests too. Reconciliation takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock. An optional `changed` effect runs after a run or a failed deadline read updates the host's retry state. Wakeups skipped during an alarm receive no notification.
+A wakeup can implement `bind(host)` (called once at acquisition) and an optional `changed` callback (called after a run or a failed deadline read updates retry state; wakeups skipped during an alarm receive no notification). `WakeupHost` exposes three effects that work both inside and outside requests:
+
+- **`reconcile`:** Recomputes the alarm from every wakeup's `next` deadline. Takes only the reconciliation permit, so calling it from inside a wakeup's `run` does not deadlock.
+- **`retry`:** Clears this wakeup's backoff floor without resetting its retry schedule.
+- **`state`:** Reports consecutive failed passes (`failures`) and the next automatic or reconciled requested retry deadline (`retryAt`).
 
 Writes arm the alarm on their own. A GET that queues work calls `Wakeups.use((wakeups) => wakeups.touch)` before its handler returns. A streamed response body that queues work after the handler returned, and work outside a request, call `Wakeups.use((wakeups) => wakeups.reconcile)`.
 
@@ -128,15 +132,32 @@ export class FilesObject extends StreamsyObject.make({
 
 The host acquires the wakeup in the object's layer scope, before any request writes. Put the checkpoint Layer and the input streams in `layer`, so the projection reads and commits on the object's own storage.
 
-With `Projection.Registry.layer` in that layer, request handlers can use `registry.schedule(bindingOrBindings)`, `registry.retry(declarationOrBinding)` and `registry.rescan(projectionOrId, WakeClassOrStreamId)`. A schedule array must name one projection and arms the alarm once for the whole call. Rescan resets that trigger's stored cursor to `ZERO_OFFSET` and clears its stop, for use after a fold fix. The cursor reset survives eviction in both durability modes; ingested marks survive only with durable marks. A first attach already reads from the start, so a new family needs no rescan. They record the request and reconcile the alarm before returning. See the [registry retry contract](/docs/projections/run#observe-attached-runners) and [Registry on a Durable Object](/docs/projections/run#registry-on-a-durable-object) for retry counts, status and wait lifetimes.
+### Durable marks, backoff, and stops
 
-The wakeup is durable by default. Each commit that writes an input also writes a pending mark for each binding that it touches, in the same transaction, to `streamsy_projection_pending`. After an eviction or a deploy, acquisition reads the marks and arms the alarm, and a due turn runs those bindings. A binding that catches up keeps a sleeping mark if its checkpoint records a wake; otherwise it deletes its mark unless a write during the run marked it again. A binding with a retryable failure waits alone, by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry), while the other bindings run, and `Wakeups.status` counts it as `deferred`.
+The wakeup is durable by default:
 
-A non-retryable projection or storage fault stops only its failed unit. The registry reports the cause, and `registry.failed` reads stored binding failures even after an eviction. Each cold start makes stopped durable bindings due once; a still-broken binding stops again. A stopped mark arms no alarm. Poison trigger rows stop only their stream, leaving local commits and other triggers running.
+- Each commit that writes an input writes a pending mark for every touched binding in the same transaction to `streamsy_projection_pending`. After an eviction or deploy, acquisition reads those marks and arms the alarm so due turns run them.
+- A binding that catches up keeps a sleeping mark if its checkpoint records a wake; otherwise it deletes its mark unless a write during the run marked it again.
+- A binding with a retryable failure backs off alone—by default from 1 s doubling to 1 hour under the declaration's [binding retry policy](/docs/reference/projection/runners#binding-retry)—while other bindings keep running. `Wakeups.status` counts it under `deferred`.
+- A non-retryable projection or storage fault stops only the failed binding. `Projection.Registry` reports the cause, and `registry.failed` reads stored binding failures even after eviction. A stopped mark arms no alarm; each cold start makes stopped durable bindings due once (a still-broken binding stops again). Poison trigger rows stop only their stream, leaving local commits and other triggers running.
 
-A process timer returned with `Projection.wakeAt` keeps a sleeping mark. The alarm is armed at its recorded deadline, and durable sleeping marks survive eviction. A wake during backoff waits for backoff to end; a stopped binding fires late after retry or restart. Return a time after `unit.due` for the next wake: returning a passed time keeps the binding immediately due.
+### Timers (`Projection.wakeAt`)
 
-Pass `durable: false` to keep pending marks and binding backoff and stops in private memory, with the same retry timing and isolation. These reset on eviction. Timers lose their wake until the binding's next input. Then a binding whose run did not happen before the object stopped stays late until its source gets its next write.
+A process timer returned with `Projection.wakeAt` keeps a sleeping mark and arms the alarm at its recorded deadline. Durable sleeping marks survive eviction. A wake during backoff waits for backoff to end, and a stopped binding fires late after retry or restart. Return a time after `unit.due` for the next wake; returning a past time keeps the binding immediately due.
+
+### Registry controls
+
+With `Projection.Registry.layer` in the object's `layer`, request handlers can call:
+
+- `registry.schedule(bindingOrBindings)` — schedules one binding or an array of bindings for a single projection, arming the alarm once for the call.
+- `registry.retry(declarationOrBinding)` — makes failed or stopped marks due now and reconciles the alarm before returning.
+- `registry.rescan(projectionOrId, WakeClassOrStreamId)` — resets a trigger's stored cursor to `ZERO_OFFSET` and clears its stop (for use after a fold fix). The cursor reset survives eviction in both durability modes; ingested marks survive only with durable marks. A first attach already reads from the start, so a new family needs no rescan.
+
+See [Observe attached runners](/docs/projections/run#observe-attached-runners) and [Registry on a Durable Object](/docs/projections/run#registry-on-a-durable-object) for retry counts, status, and wait lifetimes.
+
+### Non-durable mode (`durable: false`)
+
+Pass `durable: false` to keep pending marks, binding backoff, and stops in private memory (with the same retry timing and isolation). They reset on eviction: timers lose their wake until the binding's next input, and a binding whose run had not finished before eviction stays late until its source receives another write.
 
 Only commits through this object's storage choose bindings. A projection with inputs on another object does not see their writes. To write a wake stream on another object, link that stream. See [Connect Durable Objects](/docs/servers/cloudflare/objects). For the projection itself, see [Attach](/docs/projections/run#attach) and [Commits](/docs/projections/commits).
 

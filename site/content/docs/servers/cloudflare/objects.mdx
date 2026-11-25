@@ -154,8 +154,54 @@ Use the same `placement` and `prefix` that the public router uses for these stre
 
 On Alchemy, a Durable Object binding answers with an `Effect`, not a `Promise`. Wrap the binding with `Host.objectFetch(objects)` from `@streamsy/serve/alchemy` before you pass it to `link.client` or `ObjectStreams.layer`. `objectHandlers` takes `links` as a plain array:
 
-```ts no-twoslash
-links: [wakeLink.client(Host.objectFetch(users))],
+```ts
+// @filename: wake-streams.ts
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { Schema } from "effect";
+export class Files extends Streamsy.json<Files>()(
+  "Docs/Files",
+  "users/:user/folders/:folderId/files",
+  {
+    params: { user: Schema.String, folderId: Schema.String },
+    schema: Schema.String,
+  },
+) {}
+export class UserWake extends Streamsy.wake<UserWake>()("Docs/UserWake", "users/:user/wake", {
+  params: { user: Schema.String },
+}) {}
+export const filesWake = Projection.wake({
+  id: "files-wake",
+  params: { user: Schema.String, folderId: Schema.String },
+  input: Files,
+  output: UserWake,
+});
+// @filename: index.ts
+import type * as Cloudflare from "@alchemy.run/cloudflare";
+import type { DurableObjectStorage as WorkersStorage } from "@cloudflare/workers-types";
+import { Layer } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { CheckpointStore, ProjectionWakeup } from "@streamsy/projection";
+import * as Host from "@streamsy/serve/alchemy";
+import { DurableObjectStorage } from "@streamsy/storage/durable-object";
+import { Files, UserWake, filesWake } from "./wake-streams.ts";
+declare const users: Pick<Cloudflare.DurableObject, "getByName">;
+declare const storage: WorkersStorage;
+const wakeLink = Host.ObjectLink.make({
+  group: Streamsy.group(UserWake),
+  prefix: "/__wake",
+  placement: Host.Placement.byRoute([Host.rule({ stream: UserWake, owner: ({ user }) => user })]),
+  access: "full",
+});
+// ---cut---
+const handlers = Host.objectHandlers({
+  app: Layer.empty,
+  layer: Layer.mergeAll(CheckpointStore.layer, Host.alarmSlotLayer(storage)).pipe(
+    Layer.provideMerge(DurableObjectStorage.layer(Streamsy.group(Files), { client: { storage } })),
+  ),
+  links: [wakeLink.client(Host.objectFetch(users))],
+  wakeups: [ProjectionWakeup.attach(filesWake)],
+});
 ```
 
 `ObjectFetch` returns `Effect<Response, HttpClientError>`. `ObjectStreams` uses `HttpClient.make`, so the caller's context, tracing, and cancellation reach the stub. Both hosts use the same `ObjectLink` and `LinkClient` values.

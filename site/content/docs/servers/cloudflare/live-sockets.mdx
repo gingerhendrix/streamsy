@@ -48,9 +48,20 @@ const socket = new WebSocket(
 socket.binaryType = "arraybuffer";
 ```
 
-The object reads the stream through its own routes, as a catch-up `GET` at the same URL would. A request that such a `GET` rejects gets the same HTTP answer, and no socket opens. Routes, `access`, and your middleware therefore check the upgrade too.
+The object reads the stream through its own routes, as a catch-up `GET` at the same URL would. `offset` is required (omitting it answers `400`). A request that such a `GET` rejects gets the same HTTP answer, and no socket opens. Routes, `access`, and your middleware therefore check the upgrade too. Offering `streamsy-live.v1` in `Sec-WebSocket-Protocol` is echoed back on the `101` response.
 
-The first frame is `open`, with the content type of the stream. Then, for each batch, the object sends a binary `data` frame with the exact body of a catch-up `GET` for that batch, and a `control` frame:
+The first frame is a text `open` frame carrying the stream's content type and offset:
+
+```json
+{
+  "type": "open",
+  "protocol": "streamsy-live.v1",
+  "contentType": "application/json",
+  "streamNextOffset": "0000000000000003_0000000000000000"
+}
+```
+
+Then, for each batch, the object sends a binary `data` frame with the exact body of a catch-up `GET` for that batch, followed by a text `control` frame:
 
 ```json
 {
@@ -60,6 +71,8 @@ The first frame is `open`, with the content type of the stream. Then, for each b
   "upToDate": true
 }
 ```
+
+When a stream closes, the final `control` frame sets `"streamClosed": true` (and omits `streamCursor` and `upToDate`) before the socket closes with code `1000`.
 
 Move the reader's offset only on a `control` frame. To resume after a disconnect, connect again with `offset` set to the `streamNextOffset` of the last `control` frame. The reader then gets no gap and no duplicate.
 
@@ -86,11 +99,13 @@ A deploy that replaces a running object closes its sockets, so readers reconnect
 
 Catch-up belongs on HTTP, where pages have ETags and caches can serve them. Connect near the tail. The options of `live.websocket` bound the work of each socket:
 
-| Option            | Default | Over the limit                                       |
-| ----------------- | ------- | ---------------------------------------------------- |
-| `maxSockets`      | 1,000   | The upgrade gets `503` with `Retry-After: 1`         |
-| `maxCatchUpBytes` | 4 MiB   | The connect sends a last `control` and closes `4100` |
-| `maxPushBytes`    | 1 MiB   | The push closes the socket with `4100`               |
+| Option            | Default | Over the limit                                                                      |
+| ----------------- | ------- | ----------------------------------------------------------------------------------- |
+| `maxSockets`      | 1,000   | Up to `32,768` (platform cap); upgrades over the limit get `503` + `Retry-After: 1` |
+| `maxCatchUpBytes` | 4 MiB   | The connect sends a last `control` and closes `4100`                                |
+| `maxPushBytes`    | 1 MiB   | The push closes the socket with `4100`                                              |
+
+Invalid limits throw `RangeError` when the object class is constructed. A stream URL whose serialized socket attachment exceeds 12 KiB answers `414` on upgrade.
 
 The object pushes in the event that committed, before that event returns. A `PUT`, `POST`, or `DELETE`, a link request, and an alarm turn all push their commits. One push reads each stream once for each distinct offset, and sends the result to every socket at that offset. Each request that appends gives one frame. The object does not merge appends from separate requests, because that needs a timer, and a timer keeps the object in memory.
 
@@ -104,4 +119,4 @@ The pushes use internal `GET` requests without the client's headers. A route tha
 
 ## Other hosts
 
-Only the Cloudflare object host serves `live=websocket`. The Bun, Node, and Deno hosts, and an object without `live`, answer `426 Upgrade Required`. A client treats `426` as an answer to use long-poll.
+Only `StreamsyObject.make` from `@streamsy/serve/cloudflare` serves `live=websocket`. The Bun, Node, and Deno hosts, Alchemy's `objectHandlers`, and any `StreamsyObject` without `live` answer `426 Upgrade Required`. A client treats `426` as an answer to use long-poll.

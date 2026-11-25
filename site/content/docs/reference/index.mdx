@@ -3,7 +3,7 @@ title: How the reference works
 description: Reference pages for every public entry point of the @streamsy packages.
 ---
 
-The guides show how to use Streamsy. The reference describes each public export of `@streamsy/core`, `@streamsy/projection`, `@streamsy/storage`, and `@streamsy/serve`, organised by package and topic.
+The guides show how to use Streamsy. The reference describes each public export of `@streamsy/core`, `@streamsy/projection`, `@streamsy/views`, `@streamsy/storage`, and `@streamsy/serve`, organised by package and topic.
 
 ## `@streamsy/core`
 
@@ -40,6 +40,12 @@ The guides show how to use Streamsy. The reference describes each public export 
 | [Commit](/docs/reference/projection/commit)                        | `@streamsy/projection`                                    | The `Commit` namespace, the handler results, `HandlerFailed`, and `Transaction`    |
 | [CheckpointStore](/docs/reference/projection/checkpoint-store)     | `@streamsy/projection`, `@streamsy/projection/checkpoint` | `CheckpointStore`, `CheckpointRecord`, `fromStore`, `recordKey`, and the key types |
 | [Faults and retry](/docs/reference/projection/faults)              | `@streamsy/projection`                                    | `ProjectionFault` and `ProjectionRetry`                                            |
+
+## `@streamsy/views`
+
+| Page                                       | Entry point       | Exports                                                                                            |
+| ------------------------------------------ | ----------------- | -------------------------------------------------------------------------------------------------- |
+| [`@streamsy/views`](/docs/reference/views) | `@streamsy/views` | `View`, `Relation`, `RoutedView`, `TypedExpression`, `ViewBackend`, faults, and circuit/live types |
 
 ## `@streamsy/storage`
 

@@ -23,9 +23,13 @@ On every subsequent unit in that namespace, the circuit compares the declared pl
 To replace a circuit plan in one deploy, edit the views and raise `generation` on the same declaration. [Migrate a declaration that set `version`](/docs/projections/checkpoints#migrate-a-declaration-that-set-version)
 
 ```ts title="examples/views-shop/src/app.ts"
-// The new plan excludes orders below 25 and replays into a fresh stream.
-const rebuilt = shopCircuit(2, 25);
-yield * Projection.run(rebuilt.at(params));
+export const smoke = Effect.gen(function* () {
+  // ...
+  // The new plan excludes orders below 25 and replays into a fresh stream.
+  const rebuilt = shopCircuit(2, 25);
+  yield* Projection.run(rebuilt.at(params));
+  // ...
+}).pipe(Effect.provide(host));
 ```
 
 Because the output is wrapped with `Projection.perGeneration`, generation 2 writes to a new stream address (for example `shop/main/views/g/2`) while generation 1's stream (`shop/main/views/g/1`) stays untouched. Keys dropped by the new filter simply never appear in generation 2's stream.
@@ -133,13 +137,18 @@ Pass the bound declaration from `circuit.at(params)` so `forget` can mark its ro
 `Projection.retire(declaration, params, { generation })` retires one binding of an older generation in a single transaction on the checkpoint owner.
 
 ```ts title="examples/views-shop/src/app.ts"
-// Each run above has finished, so generation 1 has no active runner.
-const retirement = yield * Projection.retire(rebuilt, params, { generation: initial.generation });
+export const smoke = Effect.gen(function* () {
+  // ...
+  // Each run above has finished, so generation 1 has no active runner.
+  const retirement = yield* Projection.retire(rebuilt, params, { generation: initial.generation });
 
-const missing =
-  yield * output.head({ ...params, generation: initial.generation }).pipe(Effect.flip);
+  const missing = yield* output
+    .head({ ...params, generation: initial.generation })
+    .pipe(Effect.flip);
 
-const refused = yield * Projection.run(initial).pipe(Effect.flip);
+  const refused = yield* Projection.run(initial).pipe(Effect.flip);
+  // ...
+}).pipe(Effect.provide(host));
 ```
 
 The transaction writes the checkpoint tombstone, clears the binding’s operator state, and removes every exclusively owned wrapped output stream. Pass `streams: "close"` to close the streams and keep their data. If the owner transaction aborts, the tombstone, operator cleanup, and output changes roll back together.

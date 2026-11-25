@@ -84,7 +84,12 @@ See [Trigger streams](/docs/projections/run#trigger-streams) and [Several backen
 
 ## Browsers
 
-Browser applications use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client) and `@durable-streams/state`, not the remote Layer. They read the same protocol routes, or the [Serve routes](/docs/servers/serve), with the server's CORS policy. The browser does not get the typed codecs of the stream classes, so it decodes the wire format itself.
+Browser applications have two options depending on whether they bundle Effect:
+
+- **Lightweight wire clients:** Use the Durable Streams [TypeScript client](https://durablestreams.com/typescript-client) and `@durable-streams/state` (or `@streamsy/serve/contract` for [Serve routes](/docs/servers/serve)). This avoids bundling Effect and decodes the wire format directly.
+- **Effect browser clients:** Use `RemoteStreams.layer` with `FetchHttpClient.layer` to reuse the server's typed stream classes and schemas directly in the browser—for example to power [`View.live`](/docs/views/live) in a Foldkit or Effect UI. See the [Foldkit Views example](/docs/examples/issue-tracker/foldkit-views) for bundle-size measurements.
+
+Both approaches talk to the same protocol routes with the server's CORS policy.
 
 `RemoteStreams.layerProtocol(options)` gives the generic reader and writer, with no stream classes, for protocol tools.
 

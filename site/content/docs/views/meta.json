@@ -2,13 +2,15 @@
   "title": "Views",
   "pages": [
     "index",
+    "relations",
     "declare-and-run",
-    "postgres",
-    "mysql",
-    "memory",
     "live",
     "lifecycle",
     "ordering-and-limits",
-    "reference"
+    "---Hosts---",
+    "sqlite",
+    "postgres",
+    "mysql",
+    "memory"
   ]
 }

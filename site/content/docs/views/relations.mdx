@@ -1,0 +1,396 @@
+---
+title: Build relations
+description: Compose relational views over Durable State collections with joins, filters, projections, aggregates, top-N, concat, closure, and typed expressions.
+---
+
+Views relations describe derived collections declaratively using typed expression callbacks. Start from any `Streamsy.state` collection with `View.from`, chain operators, and pass the resulting relations to [`View.circuit`](/docs/views/declare-and-run) or [`View.live`](/docs/views/live).
+
+## Start from a State collection
+
+`View.from(StateClass, "collection")` derives the row type, schema, and key directly from the State class. You do not redeclare sources or schemas for circuits.
+
+Each `View.from` can read from a different `Streamsy.state` stream—or from multiple collections on the same stream. Here, `Orders` is a per-shop stream while `Customers` is a separate shared stream:
+
+```ts
+// ---cut-start---
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+// ---cut-end---
+import { View } from "@streamsy/views";
+
+const Order = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+});
+
+const Customer = Schema.Struct({
+  customerId: Schema.String,
+  name: Schema.String,
+  tier: Schema.Literals(["standard", "gold"]),
+});
+
+class Orders extends Streamsy.state<Orders>()("Shop/Orders", "shop/:shopId/orders", {
+  params: { shopId: Schema.String },
+  collections: { order: { schema: Order, key: "orderId" } },
+}) {}
+
+class Customers extends Streamsy.state<Customers>()("Shop/Customers", "customers", {
+  params: {},
+  collections: { customer: { schema: Customer, key: "customerId" } },
+}) {}
+
+const orders = View.from(Orders, "order");
+const customers = View.from(Customers, "customer");
+```
+
+`View.circuit` and `View.live` automatically discover every input stream referenced by `View.from`. Each input stream only needs its route parameters to be a subset of the circuit's `params` with matching decoded types. Every relation maintains unique internal keys; when a circuit writes a view to an output State collection, it keys output rows by that collection's declared `key`.
+
+## Joins, filters, and projections
+
+Use `join`, `leftJoin`, `where`, `select`, and `selectRow` to combine and shape rows across collections—whether they live on different State streams or on the same stream:
+
+```ts
+// @filename: streams.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export const Order = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+});
+
+export const Customer = Schema.Struct({
+  customerId: Schema.String,
+  name: Schema.String,
+  tier: Schema.Literals(["standard", "gold"]),
+});
+
+export class Orders extends Streamsy.state<Orders>()("Shop/Orders", "shop/:shopId/orders", {
+  params: { shopId: Schema.String },
+  collections: { order: { schema: Order, key: "orderId" } },
+}) {}
+
+export class Customers extends Streamsy.state<Customers>()("Shop/Customers", "customers", {
+  params: {},
+  collections: { customer: { schema: Customer, key: "customerId" } },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Customers, Orders } from "./streams.ts";
+
+const orders = View.from(Orders, "order");
+const customers = View.from(Customers, "customer");
+
+const goldOrders = orders
+  .join(customers, {
+    as: "customer",
+    on: (order, customer) => order.customerId.eq(customer.customerId),
+  })
+  .where((row) => row.customer.tier.eq("gold"))
+  .select((row) => ({
+    orderId: row.orderId,
+    customerName: row.customer.name,
+    total: row.total,
+  }));
+
+const orderLabels = orders
+  .leftJoin(customers, {
+    as: "customer",
+    on: (order, customer) => order.customerId.eq(customer.customerId),
+  })
+  .select((row) => ({
+    orderId: row.orderId,
+    customerName: row.customer.name.orElse("Guest"),
+  }));
+```
+
+Rules for joins, optionality, and field access:
+
+- **Cross-stream or same-stream:** The two sides of a `join` or `leftJoin` can come from completely separate `Streamsy.state` streams (for example per-shop `Orders` joined with global `Customers`) or from different collections on the same State stream.
+- **Equi-joins only:** A join condition must test equality (`eq`) between a left-only expression and a right-only expression.
+- **Optional propagation:** A `leftJoin` alias can be absent. Nested references such as `row.customer.name` stay optional through every field, and `select` omits absent fields from the output row.
+- **Optional helpers:** Use `isPresent()` to test presence, `orElse(fallback)` to provide a default, and `unwrap()` to fail the unit with `ViewDataFault` if a value is absent.
+- **Overlapping field names:** Use `View.field(row, "path")` when a row field name overlaps an expression method or internal member (such as `in`, `eq`, `or`, `path`, or `kind`).
+- **Whole-row projection:** Use `selectRow((row) => expr)` when one expression produces the entire JSON object row (for example a nested object field or the result of a `View.fn` call). Both `select` and `selectRow` keep the relation's input key.
+
+## Pure functions with `View.fn`
+
+Use `View.fn(name, version, implementation)` to register a pure, synchronous function for `select`, `selectRow`, or `where`:
+
+```ts
+// @filename: streams.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export class Orders extends Streamsy.state<Orders>()("Shop/Orders", "shop/:shopId/orders", {
+  params: { shopId: Schema.String },
+  collections: {
+    order: {
+      schema: Schema.Struct({
+        orderId: Schema.String,
+        customerId: Schema.String,
+        total: Schema.Finite,
+      }),
+      key: "orderId",
+    },
+  },
+}) {}
+
+export class Customers extends Streamsy.state<Customers>()("Shop/Customers", "customers", {
+  params: {},
+  collections: {
+    customer: {
+      schema: Schema.Struct({ customerId: Schema.String, name: Schema.String }),
+      key: "customerId",
+    },
+  },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Customers, Orders } from "./streams.ts";
+
+const displayName = View.fn(
+  "customer-display-name",
+  1,
+  (name: string | undefined) => name ?? "Guest",
+);
+
+const toSummary = View.fn("order-summary", 1, (orderId: string, label: string) => ({
+  orderId,
+  label,
+}));
+
+const joined = View.from(Orders, "order").leftJoin(View.from(Customers, "customer"), {
+  as: "customer",
+  on: (order, customer) => order.customerId.eq(customer.customerId),
+});
+
+const summaries = joined.selectRow((row) => toSummary(row.orderId, displayName(row.customer.name)));
+```
+
+Rules for `View.fn`:
+
+- The implementation must be deterministic and must not mutate its inputs.
+- Its `name` (non-blank) and positive integer `version` are part of the circuit's plan hash. Raise `version` whenever the implementation changes, and raise the circuit's `generation` to rebuild.
+- Absent optional arguments arrive as `undefined`; present values keep their value, including `null`. TypeScript requires optional arguments to accept `undefined` unless you resolve them first with `orElse` or `unwrap`.
+- Returning `undefined` in `select` omits that field from the output row.
+- A function used in `where` must return a boolean.
+
+## Grouped aggregates
+
+Use `groupBy(...).aggregate(...)` with `View.count`, `View.sum`, `View.min`, `View.max`, and `View.list`:
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Orders } from "./streams.ts";
+
+const orders = View.from(Orders, "order");
+
+const customerStats = orders
+  .groupBy((row) => ({ customerId: row.customerId }))
+  .aggregate((row) => ({
+    orders: View.count(),
+    revenue: View.sum(row.total),
+    smallest: View.min(row.total),
+    largest: View.max(row.total),
+    orderIds: View.list(row.orderId),
+  }));
+```
+
+- `View.count` and `View.sum` update incrementally from row differences.
+- `View.min`, `View.max`, and `View.list` accept `number` or `string` expressions and use ordered indexes.
+- `View.list` collects all present values in ascending order (finite numbers before strings, UTF-16 code-unit order for strings), keeps duplicates, and emits the full array whenever a member changes. `maxAffectedKeys` does not bound group size.
+- Groups with no remaining input rows are deleted from the output.
+
+## Bounded top-N
+
+Use `top` with an optional `partitionBy`, an explicit `by` sort order, and a positive integer `limit`:
+
+```ts
+// @filename: streams.ts
+export * from "./views-shop-streams.ts";
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Orders } from "./streams.ts";
+
+const orders = View.from(Orders, "order");
+
+const topPerCustomer = orders.top({
+  partitionBy: (row) => row.customerId,
+  by: (row) => [row.total.desc(), row.orderId.asc()],
+  limit: 3,
+});
+
+const topOverall = orders.top({
+  by: (row) => [row.total.desc(), View.key.asc()],
+  limit: 10,
+});
+```
+
+- Always end `by` with an ascending stable key term: either `View.key.asc()` (which orders by the encoded relation key, including composite keys from joins or `concat`) or a field whose name ends in `id` (case-insensitive).
+- `partitionBy` accepts a single expression or an array of expressions. Omit it for a single global top-N.
+- `top` maintains a **keyed State collection**, not a ranked result list. See [Ordering and limits](/docs/views/ordering-and-limits#string-extrema-and-top-ordering).
+
+## Combine relations with `concat`
+
+Use `left.concat(right)` to combine rows from two relations—from different streams or the same stream—into one:
+
+```ts
+// @filename: catalog.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+const Entry = Schema.Struct({ id: Schema.String, label: Schema.String });
+
+export class Products extends Streamsy.state<Products>()("Catalog/Products", "products", {
+  params: {},
+  collections: { product: { schema: Entry, key: "id" } },
+}) {}
+
+export class Bundles extends Streamsy.state<Bundles>()("Catalog/Bundles", "bundles", {
+  params: {},
+  collections: { bundle: { schema: Entry, key: "id" } },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Bundles, Products } from "./catalog.ts";
+
+const products = View.from(Products, "product");
+const bundles = View.from(Bundles, "bundle");
+
+const allItems = products.concat(bundles);
+```
+
+`concat` keeps every row from both sides, passing row values through unchanged and prefixing each internal relation key with `["l", encodedKey]` or `["r", encodedKey]`. When a circuit writes a `concat` view to an output State collection, make sure rows from the two sides do not collide on the output collection's declared key (for example by prefixing or structuring the key field).
+
+## Ancestor hierarchies with `closure`
+
+Use `closure({ parent, part?, maxDepth })` to maintain every `(node, ancestor, depth)` pair reachable within `maxDepth` upward hops from a single-parent tree or graph:
+
+```ts
+// @filename: org.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+export class Agents extends Streamsy.state<Agents>()("Org/Agents", "org/:orgId/agents", {
+  params: { orgId: Schema.String },
+  collections: {
+    agent: {
+      schema: Schema.Struct({
+        agentId: Schema.String,
+        parentId: Schema.optionalKey(Schema.String),
+        role: Schema.String,
+      }),
+      key: "agentId",
+    },
+  },
+}) {}
+// @filename: index.ts
+// ---cut---
+import { View } from "@streamsy/views";
+import { Agents } from "./org.ts";
+
+const agents = View.from(Agents, "agent");
+
+const lineage = agents
+  .closure({
+    parent: (agent) => agent.parentId,
+    part: (agent) => agent.role,
+    maxDepth: 16,
+  })
+  .select((row) => ({
+    edgeId: View.fn(
+      "edge-id",
+      1,
+      (node: string, ancestor: string) => `${node}:${ancestor}`,
+    )(row.node, row.ancestor),
+    node: row.node,
+    ancestor: row.ancestor,
+    depth: row.depth,
+    path: View.field(row, "path"),
+  }));
+```
+
+How `closure` works:
+
+- **String keys:** Input rows must have string relation keys, and `parent` must evaluate to a string (or `undefined` for a root). For State sources with numeric keys, convert the parent key to its string wire form.
+- **Output shape:** Each emitted row has `{ node, ancestor, depth }` where `depth` is the edge count (`1` for a direct parent, up to `maxDepth`). The internal relation key is the pair of encoded node and ancestor keys.
+- **Missing parents and cycles:** A parent key with no corresponding input row is still emitted as the final ancestor. Upward walks stop before repeating an ancestor or returning to the starting node, so cycles and self-parents produce no reflexive rows.
+- **Optional `part`:** Supply `part` to include `path`, an array of values ordered from the row immediately below `ancestor` down to `node`. If any edge on an emitted path has an absent `part`, the unit fails with `ViewDataFault`. Use `View.field(row, "path")` to read `path` because `path` overlaps the expression object's own member.
+- **Fan-out:** Reparenting deep subtrees can touch many closure rows; see [Bounding fan-out with `maxAffectedKeys`](/docs/views/ordering-and-limits#bounding-fan-out-with-maxaffectedkeys).
+
+## Binding parameter expressions
+
+In both `View.circuit` and `View.live`, you can pass a function `views: (params) => ({ ... })` to reference decoded JSON-valued binding parameters inside expressions:
+
+```ts
+// @filename: notes.ts
+import { Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+
+const Note = Schema.Struct({
+  noteId: Schema.String,
+  workspace: Schema.String,
+  title: Schema.String,
+});
+
+export class AllNotes extends Streamsy.state<AllNotes>()("App/AllNotes", "notes", {
+  params: {},
+  collections: { note: { schema: Note, key: "noteId" } },
+}) {}
+
+export class WorkspaceNotes extends Streamsy.state<WorkspaceNotes>()(
+  "App/WorkspaceNotes",
+  "workspaces/:workspace/notes/g/:generation",
+  {
+    params: { workspace: Schema.String, generation: Schema.FiniteFromString },
+    collections: { note: { schema: Note, key: "noteId" } },
+  },
+) {}
+// @filename: index.ts
+// ---cut---
+import { Schema } from "effect";
+import { Projection } from "@streamsy/projection";
+import { View } from "@streamsy/views";
+import { AllNotes, WorkspaceNotes } from "./notes.ts";
+
+export const workspaceNotes = View.circuit({
+  id: "workspace-notes",
+  params: { workspace: Schema.String },
+  output: Projection.perGeneration(WorkspaceNotes, "generation"),
+  views: (params) => ({
+    note: View.from(AllNotes, "note").where((row) => row.workspace.eq(params.workspace)),
+  }),
+});
+```
+
+Parameter names are part of the circuit's plan hash, and each binding evaluates with its own decoded values and operator-state namespace.
+
+## Typed expressions
+
+Every operator callback receives `TypedExpression<T>` references whose available methods follow `T`:
+
+- **All types:** `eq`, `ne`, `in`
+- **Ordered (`number | string`):** `gt`, `gte`, `lt`, `lte`, plus `asc()` / `desc()` for non-optional sort terms
+- **Boolean:** `and`, `or`, `not`
+- **Number:** `add`
+- **Optional (`T | undefined`):** `isPresent`, `orElse`, `unwrap`
+- **Helpers:** `View.literal(value)`, `View.field(expr, "name")`, `View.fn(name, version, fn)`, `View.key(...)` / `View.key.asc()`
+
+See [`TypedExpression` operations](/docs/reference/views#typedexpression-operations) for the complete reference.
+
+## Next
+
+- [Declare and run a circuit](/docs/views/declare-and-run) — wire relations into `View.circuit` and routed outputs
+- [Read live snapshots](/docs/views/live) — run relations in memory with `View.live`
+- [Ordering and limits](/docs/views/ordering-and-limits) — UTF-16 ordering, `top` tie-breakers, and `maxAffectedKeys`

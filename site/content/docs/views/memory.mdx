@@ -1,11 +1,11 @@
 ---
-title: Run Views in memory
-description: Run a Views circuit on a memory owner or open a scoped View.live reader.
+title: Memory
+description: Run a Views circuit on a MemoryStorage host with ViewBackend.layerMemory, or open a scoped View.live reader.
 ---
 
-Use `ViewBackend.layerMemory` for a `View.circuit` that runs over a `MemoryStorage` host.
+Use `ViewBackend.layerMemory` when running a `View.circuit` over a `MemoryStorage` host—useful for unit tests, local prototypes, and ephemeral workers. If you want to read derived snapshots in memory without output State streams, use [`View.live`](/docs/views/live) instead.
 
-## Use an existing memory owner
+## Use a `MemoryStorage` owner
 
 Build `CheckpointStore.layer`, `Transaction.layer`, and `ViewBackend.layerMemory` over one `MemoryStorage.layer`. The circuit's operator state, checkpoints, and outputs share that owner's transaction.
 
@@ -29,8 +29,10 @@ export const host = Layer.mergeAll(
 
 At the start of each outer transaction, `MemoryStorage` copies the owner's stream state, including stored message bytes, into a transaction draft. A host that owns streams pays that cost even when a unit writes only a small part of its view state. The Views backend records its own changes in an undo journal.
 
-## Open a live reader
+`ViewBackend.layerMemory` checks that the running fiber holds an active transaction on the same memory owner. If the transaction is missing or belongs to another owner, the unit fails with a non-retryable `ViewFault`; see [`ViewBackend`](/docs/reference/views#viewbackend).
 
-Each `View.live` reader creates a private memory host for its operator state and checkpoints. Supply the declared State input services and an Effect scope. Open the reader outside any transaction. The inputs keep their own hosts and lifetimes. See [Read live snapshots](/docs/views/live).
+## Compare with `View.live`
+
+Each `View.live` reader creates its own private memory host for operator state and checkpoints, requires only the input State services and an Effect scope, and exposes snapshots directly instead of appending to output streams. Open it outside any transaction; the inputs keep their own hosts and lifetimes. See [Read live snapshots](/docs/views/live).
 
 Memory circuits and live readers need no migration. A memory circuit's operator state, checkpoints, and streams live as long as its host. A live reader releases its host when its scope closes and retains its final committed snapshot.

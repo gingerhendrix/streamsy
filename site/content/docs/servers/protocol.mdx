@@ -41,7 +41,7 @@ A client appends to `/streams/events/1` and reads `/streams/scores`. The route L
 | `cacheVisibility` | `private`  | `private` or `public` in cache headers                                |
 | `sseDeadlineMs`   | 60,000     | The lifetime of an SSE response                                       |
 
-The prefix must be a literal absolute path, with no `:`, `*`, `?`, or `#`. Otherwise `Http.routes` throws a `RangeError`. `/streams/` is the same as `/streams`.
+The prefix must be a literal absolute path, with no `:`, `*`, `?`, `#`, or `//`. Otherwise `Http.routes` throws a `RangeError`. `/streams/` is the same as `/streams`.
 
 The path after the prefix is the stream id. The first stream in the group whose template matches the id serves it. An id that no stream in the group matches answers 404. A request for the bare prefix has an empty id. With a `Wildcard` group it answers 400, and with a typed group it answers 404.
 
@@ -150,7 +150,7 @@ const Cors = HttpRouter.cors({
 const BrowserApp = Layer.mergeAll(App, Cors);
 ```
 
-`HttpRouter.cors` is global middleware. It answers every preflight with its own policy, in place of the protocol answer, and adds the CORS headers to each response. List the request headers that your clients send and the response headers that they read. A Durable Streams client reads the offset, cursor, and up-to-date headers.
+`HttpRouter.cors` is global middleware. It answers every preflight with its own policy, in place of the protocol answer, and adds the CORS headers to each response. List the request headers that your clients send and the response headers that they read. A Durable Streams client reads the offset, cursor, and up-to-date headers. If your CORS policy also allows `PUT` (for `access: "full"`), add `stream-ttl`, `stream-expires-at`, `stream-forked-from`, `stream-fork-offset`, and `stream-fork-sub-offset` to `allowedHeaders` as needed.
 
 ## Protocol
 
@@ -167,7 +167,10 @@ A long poll that times out answers 204 with a cursor. An SSE response ends at `s
 
 ## Extensions
 
-`Stream-Expected-Offset` on POST is a Streamsy extension. The append runs only when the tail equals the header value. A miss writes nothing and answers 409, with the tail in `stream-next-offset`.
+Streamsy adds two extensions to the Durable Streams HTTP protocol:
+
+- **`Stream-Expected-Offset` on `POST`:** The append runs only when the stream tail equals the header value. A miss writes nothing and answers `409`, with the current tail in `stream-next-offset`.
+- **`live=websocket` on `GET`:** Hibernatable WebSocket live reads, supported on Cloudflare `StreamsyObject` hosts with `live.websocket` enabled. Other hosts answer `426`, signaling clients to fall back to long-poll. See [Follow streams over WebSockets](/docs/servers/cloudflare/live-sockets).
 
 ## Web handler
 

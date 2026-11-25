@@ -42,6 +42,7 @@ export const movedPages = new Map([
   ["reference/serve/action-runtime", "projections/effects"],
   ["reference/serve/action-sql", "projections/effects"],
   ["reference/serve/action-errors", "projections/effects"],
+  ["views/reference", "reference/views"],
 ]);
 
 /**
@@ -72,6 +73,12 @@ export const movedSections = new Map([
   ["servers/cloudflare#projections", "servers/cloudflare/alarms#projections"],
   ["servers/cloudflare#streams-on-other-objects", "servers/cloudflare/objects#owner-and-caller"],
   ["servers/cloudflare#projection-services", "storage/sqlite#projection-services"],
+  // views/declare-and-run
+  ["views/declare-and-run#build-relations", "views/relations#start-from-a-state-collection"],
+  ["views/declare-and-run#migrate-tables", "views/sqlite#migrate-tables"],
+  ["views/declare-and-run#run-on-bun-sqlite", "views/sqlite#bun"],
+  ["views/declare-and-run#run-on-a-durable-object", "views/sqlite#durable-objects"],
+  ["views/declare-and-run#upgrade-an-existing-circuit-host", "views/sqlite#transaction-context"],
 ]);
 
 /** The section that replaced `fragment` on the page at `slug`, as a slug path and a fragment. */

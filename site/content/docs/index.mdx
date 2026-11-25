@@ -1,15 +1,25 @@
 ---
 title: Overview
-description: Streamsy is a toolkit for working with Durable Streams in Effect
+description: Streamsy is an Effect 4 toolkit and server for Durable Streams—typed stream services, swappable storage Layers, checkpointed projections, incremental views, and multi-runtime hosts.
 ---
 
-Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol:
+Streamsy is an Effect 4 implementation of the [Durable Streams](https://durablestreams.com/) protocol. Write application logic against typed stream services, then choose where streams live and how they are served by swapping Effect Layers:
 
-- Declare byte, json or state streams.
-- Create, Read and Append with effects.
-- Checkpointed reads with Projections
-- Provide storage via layers
-- Serve the http protocol
+- Declare typed byte, JSON, [Durable State](/docs/streams/durable-state), or [wake](/docs/streams/wake) streams with Effect `Schema`.
+- Create, read, follow, fork, and conditionally append with typed Effect errors.
+- Back streams with swappable storage Layers—in memory, SQLite (Bun, Node, Deno, or Cloudflare Durable Objects), Postgres, or MySQL.
+- Derive state, tables, and output streams with checkpointed [Projections](/docs/projections) and incremental relational [Views](/docs/views).
+- Serve the official Durable Streams HTTP protocol and read-only app routes on Bun, Node, Deno, or Cloudflare Workers, and consume them from Effect or browser clients.
+
+## Quick start
+
+Install `@streamsy/core` and Effect 4:
+
+```sh
+bun add @streamsy/core effect
+```
+
+Declare a typed stream, run an Effect program against it, and provide `MemoryStorage.layer`:
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
@@ -30,25 +40,49 @@ const program = Effect.gen(function* () {
   );
 });
 
+// Returns [{ text: "hello" }]
 await Effect.runPromise(program.pipe(Effect.provide(MemoryStorage.layer(Streamsy.group(Notes)))));
 ```
 
-## Install
+`program` depends only on the `Notes` service. To persist to SQLite, Postgres, MySQL, or a Durable Object—or talk to a remote Streamsy server over HTTP—swap `MemoryStorage.layer(...)` for `BunStorage.layer`, `SqlStorage.layer`, `DurableObjectStorage.layer`, or `RemoteStreams.layer` without changing `program`. See [Choose storage](/docs/storage).
 
-The example above needs only `@streamsy/core` and `effect`. Streamsy requires Effect 4.
+## How the pieces fit together
 
-```sh
-bun add @streamsy/core effect
-```
+![Streamsy architecture. Application programs, HTTP routes, Projections, and Views depend on typed stream services from @streamsy/core. Those services are backed either by a local storage Layer (Memory, SQLite, Postgres, MySQL, or Cloudflare Durable Objects) or by RemoteStreams.layer over HTTP to a remote server. Runtime hosts from @streamsy/serve run the stack on Bun, Node, Deno, or Cloudflare Workers and Durable Objects.](/docs/overview-architecture.svg)
 
-## Where Next?
+All five `@streamsy/*` packages share one version and require Effect 4:
 
-| Section                              | Contents                                                       |
-| ------------------------------------ | -------------------------------------------------------------- |
-| [Streams](/docs/streams/declare)     | Declare, create, read, and write streams                       |
-| [Projections](/docs/projections)     | Derive streams and state from other streams                    |
-| [Views](/docs/views)                 | Maintain joins and aggregates over State collections           |
-| [Storage](/docs/storage)             | Choose a storage Layer, use SQLite, or write a storage adapter |
-| [Servers and clients](/docs/servers) | Serve streams over HTTP, connect to a server, and run a server |
-| [Reference](/docs/reference)         | Every export, by package                                       |
-| [Examples](/docs/examples)           | Runnable example applications                                  |
+| Package                                                      | What it gives you                                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| [`@streamsy/core`](/docs/reference#streamsycore)             | Protocol, typed stream classes, `MemoryStorage`, `Http.routes`, and `RemoteStreams`  |
+| [`@streamsy/storage`](/docs/reference#streamsystorage)       | `SqlStorage` (SQLite, Postgres, MySQL), `BunStorage`, and `DurableObjectStorage`     |
+| [`@streamsy/projection`](/docs/reference#streamsyprojection) | Checkpointed projections, `FoldByKey`, `StateTable`, and attached runners            |
+| [`@streamsy/views`](/docs/reference/views)                   | Incremental relational `View.circuit` projections and in-memory `View.live` readers  |
+| [`@streamsy/serve`](/docs/reference#streamsyserve)           | Application read routes, Bun/Node/Deno process hosts, and Cloudflare Durable Objects |
+
+## Explore runnable examples
+
+The fastest way to see Streamsy end to end is through the runnable applications in the repository—including two live hosted demos:
+
+| Example                                       | What it demonstrates                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Memory server](/docs/examples/memory-server) | Smallest Bun Durable Streams HTTP server, exercised with `curl`, with a one-layer SQLite swap                                                                                                                                                                                                               |
+| [Todo](/docs/examples/todo)                   | Single-file event-sourced HTTP API with `Projection.decide`, background checkpoints, and a live feed                                                                                                                                                                                                        |
+| [Issue tracker](/docs/examples/issue-tracker) | Collaborative Durable State sync with optimistic writes, plus [Event sourced](/docs/examples/issue-tracker/event-sourced), [Foldkit](/docs/examples/issue-tracker/foldkit), [Foldkit with Views](/docs/examples/issue-tracker/foldkit-views), and [Effect Atom](/docs/examples/issue-tracker/atom) variants |
+| [Bugsy](/docs/examples/bugsy)                 | Multi-input checkpointed projections on SQLite, Postgres, or MySQL writing derived output streams                                                                                                                                                                                                           |
+| [Yjs editor](/docs/examples/yjs-editor)       | Collaborative ProseMirror editor on Cloudflare Durable Objects with binary streams and alarm compaction ([live demo](https://yjs-editor.streamsy.dev))                                                                                                                                                      |
+| [Doom](/docs/examples/doom)                   | Browser Doom recorded as binary streams with rewind snapshots, native forks, and Cloudflare Durable Objects ([live demo](https://doom.streamsy.dev/))                                                                                                                                                       |
+
+Browse [all 13 examples](/docs/examples)—including AI agents ([Fold agent](/docs/examples/fold-agent)), [Durable response](/docs/examples/durable-response), [Folder sync](/docs/examples/folder-sync), [Command stream](/docs/examples/command-stream), and [Timer stream](/docs/examples/timer-stream).
+
+## Where next?
+
+| Section                              | Contents                                                                                           |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| [Streams](/docs/streams/declare)     | Declare, create, read, write, and fork byte, JSON, Durable State, and wake streams                 |
+| [Projections](/docs/projections)     | Derive values, SQL tables, and output streams with checkpointed units and commits                  |
+| [Views](/docs/views)                 | Maintain incremental joins, aggregates, top-N, and closures, or read `View.live` snapshots         |
+| [Storage](/docs/storage)             | Choose Memory, SQLite, Postgres, MySQL, or Durable Object storage, or write a custom adapter       |
+| [Servers and clients](/docs/servers) | Expose the protocol, serve read routes, connect clients, and run on Bun, Node, Deno, or Cloudflare |
+| [Reference](/docs/reference)         | Every public export, organized by package                                                          |
+| [Examples](/docs/examples)           | Complete, runnable applications                                                                    |
